@@ -15,9 +15,40 @@ class VideoSubtitlePrefs {
   static const String auto = 'auto';
   static const String off = 'off';
 
+  /// 字号倍数（TV 面板可调，0.8x ~ 2.0x）。默认 1.0 = 与旧版完全一致。
+  static const String scaleKey = 'player.subtitleScale';
+
+  /// 字幕垂直位置：0 = 底部，1 = 居中偏下，2 = 偏上。
+  static const String positionKey = 'player.subtitlePos';
+
   String get preferred => SettingsStore.instance.getString(key) ?? auto;
 
-  Future<void> set(String value) => SettingsStore.instance.setString(key, value);
+  Future<void> set(String value) =>
+      SettingsStore.instance.setString(key, value);
+
+  /// 字号倍数：没存过 / 非法 → 1.0；越界夹到 0.8~2.0。
+  double get scale {
+    final raw = double.tryParse(
+      SettingsStore.instance.getString(scaleKey) ?? '',
+    );
+    if (raw == null || raw.isNaN || raw <= 0) return 1.0;
+    return raw.clamp(0.8, 2.0).toDouble();
+  }
+
+  Future<void> setScale(double value) =>
+      SettingsStore.instance.setString(scaleKey, '${value.clamp(0.8, 2.0)}');
+
+  /// 位置档位：0 底部 / 1 居中偏下 / 2 偏上；越界回落 0。
+  int get position {
+    final raw = int.tryParse(
+      SettingsStore.instance.getString(positionKey) ?? '',
+    );
+    if (raw == null || raw < 0 || raw > 2) return 0;
+    return raw;
+  }
+
+  Future<void> setPosition(int value) =>
+      SettingsStore.instance.setString(positionKey, '${value.clamp(0, 2)}');
 }
 
 /// 按偏好挑字幕（纯函数，便于单测）：
@@ -26,7 +57,10 @@ class VideoSubtitlePrefs {
 /// - `auto` → 第一条；
 /// - 语言标签按前缀匹配（`zh` 命中 `zh-CN`），都匹配不上时回退第一条；
 /// - 空列表 → null。
-VideoSubtitleFile? pickSubtitle(List<VideoSubtitleFile> items, String preferred) {
+VideoSubtitleFile? pickSubtitle(
+  List<VideoSubtitleFile> items,
+  String preferred,
+) {
   if (items.isEmpty) return null;
   if (preferred == VideoSubtitlePrefs.off) return null;
   if (preferred == VideoSubtitlePrefs.auto) return items.first;

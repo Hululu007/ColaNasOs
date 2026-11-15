@@ -835,6 +835,23 @@
     },
     "login.changeServer": {},
     "login.connect": {},
+    "login.device.approved": {},
+    "login.device.cancel": {},
+    "login.device.canceled": {},
+    "login.device.code": {},
+    "login.device.expired": {},
+    "login.device.expiresIn": {
+      "time": {}
+    },
+    "login.device.hint": {
+      "url": {}
+    },
+    "login.device.loading": {},
+    "login.device.orManual": {},
+    "login.device.refresh": {},
+    "login.device.show": {},
+    "login.device.title": {},
+    "login.device.unsupported": {},
     "login.connectedTo": {
       "host": {}
     },
@@ -844,6 +861,7 @@
     "login.hidePassword": {},
     "login.matchFailed": {},
     "login.matchingPort": {},
+    "login.notNasServer": {},
     "login.password": {},
     "login.pickServer": {},
     "login.scanEmpty": {},
@@ -2029,6 +2047,8 @@
     },
     "photo.source.saved": {},
     "photo.source.scanAll": {},
+    "photo.source.shared": {},
+    "photo.source.sharedAdded": {},
     "photo.source.unavailable": {},
     "photo.source.up": {},
     "photo.suggest.activity": {},
@@ -2150,6 +2170,15 @@
       "want": {},
       "actual": {}
     },
+    "player.colorFallback": {
+      "source": {},
+      "actual": {}
+    },
+    "player.directFailed": {
+      "actual": {}
+    },
+    "player.dvDirect": {},
+    "player.renderer": {},
     "player.compatOn": {},
     "player.dolbyVision": {},
     "player.embeddedSubtitle": {
@@ -2242,6 +2271,18 @@
     "player.transcodePending": {},
     "player.transcodeState": {},
     "player.transcoding": {},
+    "player.toneMap": {},
+    "player.tv.close": {},
+    "player.tv.hdrCapability": {},
+    "player.tv.hdrNone": {},
+    "player.tv.hdrUnknown": {},
+    "player.tv.hint": {},
+    "player.tv.subtitleLarger": {},
+    "player.tv.subtitlePos.0": {},
+    "player.tv.subtitlePos.1": {},
+    "player.tv.subtitlePos.2": {},
+    "player.tv.subtitleSmaller": {},
+    "player.tv.subtitleTitle": {},
     "player.tryOriginal": {},
     "player.unlock": {},
     "player.videoCodec": {},
@@ -2328,6 +2369,16 @@
       "kind": {}
     },
     "settings.notLoggedIn": {},
+    "settings.perf.enable": {},
+    "settings.perf.enableHint": {},
+    "settings.perf.help": {},
+    "settings.perf.last": {},
+    "settings.perf.local": {},
+    "settings.perf.reportNow": {},
+    "settings.perf.server": {},
+    "settings.perf.smooth": {},
+    "settings.perf.smoothHint": {},
+    "settings.perf.title": {},
     "settings.port": {},
     "settings.proxy": {},
     "settings.proxyActive": {
@@ -2625,6 +2676,115 @@
     "tray.autostart": {},
     "tray.quit": {},
     "tray.show": {},
+    "tv.field.openHint": {},
+    "tv.field.systemHint": {},
+    "tv.hint.keys": {},
+    "tv.movie.all": {},
+    "tv.movie.collections": {},
+    "tv.movie.count": {
+      "n": {}
+    },
+    "tv.movie.play": {},
+    "tv.movie.related": {},
+    "tv.preview.transcodeUnsupported": {},
+    "tv.music.addFailed": {
+      "error": {}
+    },
+    "tv.music.addToPlaylist": {},
+    "tv.music.addedToPlaylist": {
+      "name": {}
+    },
+    "tv.music.allArtists": {},
+    "tv.music.allPlaylists": {},
+    "tv.music.artists": {},
+    "tv.music.collection": {},
+    "tv.music.favorite": {},
+    "tv.music.favoriteAllDone": {
+      "n": {}
+    },
+    "tv.music.favorited": {},
+    "tv.music.favorites": {},
+    "tv.music.menuHint": {},
+    "tv.music.newestAlbums": {},
+    "tv.music.noLyrics": {},
+    "tv.music.notPlaying": {},
+    "tv.music.nowPlaying": {},
+    "tv.music.openPlayer": {},
+    "tv.music.playAll": {},
+    "tv.music.playMode": {},
+    "tv.music.playlist": {},
+    "tv.music.playlists": {},
+    "tv.music.randomAll": {},
+    "tv.music.recentAlbums": {},
+    "tv.music.shuffle": {},
+    "tv.music.topAlbums": {},
+    "tv.music.tracks": {
+      "n": {}
+    },
+    "tv.music.unknownArtist": {},
+    "tv.music.unfavoriteAllDone": {
+      "n": {}
+    },
+    "tv.music.viewArtist": {},
+    "tv.music.year": {
+      "year": {}
+    },
+    "tv.series.all": {},
+    "tv.series.count": {
+      "n": {}
+    },
+    "tv.series.episodeHint": {},
+    "tv.series.playFirst": {},
+    "tv.series.resumeFrom": {
+      "code": {}
+    },
+    "tv.series.seasonCount": {
+      "n": {}
+    },
+    "tv.series.unwatched": {
+      "n": {}
+    },
+    "tv.placeholder.hint": {},
+    "tv.placeholder.title": {},
+    "tv.keyboard.backspace": {},
+    "tv.keyboard.cancel": {},
+    "tv.keyboard.clear": {},
+    "tv.keyboard.confirm": {},
+    "tv.keyboard.hint": {},
+    "tv.keyboard.letters": {},
+    "tv.keyboard.numbers": {},
+    "tv.keyboard.shift": {},
+    "tv.keyboard.space": {},
+    "tv.keyboard.symbols": {},
+    "tv.keyboard.system": {},
+    "tv.profile.account": {},
+    "tv.profile.defaultCodec": {},
+    "tv.profile.defaultCodecHint": {},
+    "tv.profile.defaultPreset": {},
+    "tv.profile.defaultPresetHint": {},
+    "tv.profile.logout": {},
+    "tv.profile.logoutConfirm": {},
+    "tv.profile.relogin": {},
+    "tv.profile.server": {},
+    "tv.profile.title": {},
+    "tv.player.close": {},
+    "tv.player.hint": {},
+    "tv.search.action": {},
+    "tv.search.empty": {},
+    "tv.search.failed": {
+      "error": {}
+    },
+    "tv.search.group.album": {},
+    "tv.search.group.artist": {},
+    "tv.search.group.series": {},
+    "tv.search.group.track": {},
+    "tv.search.group.video": {},
+    "tv.search.hint": {},
+    "tv.search.noResult": {
+      "q": {}
+    },
+    "tv.tab.profile": {},
+    "tv.tab.search": {},
     "ui.accounts.001": {},
     "ui.accounts.002": {},
     "ui.accounts.003": {},

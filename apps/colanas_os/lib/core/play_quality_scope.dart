@@ -110,3 +110,25 @@ List<PlayQualityPreset> _groupByBitrateDesc(
 ) =>
     presets.toList()
       ..sort((a, b) => b.bitrateFor(codec).compareTo(a.bitrateFor(codec)));
+
+/// 「原画」没法直连时该退到哪一档：**保住片源分辨率**，取该分辨率里码率最高的一档。
+///
+/// 为什么要专门一个函数：以前原画兜底一律用 `defaultPlayPreset`（1080P 3M），
+/// 一部 4K 杜比视界片直连失败就会从「4K 原片」跳到「1080P 3M」，用户看到的是
+/// 「我就选了个原画，它自己变成 1080p 了」。分辨率掉一档的观感损失，比码率高一
+/// 点带来的转码开销明显得多 —— 兜底先保分辨率，用户嫌卡可以自己再往下降。
+///
+/// 片源高度未知（0）时仍然回 [defaultPlayPreset]：没有元数据就别赌 4K 档。
+String fallbackPresetPreservingHeight(
+  int sourceHeight, {
+  String codec = 'h264',
+}) {
+  if (sourceHeight <= 0) return defaultPlayPreset;
+  final cap = maxPresetHeightForSource(sourceHeight);
+  if (cap <= 0) return defaultPlayPreset;
+  final group = _groupByBitrateDesc(
+    presetsForSource(sourceHeight).where((p) => !p.copy && p.height == cap),
+    codec,
+  );
+  return group.isEmpty ? defaultPlayPreset : group.first.key;
+}

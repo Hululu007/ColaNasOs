@@ -60,6 +60,7 @@
     "migrate:up": "node tool/migrate.js up",
     "migrate:verify": "node tool/migrate.js verify",
     "ohos.check": "node tool/check/ohos-project.js",
+    "mpv:check": "node tool/check/mpv-capabilities.js",
     "pack": "npm run build && node tool/build-pack.js --dir",
     "rebuild": "electron-rebuild -f -w better-sqlite3",
     "sbom": "node tool/sbom.js",

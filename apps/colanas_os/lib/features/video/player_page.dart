@@ -8,10 +8,12 @@ import 'package:media_kit_video/media_kit_video.dart';
 import 'package:nas_core/nas_core.dart';
 import 'package:nas_ui/nas_ui.dart';
 
+import '../../core/app_settings.dart';
 import '../../core/audio_focus.dart';
 import '../../core/audio_track_label.dart';
 import '../../core/client_log.dart';
 import '../../core/codec_support.dart';
+import '../../core/display_caps.dart';
 import '../../core/play_preferences.dart';
 import '../../core/play_quality.dart';
 import '../../core/play_quality_scope.dart';
@@ -19,8 +21,10 @@ import '../../core/play_related.dart';
 import '../../core/play_timeline.dart';
 import '../../core/session.dart';
 import '../../core/settings_store.dart';
+import '../../core/video_render.dart';
 import '../../core/video_subtitle_prefs.dart';
 import 'player_screen.dart';
+import 'tv_player_controls.dart';
 
 /// 内置播放器：media_kit 作为跨平台内核，**控制层全部自绘**。
 ///
@@ -121,6 +125,7 @@ class _PlayerPageState extends State<PlayerPage> {
   final List<StreamSubscription> _logSubs = [];
 
   late String _preset;
+
   /// 当前编码：用用户偏好，但本机解不出来时回落 H.264。
   String _codec = codecPlayable(PlayPreferences.codec)
       ? PlayPreferences.codec
@@ -158,15 +163,18 @@ class _PlayerPageState extends State<PlayerPage> {
   bool _boosting = false;
   bool _controls = true;
   bool _locked = false;
+
   /// 进播放器时的朝向（null = 还没读到，按竖屏处理）
   bool? _entryPortrait;
 
   // —— 进度手势（横向拖动 / 双击左右两侧）
   /// 拖动起点的片源绝对位置（毫秒）；null = 当前没在拖
   double? _dragStartMs;
+
   /// 相对起点的偏移（毫秒），拖动过程中实时变
   double _dragDeltaMs = 0;
   bool _dragSeeking = false;
+
   /// 快进快退的短暂提示（800ms 后自动消失）
   String? _seekHint;
   Timer? _seekHintTimer;
@@ -180,9 +188,45 @@ class _PlayerPageState extends State<PlayerPage> {
   String? _sessionId;
   String? _jobStatus;
 
+  /// 本机 libmpv 的渲染能力 + 已生效的色调映射算法。
+  ///
+  /// 只在原生端有值；Web 端是空对象（解码交给浏览器）。
+  VideoRenderCaps _caps = const VideoRenderCaps();
+
+  /// 显示端 HDR 能力（Android TV 走原生通道，其余平台为 unknown）。
+  DisplayCaps _display = DisplayCaps.unknown;
+
+  /// 渲染参数必须在下发 `open()` 之前设好，否则 HDR 首帧就会按默认淡出。
+  /// 用 Future 串起来，`_openUrl` 里 await 一次即可，不需要额外状态位。
+  late final Future<void> _renderReady;
+
+  /// 顶部一次性提示（色调映射回退 / 编码回落）。全屏下也可见，6 秒自动消失。
+  String? _notice;
+  Timer? _noticeTimer;
+
+  /// 当前是不是 TV 运行形态（遥控器键位 / TV 控制层分支）。
+  ///
+  /// 用设置位而不是 `TvScope.of(context)`：`initState` / 定时器里不能查
+  /// InheritedWidget，而 TV 模式本来就是全局开关，两者取值一致。
+  bool get _tvMode => AppSettings.instance.tvMode.value;
+
+  // —— TV 控制层焦点（索引式，不依赖 Flutter 焦点遍历）
+  /// 0 = 进度条，1 = 按钮行
+  int _tvRow = 1;
+  int _tvIndex = 0;
+  double _tvSeekMs = 0;
+  bool _tvSeeking = false;
+
+  /// TV 的 `PopScope(canPop:)` 一次性放行标志：真正要退出播放时才置 true，
+  /// 否则返回键会被「先收控制层」的逻辑永远拦住。
+  bool _allowPop = false;
+
+  /// 按钮行的横向滚动锚点（索引变化时滚到可见）
+
   /// 已转出的总时长（毫秒）：进度条上「已加载」那一段画到这里。
   /// **片源绝对位置**（含下面的起转偏移）。0 = 还没转出来 / 没开会话。
   int _transcodedMs = 0;
+
   /// 当前会话的「提前量」（毫秒）。0 = 整片一次转完。
   ///
   /// 分段会话的播放列表是**按整片时长预列**的（VOD + ENDLIST），所以 libmpv 报的
@@ -206,6 +250,9 @@ class _PlayerPageState extends State<PlayerPage> {
 
   /// 服务端回传的**实际**编码（降级后以它为准）；为空表示还没出片。
   String? _actualCodec;
+
+  /// 「服务端把编码降级了」这条提示只弹一次，别每 3 秒轮询都刷一遍。
+  bool _codecNoticeShown = false;
 
   /// 上次刷新隐藏定时器的时间，用来给 `onHover` 做节流。
   DateTime _lastPoke = DateTime.fromMillisecondsSinceEpoch(0);
@@ -235,7 +282,9 @@ class _PlayerPageState extends State<PlayerPage> {
   }
 
   List<String> get _reasons =>
-      ((widget.compat?['reasons'] as List?) ?? const []).map((e) => '$e').toList();
+      ((widget.compat?['reasons'] as List?) ?? const [])
+          .map((e) => '$e')
+          .toList();
 
   /// 片源高度：显式参数优先，其次 stream-url 的 compat，最后当未知（0）。
   int get _srcHeight {
@@ -260,11 +309,16 @@ class _PlayerPageState extends State<PlayerPage> {
     super.initState();
     // 偏好档位先按片源收敛：片源只有 720p 时，1080P 档转出来只是放大后的
     // 假高清，白白多花一倍流量。收敛放在建会话之前，界面显示的档位才和实际一致。
-    _preset = clampPresetForSource(
-      widget.initialPreset ?? PlayPreferences.preset,
-      _srcHeight,
-      codec: _codec,
-    );
+    //
+    // TV 第一次进来默认「原画」：电视本来就该放原片，转码是降级；
+    // 用户一旦在「我的 → 默认码率」里存过值，就按存的那档走。
+    final preferred =
+        widget.initialPreset ??
+        PlayPreferences.savedPreset ??
+        (AppSettings.instance.tvMode.value
+            ? 'original'
+            : PlayPreferences.preset);
+    _preset = clampPresetForSource(preferred, _srcHeight, codec: _codec);
     // 详情页「转码」入口给的已经是 HLS 地址，不能再当直链处理
     _isTranscode = widget.initialPreset != null;
     _sessionId = widget.initialSessionId;
@@ -293,27 +347,38 @@ class _PlayerPageState extends State<PlayerPage> {
         // 拿不到就算了，退回软解
       }
     }
+    // 色调映射参数（hdr-compute-peak / tone-mapping / dither）必须赶在 open 之前：
+    // media_kit 初始化时把 hdr-compute-peak 显式设成了 no，不覆盖就会「HDR 直连发灰」。
+    _renderReady = _setupRender();
     _controller = VideoController(_player);
-    _logSubs.add(_player.stream.playing.listen((playing) {
-      ClientLogger.instance.info(
-        'playing=$playing',
-        route: 'player.state/${_sessionId ?? 'direct'}',
-      );
-    }));
-    _logSubs.add(_player.stream.buffering.listen((buffering) {
-      ClientLogger.instance.info(
-        'buffering=$buffering',
-        route: 'player.state/${_sessionId ?? 'direct'}',
-      );
-    }));
-    _logSubs.add(_player.stream.completed.listen((done) {
-      if (done) {
+    _logSubs.add(
+      _player.stream.playing.listen((playing) {
+        // TV 的播放/暂停按钮图标要跟着变（索引式控制层不是 StreamBuilder）
+        if (mounted && _tvMode) setState(() {});
         ClientLogger.instance.info(
-          '播放结束 transcodedMs=$_transcodedMs',
+          'playing=$playing',
           route: 'player.state/${_sessionId ?? 'direct'}',
         );
-      }
-    }));
+      }),
+    );
+    _logSubs.add(
+      _player.stream.buffering.listen((buffering) {
+        ClientLogger.instance.info(
+          'buffering=$buffering',
+          route: 'player.state/${_sessionId ?? 'direct'}',
+        );
+      }),
+    );
+    _logSubs.add(
+      _player.stream.completed.listen((done) {
+        if (done) {
+          ClientLogger.instance.info(
+            '播放结束 transcodedMs=$_transcodedMs',
+            route: 'player.state/${_sessionId ?? 'direct'}',
+          );
+        }
+      }),
+    );
     _loadUiPrefs();
 
     _player.stream.error.listen((message) {
@@ -341,12 +406,10 @@ class _PlayerPageState extends State<PlayerPage> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       if (_needTranscode && widget.itemId != null) {
-        // 「原画」在必须转码时等价于「不降分辨率」，直接按 4K/原尺寸转太慢；
-        // 统一收敛到默认档位（并再按片源高度收一次），界面显示的档位也才是
-        // 真正在跑的档位。
-        if (_preset == 'original') {
-          _preset = clampPresetForSource(defaultPlayPreset, _srcHeight, codec: _codec);
-        }
+        // 以前这里会把「原画」直接改写成 1080P 3M —— 于是用户明明选了原画，
+        // 播放器却自己降档（「过了一会儿变成 1080p 3m」的主因之一）。
+        // 现在不再改写：直连不直连由 _prepareCompatible 按「本机能不能正确显示」
+        // 判定，必须转码时也只退到「保住片源分辨率」的档位。
         _prepareCompatible();
       } else {
         _openUrl(_url);
@@ -366,7 +429,8 @@ class _PlayerPageState extends State<PlayerPage> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    _entryPortrait ??= MediaQuery.orientationOf(context) == Orientation.portrait;
+    _entryPortrait ??=
+        MediaQuery.orientationOf(context) == Orientation.portrait;
   }
 
   bool get _wantPortraitOnExit => _entryPortrait ?? true;
@@ -443,17 +507,20 @@ class _PlayerPageState extends State<PlayerPage> {
           limit: 200,
         );
       }
-      final picked = res.items
-          .where(
-            (it) =>
-                relatedDir(it.path).toLowerCase() == dir.toLowerCase() &&
-                relatedMatches(prefix, relatedBasename(it.path)),
-          )
-          .toList()
-        ..sort((a, b) => compareRelatedNames(
-              relatedBasename(a.path),
-              relatedBasename(b.path),
-            ));
+      final picked =
+          res.items
+              .where(
+                (it) =>
+                    relatedDir(it.path).toLowerCase() == dir.toLowerCase() &&
+                    relatedMatches(prefix, relatedBasename(it.path)),
+              )
+              .toList()
+            ..sort(
+              (a, b) => compareRelatedNames(
+                relatedBasename(a.path),
+                relatedBasename(b.path),
+              ),
+            );
       _setPlaylist(picked, isSeries: false);
     } catch (_) {
       // 探不到就不显示播放列表按钮，不影响播放
@@ -490,6 +557,7 @@ class _PlayerPageState extends State<PlayerPage> {
   void dispose() {
     _hideTimer?.cancel();
     _seekHintTimer?.cancel();
+    _noticeTimer?.cancel();
     for (final sub in _logSubs) {
       sub.cancel();
     }
@@ -513,6 +581,9 @@ class _PlayerPageState extends State<PlayerPage> {
   }) async {
     _url = u;
     final openSw = Stopwatch()..start();
+    // 色调映射 / dither 必须在 open 之前生效，否则第一个 HDR 帧就按 mpv 默认
+    // （hdr-compute-peak=no）渲染，出现「开头几秒发灰、后面才对」。
+    await _renderReady;
     ClientLogger.instance.info(
       'open 开始',
       route: 'player.open/${_sessionId ?? 'direct'}',
@@ -637,25 +708,16 @@ class _PlayerPageState extends State<PlayerPage> {
     // 但画面帧出不来（用户看到的就是「有声音、画面停住」）。
     // 所以再要求「播放位置真的往前走了」，否则一律按播不了处理。
     if (w > 0 && advanced > const Duration(seconds: 2)) return;
-    final fallback = clampPresetForSource(
-      defaultPlayPreset,
-      _srcHeight,
-      codec: _codec,
-    );
-    final messenger = ScaffoldMessenger.maybeOf(context);
+    // 兜底档同样保分辨率：4K 片直连失败不该跳成 1080P（用户选的是原画）。
+    final fallback = _transcodeFallback();
     await _switchQuality(fallback, codec: _codec);
-    if (messenger != null && mounted) {
-      messenger.showSnackBar(
-        SnackBar(
-          content: Text(
-            tr('player.codecFallback', {
-              'want': playQualityPresetOf('original')?.label ?? 'Original',
-              'actual': playQualityPresetOf(fallback)?.label ?? fallback,
-            }),
-          ),
-        ),
-      );
-    }
+    if (!mounted) return;
+    _showNotice(
+      tr('player.directFailed', {
+        'actual': playQualityPresetOf(fallback)?.labelFor(_codec) ?? fallback,
+      }),
+      log: '直连无画面：width=$w advanced=${advanced.inMilliseconds}ms → $fallback',
+    );
   }
 
   /// 拿到的某个 preset/codec 的 HLS 地址。
@@ -671,6 +733,7 @@ class _PlayerPageState extends State<PlayerPage> {
     String preset,
     String codec, {
     int startMs = 0,
+
     /// 覆盖「提前量（分钟）」：跳转到未转位置时用小段，首片更快落地。
     int? leadOverride,
   }) async {
@@ -678,6 +741,16 @@ class _PlayerPageState extends State<PlayerPage> {
     // 请求的编码在本机解不出来时回落 H.264（桌面端一律解得出来，浏览器由
     // `MediaSource.isTypeSupported` 说了算 —— 真 Chrome 上 AV1 / HEVC 都是支持的）。
     final outCodec = codecPlayable(codec) ? codec : 'h264';
+    // 编码回落不能静默：以前只是换个编码继续播，用户完全不知道。
+    if (outCodec != codec) {
+      _showNotice(
+        tr('player.codecFallback', {
+          'want': playCodecOf(codec)?.label ?? codec,
+          'actual': playCodecOf(outCodec)?.label ?? outCodec,
+        }),
+        log: '编码回落：请求 $codec，本机不可解，改用 $outCodec',
+      );
+    }
     final sw = Stopwatch()..start();
     final created = await ApiSession.instance.client.playerSessionCreate(
       body: PlayerSessionCreateBody(
@@ -742,10 +815,14 @@ class _PlayerPageState extends State<PlayerPage> {
         route: 'player.waitFirstSegment/$id',
       );
     }
+
     for (var i = 0; i < 40; i += 1) {
       if (!mounted) return;
       try {
-        final job = await ApiSession.instance.client.playerSessionGet(id: id, pos: 0);
+        final job = await ApiSession.instance.client.playerSessionGet(
+          id: id,
+          pos: 0,
+        );
         polls += 1;
         // transcodedMs 是**片源绝对位置** = startedMs + 已转出时长。
         // 跳转会话的 startedMs 本身就有几十万毫秒，直接判断 > 0 会立刻放行，
@@ -753,7 +830,8 @@ class _PlayerPageState extends State<PlayerPage> {
         final started = job.startedMs ?? 0;
         final done = (job.transcodedMs ?? 0) - started;
         final st = '${job.status}';
-        last = 'status=$st transcoded=${job.transcodedMs} started=$started done=$done segments=${job.segments}';
+        last =
+            'status=$st transcoded=${job.transcodedMs} started=$started done=$done segments=${job.segments}';
         if (done > 0) {
           log('ready');
           return;
@@ -815,6 +893,17 @@ class _PlayerPageState extends State<PlayerPage> {
             if (codec.isNotEmpty) _actualCodec = codec;
           });
         }
+        // 服务端实际编码与请求不同（例如 AV1 没编出来降级成 H.264）时明确提示一次。
+        if (codec.isNotEmpty && codec != _codec && !_codecNoticeShown) {
+          _codecNoticeShown = true;
+          _showNotice(
+            tr('player.codecFallback', {
+              'want': playCodecOf(_codec)?.label ?? _codec,
+              'actual': playCodecOf(codec)?.label ?? codec,
+            }),
+            log: '服务端编码降级：请求 $_codec，实际 $codec（session=$id）',
+          );
+        }
         if (st == 'done' || st == 'canceled') return;
         if (st == 'failed') {
           ClientLogger.instance.error(
@@ -841,18 +930,114 @@ class _PlayerPageState extends State<PlayerPage> {
     }
   }
 
+  // ------------------------------------------------------------ 渲染 / 色调映射
+
+  /// 探测 libmpv 能力并下发色调映射参数；同时读一次显示端 HDR 能力。
+  ///
+  /// 失败一律吞掉：拿不到能力就按「未知」处理，不能让播放因为它卡住。
+  Future<void> _setupRender() async {
+    final caps = await VideoRenderCaps.setup(_player);
+    final display = await readDisplayCaps().catchError(
+      (_) => DisplayCaps.unknown,
+    );
+    if (!mounted) return;
+    ClientLogger.instance.info(
+      'render=${caps.renderer} ${caps.summary} displayHdr=${display.maxHdr.reason}',
+      route: 'player.render',
+    );
+    setState(() {
+      _caps = caps;
+      _display = display;
+    });
+  }
+
+  /// 片源最高 HDR 等级（dolbyVision > hdr10plus > hdr10 > hlg > none）。
+  HdrLevel get _srcHdr => HdrLevel.fromReasons(_reasons);
+
+  /// 直连能不能保证**颜色是对的**。
+  ///
+  /// - 杜比视界：一律不能。media_kit 的 libmpv 走 `vo=libmpv`（vo_gpu），
+  ///   没有 libplacebo / DV RPU 解析，P5 直连就是紫 / 荧光绿；服务端转码链
+  ///   （`tonemap_d3d11` / `tonemap_cuda`，`apply_dovi` 默认开）才是官方的正确做法。
+  /// - HDR10 / HLG：桌面端的 vo_gpu 有 bt.2390 + 动态峰值，可以直连；
+  ///   Web 交给浏览器，Android 交给系统解码器，都不在这里拦。
+  /// - TV：电视 HDR 能力低于片源等级时强制转码（服务端 hdrToSdr 即色调映射）。
+  bool get _colorBlocksDirect {
+    if (widget.compat == null) return false;
+    final src = _srcHdr;
+    if (!src.isHdr) return false;
+    if (src == HdrLevel.dolbyVision) return true;
+    if (!kIsWeb && _display.known && !_display.supports(src)) return true;
+    return false;
+  }
+
+  /// 「原画」没法直连时退到哪一档。
+  ///
+  /// 桌面端保片源分辨率（4K 片退 4K，不退 1080P）：用户选的就是原画，
+  /// 掉分辨率比多占一点转码算力更难受。TV 按方案退默认转码档，
+  /// 因为电视解码 / 网络更脆弱，1080P 3M 的起播和拖动都更稳。
+  String _transcodeFallback({String? codec}) {
+    final c = codec ?? _codec;
+    if (kIsWeb || _tvMode) {
+      return clampPresetForSource(defaultPlayPreset, _srcHeight, codec: c);
+    }
+    return fallbackPresetPreservingHeight(_srcHeight, codec: c);
+  }
+
+  /// 顶部提示条：全屏下也能看见，6 秒后自动消失。
+  ///
+  /// 以前「原画 → 1080P」只弹一个 SnackBar：全屏时被系统栏挡住、4 秒就没了，
+  /// 用户只看到「画质自己变了」。现在改成播放器内提示，并把原因写进服务端日志。
+  void _showNotice(String text, {String? log}) {
+    if (log != null) {
+      ClientLogger.instance.warn(log, route: 'player.notice');
+    }
+    _noticeTimer?.cancel();
+    if (!mounted) return;
+    setState(() => _notice = text);
+    _noticeTimer = Timer(const Duration(seconds: 6), () {
+      if (mounted) setState(() => _notice = null);
+    });
+  }
+
   Future<void> _prepareCompatible() async {
     setState(() => _preparing = true);
+    // 显示能力探测（TV 走原生通道）要和渲染参数一起就绪，HDR 判定才不是猜的
+    await _renderReady;
+    if (!mounted) return;
     try {
-      // 偏好设成「原画」且桌面端能解时直接放原片：零转码、可随意 seek、
-      // 起播是毫秒级。以前这里无条件建转码会话，把「原画」偏好架空了。
+      final wantOriginal = _preset == 'original';
+      // 直连条件：用户要原画 + 本机能保证颜色正确 + 真有直链可用。
+      // Web 端仍然受「浏览器解不了 MKV/HEVC」限制（_needTranscode）。
+      final colorBlocked = _colorBlocksDirect;
       final toDirect =
-          _preset == 'original' && widget.compat != null && (!kIsWeb || !_needTranscode);
+          wantOriginal &&
+          !colorBlocked &&
+          widget.compat != null &&
+          (!kIsWeb || !_needTranscode);
       // 档位按片源高度收敛：偏好 1080P 但片源只有 720P 时，按 720P 转，
       // 不做放大转码（放大只会更大更糊，还多占 GPU）。菜单同样只列 ≤720P 的档。
-      final effective =
-          toDirect ? 'original' : clampPresetForSource(_preset, _srcHeight, codec: _codec);
-      final u = toDirect ? _directUrl : await _ensureTranscode(effective, _codec);
+      // 「原画但必须转码」时退到「保分辨率」的兜底档，不再默默变成 1080P 3M。
+      final effective = toDirect
+          ? 'original'
+          : (wantOriginal
+                ? _transcodeFallback()
+                : clampPresetForSource(_preset, _srcHeight, codec: _codec));
+      if (colorBlocked && wantOriginal) {
+        _showNotice(
+          tr('player.colorFallback', {
+            'source': tr('player.reason.${_srcHdr.reason}'),
+            'actual':
+                playQualityPresetOf(effective)?.labelFor(_codec) ?? effective,
+          }),
+          log:
+              '色调映射回退：src=${_srcHdr.reason} direct=false preset=$effective '
+              'render=${_caps.renderer} ${_caps.summary}',
+        );
+      }
+      final u = toDirect
+          ? _directUrl
+          : await _ensureTranscode(effective, _codec);
       if (!mounted) return;
       setState(() {
         _preparing = false;
@@ -877,20 +1062,37 @@ class _PlayerPageState extends State<PlayerPage> {
     final targetCodec = codec ?? _codec;
     // 直链要求：调用方给的是真直链（compat 存在）且片源本身能直链。
     // 详情页「转码」入口拿的是 HLS 地址（compat=null），那里不存在直链可退。
-    // 桌面端（libmpv）能解 HEVC / AV1 / 10bit / DV，不该被服务端那套「按浏览器
-    // 最保守能力」的判定绑住。以前这里要求 !_needTranscode，而 HEVC 一律被判
-    // 需要转码 → 「原画」永远回落到转码，4K DV 每段起播要等 10s+。
+    // 桌面端（libmpv）能解 HEVC / AV1 / 10bit，但**杜比视界不行**：
+    // 这个构建的 libmpv 没有 libplacebo / DV RPU，直连出来是紫的。
+    // 所以「原画」是否直连要看 _colorBlocksDirect，而不是只看平台。
     // Web 端保持原判定（Chromium 确实解不了 MKV/HEVC）。
+    final colorBlocked = _colorBlocksDirect;
     final toDirect =
-        preset == 'original' && widget.compat != null && (!kIsWeb || !_needTranscode);
+        preset == 'original' &&
+        !colorBlocked &&
+        widget.compat != null &&
+        (!kIsWeb || !_needTranscode);
     if (!toDirect && widget.itemId == null) return;
-    // 必须转码时「原画」没法真原样播，实际跑默认档；界面也跟着显示实际档位，
-    // 不要出现「显示原画、跑的是 1080p」。同样按片源高度收敛。
+    // 必须转码时「原画」没法真原样播：桌面退到保分辨率的档，
+    // 界面也跟着显示实际档位，不要出现「显示原画、跑的是 1080p」。
     final effective = preset == 'original' && !toDirect
-        ? clampPresetForSource(defaultPlayPreset, _srcHeight, codec: targetCodec)
+        ? _transcodeFallback(codec: targetCodec)
         : preset;
+    if (preset == 'original' && colorBlocked) {
+      _showNotice(
+        tr('player.colorFallback', {
+          'source': tr('player.reason.${_srcHdr.reason}'),
+          'actual':
+              playQualityPresetOf(effective)?.labelFor(targetCodec) ??
+              effective,
+        }),
+        log: '切清晰度触发色调映射回退：src=${_srcHdr.reason} preset=$effective',
+      );
+    }
     final pos = _absPosition(_player.state.position);
     setState(() => _switching = true);
+    // 新一次换档允许再提示一次编码回落
+    _codecNoticeShown = false;
     try {
       // 服务端建新会话会取消这部片还在排队 / 正在转的旧会话，
       // 所以换档不会让上一档的转码继续占 CPU。
@@ -907,7 +1109,11 @@ class _PlayerPageState extends State<PlayerPage> {
       // 换档也是新建会话，同样可能撞上「首片还没落盘」，给三次重试
       // （服务端已经会等到 25s，这里再兜几次是给 SMB 片源 + 4K 的余量）。
       // 转码会话的时间轴 0 = pos（见 _ensureTranscode 的 startMs），不能再 seekTo。
-      await _openUrl(u, seekTo: toDirect ? pos : null, retries: toDirect ? 0 : 3);
+      await _openUrl(
+        u,
+        seekTo: toDirect ? pos : null,
+        retries: toDirect ? 0 : 3,
+      );
       if (!mounted) return;
       setState(() {
         _preset = effective;
@@ -931,8 +1137,10 @@ class _PlayerPageState extends State<PlayerPage> {
     final id = widget.itemId;
     if (id == null || id.isEmpty || _isTranscode) return;
     if (_renewing || _renewTries >= 3) return;
-    if (!RegExp(r'40[13]|unauthor|forbidden|expired|token', caseSensitive: false)
-        .hasMatch(message)) {
+    if (!RegExp(
+      r'40[13]|unauthor|forbidden|expired|token',
+      caseSensitive: false,
+    ).hasMatch(message)) {
       return;
     }
     _renewing = true;
@@ -961,7 +1169,10 @@ class _PlayerPageState extends State<PlayerPage> {
       final res = await ApiSession.instance.client.videoSubtitles(id: id);
       if (!mounted) return;
       setState(() => _subs = res.items);
-      final pick = pickSubtitle(res.items, VideoSubtitlePrefs.instance.preferred);
+      final pick = pickSubtitle(
+        res.items,
+        VideoSubtitlePrefs.instance.preferred,
+      );
       if (pick != null) await _applySubtitle(pick);
     } catch (_) {
       // 没有字幕 / 接口失败都不影响播放
@@ -1007,7 +1218,10 @@ class _PlayerPageState extends State<PlayerPage> {
     }
   }
 
-  Future<void> _chooseSubtitle(String preferred, VideoSubtitleFile? file) async {
+  Future<void> _chooseSubtitle(
+    String preferred,
+    VideoSubtitleFile? file,
+  ) async {
     await VideoSubtitlePrefs.instance.set(preferred);
     await _applySubtitle(file);
   }
@@ -1023,7 +1237,9 @@ class _PlayerPageState extends State<PlayerPage> {
   /// 显示成「内嵌字幕 N」而不是把 `#embedded:0` / `und` 直接丢给用户。
   String _subLabel(VideoSubtitleFile sub) {
     final lang = sub.lang;
-    if (lang != null && lang.isNotEmpty && lang.toLowerCase() != 'und') return lang;
+    if (lang != null && lang.isNotEmpty && lang.toLowerCase() != 'und') {
+      return lang;
+    }
     final m = RegExp(r'^#embedded:(\d+)$').firstMatch(sub.name);
     if (m != null) {
       final n = (int.tryParse(m.group(1) ?? '') ?? 0) + 1;
@@ -1046,7 +1262,11 @@ class _PlayerPageState extends State<PlayerPage> {
     if (_cues.isEmpty) {
       NasSnack.show(
         context,
-        tr(_activeSub == null ? 'player.subtitleSearchNoSub' : 'player.subtitleSearchEmpty'),
+        tr(
+          _activeSub == null
+              ? 'player.subtitleSearchNoSub'
+              : 'player.subtitleSearchEmpty',
+        ),
       );
       return;
     }
@@ -1100,8 +1320,11 @@ class _PlayerPageState extends State<PlayerPage> {
                         decoration: InputDecoration(
                           hintText: tr('player.subtitleSearchHint'),
                           hintStyle: const TextStyle(color: Colors.white38),
-                          prefixIcon:
-                              const Icon(Icons.search, color: Colors.white54, size: 20),
+                          prefixIcon: const Icon(
+                            Icons.search,
+                            color: Colors.white54,
+                            size: 20,
+                          ),
                           isDense: true,
                         ),
                       ),
@@ -1136,7 +1359,10 @@ class _PlayerPageState extends State<PlayerPage> {
                                   cue.text,
                                   maxLines: 2,
                                   overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(color: Colors.white, fontSize: 14),
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 14,
+                                  ),
                                 ),
                                 leading: Text(
                                   _fmt(Duration(milliseconds: cue.startMs)),
@@ -1148,7 +1374,9 @@ class _PlayerPageState extends State<PlayerPage> {
                                 onTap: () {
                                   Navigator.of(ctx).pop();
                                   unawaited(
-                                    _seekTo(Duration(milliseconds: cue.startMs)),
+                                    _seekTo(
+                                      Duration(milliseconds: cue.startMs),
+                                    ),
                                   );
                                   _poke();
                                 },
@@ -1173,8 +1401,10 @@ class _PlayerPageState extends State<PlayerPage> {
 
   void _resetHideTimer() {
     _hideTimer?.cancel();
-    _hideTimer = Timer(const Duration(seconds: 4), () {
-      if (mounted && !_locked && _error == null && !_preparing) {
+    // TV 用 6 秒：遥控器挪到想要的按钮要花时间，4 秒经常「刚按到就没了」。
+    final seconds = _tvMode ? 6 : 4;
+    _hideTimer = Timer(Duration(seconds: seconds), () {
+      if (mounted && !_locked && _error == null && !_preparing && !_tvSeeking) {
         setState(() => _controls = false);
       }
     });
@@ -1290,7 +1520,8 @@ class _PlayerPageState extends State<PlayerPage> {
     if (_locked) return;
     final total = _timelineDuration(_player.state.duration);
     if (total <= Duration.zero) return;
-    _dragStartMs = _absPosition(_player.state.position).inMilliseconds.toDouble();
+    _dragStartMs = _absPosition(_player.state.position).inMilliseconds
+        .toDouble();
     _dragDeltaMs = 0;
     setState(() => _dragSeeking = true);
   }
@@ -1298,7 +1529,8 @@ class _PlayerPageState extends State<PlayerPage> {
   void _onSeekDragUpdate(DragUpdateDetails d) {
     if (!_dragSeeking) return;
     final w = MediaQuery.sizeOf(context).width;
-    final total = _timelineDuration(_player.state.duration).inMilliseconds.toDouble();
+    final total = _timelineDuration(_player.state.duration).inMilliseconds
+        .toDouble();
     if (w <= 0 || total <= 0) return;
     // 划满一屏 ≈ 整片的 1/4，夹在 1 分钟 ~ 5 分钟之间：
     // 短片不会一动就到片尾，两小时的片子也不用划十几下才走一分钟。
@@ -1309,7 +1541,8 @@ class _PlayerPageState extends State<PlayerPage> {
   Future<void> _onSeekDragEnd(DragEndDetails d) async {
     if (!_dragSeeking) return;
     final start = _dragStartMs ?? 0;
-    final total = _timelineDuration(_player.state.duration).inMilliseconds.toDouble();
+    final total = _timelineDuration(_player.state.duration).inMilliseconds
+        .toDouble();
     final target = (start + _dragDeltaMs).clamp(0.0, total);
     final jumped = (target - start).abs() >= 1000;
     setState(() {
@@ -1334,7 +1567,8 @@ class _PlayerPageState extends State<PlayerPage> {
   /// 拖动预览：`12:34 / +2:30`
   String get _seekPreviewText {
     final start = _dragStartMs ?? 0;
-    final total = _timelineDuration(_player.state.duration).inMilliseconds.toDouble();
+    final total = _timelineDuration(_player.state.duration).inMilliseconds
+        .toDouble();
     final target = (start + _dragDeltaMs).clamp(0.0, total);
     final sign = _dragDeltaMs < 0 ? '-' : '+';
     final delta = Duration(milliseconds: _dragDeltaMs.abs().round());
@@ -1365,11 +1599,7 @@ class _PlayerPageState extends State<PlayerPage> {
       _poke();
       return;
     }
-    if (seekNeedsJump(
-      target: t,
-      start: _startOffset,
-      loadedEnd: _loadedEnd,
-    )) {
+    if (seekNeedsJump(target: t, start: _startOffset, loadedEnd: _loadedEnd)) {
       if (!allowJump) return;
       // 只比已转出末尾多一点点（键盘 ±10s、拖个几十秒）：不重建会话。
       // 新会话要重新起一次 AMF/AV1 ffmpeg，实测首片 ~10s；这里只差几秒，
@@ -1402,7 +1632,9 @@ class _PlayerPageState extends State<PlayerPage> {
   Future<void> _jumpTo(Duration target) async {
     if (_jumping) return;
     // 刚跳过来首片还没落盘，这时候再拖一次只是把 ffmpeg 掐掉重来
-    if (DateTime.now().difference(_lastJumpAt) < const Duration(seconds: 2)) return;
+    if (DateTime.now().difference(_lastJumpAt) < const Duration(seconds: 2)) {
+      return;
+    }
     final messenger = ScaffoldMessenger.maybeOf(context);
     _lastJumpAt = DateTime.now();
     setState(() => _jumping = true);
@@ -1468,6 +1700,16 @@ class _PlayerPageState extends State<PlayerPage> {
       _setVolume(_volume > 0 ? 0 : 100);
       return KeyEventResult.handled;
     }
+    // TV 遥控器：返回键先退出沉浸，再退出播放器（普通端保持原行为）
+    if (TvScope.of(context) &&
+        (k == LogicalKeyboardKey.escape || k == LogicalKeyboardKey.backspace)) {
+      if (_immersive) {
+        _toggleImmersive();
+      } else {
+        Navigator.of(context).maybePop();
+      }
+      return KeyEventResult.handled;
+    }
     if (k == LogicalKeyboardKey.escape && _immersive) {
       _toggleImmersive();
       return KeyEventResult.handled;
@@ -1501,10 +1743,10 @@ class _PlayerPageState extends State<PlayerPage> {
 
   /// 能跳到哪儿：转码流只能跳到已经转出来的位置，否则 hls.js 拿不到分片干转圈。
   Duration _seekLimit(Duration raw) => seekLimit(
-        reported: raw,
-        source: _sourceDuration,
-        isTranscode: _isTranscode,
-      );
+    reported: raw,
+    source: _sourceDuration,
+    isTranscode: _isTranscode,
+  );
 
   /// 本会话时间轴 0 对应的片源位置（通常 0；从中途起转时 = 起转偏移）。
   Duration get _startOffset => Duration(milliseconds: _startMs);
@@ -1562,36 +1804,33 @@ class _PlayerPageState extends State<PlayerPage> {
   }
 
   Widget _checked(String label, bool on) => Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (on)
-            const Icon(Icons.check, size: 16, color: Colors.white)
-          else
-            const SizedBox(width: 16),
-          const SizedBox(width: 8),
-          Text(label),
-        ],
-      );
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      if (on)
+        const Icon(Icons.check, size: 16, color: Colors.white)
+      else
+        const SizedBox(width: 16),
+      const SizedBox(width: 8),
+      Text(label),
+    ],
+  );
 
   Widget _speedButton() => PopupMenuButton<double>(
-        tooltip: tr('player.speed'),
-        color: const Color(0xFF222222),
-        onSelected: (v) => _setRate(v),
-        itemBuilder: (_) => [
-          for (final v in const [0.5, 0.75, 1.0, 1.25, 1.5, 2.0])
-            PopupMenuItem<double>(
-              value: v,
-              child: _checked('${v}x', _rate == v),
-            ),
-        ],
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8),
-          child: Text(
-            '${_rate}x',
-            style: const TextStyle(color: Colors.white, fontSize: 13),
-          ),
-        ),
-      );
+    tooltip: tr('player.speed'),
+    color: const Color(0xFF222222),
+    onSelected: (v) => _setRate(v),
+    itemBuilder: (_) => [
+      for (final v in const [0.5, 0.75, 1.0, 1.25, 1.5, 2.0])
+        PopupMenuItem<double>(value: v, child: _checked('${v}x', _rate == v)),
+    ],
+    child: Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      child: Text(
+        '${_rate}x',
+        style: const TextStyle(color: Colors.white, fontSize: 13),
+      ),
+    ),
+  );
 
   Widget _qualityButton() {
     // 一档一行：`1080P 1.4Mbps`（码率跟着当前编码走）。别再把分辨率和码率
@@ -1642,75 +1881,99 @@ class _PlayerPageState extends State<PlayerPage> {
   }
 
   Widget _subtitleButton() => PopupMenuButton<String>(
-        tooltip: tr('player.subtitle'),
-        color: const Color(0xFF222222),
-        icon: Icon(
-          _activeSub == null ? Icons.subtitles_outlined : Icons.subtitles,
-          color: Colors.white,
-          size: 20,
+    tooltip: tr('player.subtitle'),
+    color: const Color(0xFF222222),
+    icon: Icon(
+      _activeSub == null ? Icons.subtitles_outlined : Icons.subtitles,
+      color: Colors.white,
+      size: 20,
+    ),
+    onSelected: (value) {
+      if (value == _subtitleSearchSentinel) {
+        unawaited(_showSubtitleSearch());
+      } else if (value == VideoSubtitlePrefs.off) {
+        _chooseSubtitle(VideoSubtitlePrefs.off, null);
+      } else if (value == VideoSubtitlePrefs.auto) {
+        _chooseSubtitle(
+          VideoSubtitlePrefs.auto,
+          _subs.isEmpty ? null : _subs.first,
+        );
+      } else {
+        final file = _findSub(value);
+        _chooseSubtitle(file?.lang ?? VideoSubtitlePrefs.auto, file);
+      }
+      _poke();
+    },
+    itemBuilder: (_) => [
+      PopupMenuItem<String>(
+        value: VideoSubtitlePrefs.off,
+        child: _checked(tr('ui.video.023'), _activeSub == null),
+      ),
+      if (_subs.length > 1)
+        PopupMenuItem<String>(
+          value: VideoSubtitlePrefs.auto,
+          child: _checked(tr('ui.video.024'), false),
         ),
-        onSelected: (value) {
-          if (value == _subtitleSearchSentinel) {
-            unawaited(_showSubtitleSearch());
-          } else if (value == VideoSubtitlePrefs.off) {
-            _chooseSubtitle(VideoSubtitlePrefs.off, null);
-          } else if (value == VideoSubtitlePrefs.auto) {
-            _chooseSubtitle(
-              VideoSubtitlePrefs.auto,
-              _subs.isEmpty ? null : _subs.first,
-            );
-          } else {
-            final file = _findSub(value);
-            _chooseSubtitle(file?.lang ?? VideoSubtitlePrefs.auto, file);
-          }
-          _poke();
-        },
-        itemBuilder: (_) => [
-          PopupMenuItem<String>(
-            value: VideoSubtitlePrefs.off,
-            child: _checked(tr('ui.video.023'), _activeSub == null),
-          ),
-          if (_subs.length > 1)
-            PopupMenuItem<String>(
-              value: VideoSubtitlePrefs.auto,
-              child: _checked(tr('ui.video.024'), false),
-            ),
-          for (final sub in _subs)
-            PopupMenuItem<String>(
-              value: sub.name,
-              child: _checked(_subLabel(sub), _activeSub == sub.name),
-            ),
-          if (_subs.isEmpty)
-            PopupMenuItem<String>(
-              enabled: false,
-              child: Text(tr('player.noSubtitles')),
-            ),
-          // 字幕正文搜索：按关键字找那句台词，点一下就跳到那儿
-          const PopupMenuDivider(),
-          PopupMenuItem<String>(
-            value: _subtitleSearchSentinel,
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.search, size: 18),
-                const SizedBox(width: 8),
-                Text(tr('player.subtitleSearch')),
-              ],
-            ),
-          ),
-        ],
-      );
+      for (final sub in _subs)
+        PopupMenuItem<String>(
+          value: sub.name,
+          child: _checked(_subLabel(sub), _activeSub == sub.name),
+        ),
+      if (_subs.isEmpty)
+        PopupMenuItem<String>(
+          enabled: false,
+          child: Text(tr('player.noSubtitles')),
+        ),
+      // 字幕正文搜索：按关键字找那句台词，点一下就跳到那儿
+      const PopupMenuDivider(),
+      PopupMenuItem<String>(
+        value: _subtitleSearchSentinel,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.search, size: 18),
+            const SizedBox(width: 8),
+            Text(tr('player.subtitleSearch')),
+          ],
+        ),
+      ),
+    ],
+  );
 
   /// 一条音轨的菜单文案：`1 · 上海领声国语 · AC3 5.1`。
   /// 规则和语言表见 `core/audio_track_label.dart`（纯函数，有单测）。
   String _audioTrackLabel(VideoAudioTrack t, int ordinal) => audioTrackLabel(
-        ordinal: ordinal,
-        language: t.language,
-        title: t.title,
-        codec: t.codec,
-        channelLayout: t.channelLayout,
-        channels: t.channels,
-      );
+    ordinal: ordinal,
+    language: t.language,
+    title: t.title,
+    codec: t.codec,
+    channelLayout: t.channelLayout,
+    channels: t.channels,
+  );
+
+  /// 切音轨：源清单可用时按源音轨号重建转码会话（转码流只有一条音轨），
+  /// 否则直接把内核的轨道切过去。菜单和 TV 面板共用这一段，避免两套逻辑。
+  Future<void> _selectAudio(int i) async {
+    final tracks = _player.state.tracks.audio;
+    final source = _audioTracks;
+    if (source.isEmpty) {
+      if (i >= 0 && i < tracks.length) {
+        await _player.setAudioTrack(tracks[i]);
+      }
+      return;
+    }
+    if (i == _audioIndex) return;
+    // 转码流只有一条音轨：切源里的第 N 条要重建会话，并从当前位置接着播
+    // （位置直接当成新会话的起转点，时间轴 0 = 这里）
+    final pos = _absPosition(_player.state.position);
+    _audioIndex = i;
+    final u = await _ensureTranscode(
+      _preset,
+      _codec,
+      startMs: pos.inMilliseconds,
+    );
+    await _openUrl(u);
+  }
 
   Widget _audioButton() {
     final tracks = _player.state.tracks.audio;
@@ -1719,29 +1982,13 @@ class _PlayerPageState extends State<PlayerPage> {
     return PopupMenuButton<int>(
       tooltip: tr('player.audioTrack'),
       color: const Color(0xFF222222),
-      icon: const Icon(Icons.audiotrack_outlined, color: Colors.white, size: 20),
+      icon: const Icon(
+        Icons.audiotrack_outlined,
+        color: Colors.white,
+        size: 20,
+      ),
       onSelected: (i) async {
-        if (source.isEmpty) {
-          if (i >= 0 && i < tracks.length) {
-            await _player.setAudioTrack(tracks[i]);
-          }
-          _poke();
-          return;
-        }
-        if (i == _audioIndex) {
-          _poke();
-          return;
-        }
-        // 转码流只有一条音轨：切源里的第 N 条要重建会话，并从当前位置接着播
-        // （位置直接当成新会话的起转点，时间轴 0 = 这里）
-        final pos = _absPosition(_player.state.position);
-        _audioIndex = i;
-        final u = await _ensureTranscode(
-          _preset,
-          _codec,
-          startMs: pos.inMilliseconds,
-        );
-        await _openUrl(u);
+        await _selectAudio(i);
         _poke();
       },
       itemBuilder: (_) => [
@@ -1749,7 +1996,10 @@ class _PlayerPageState extends State<PlayerPage> {
           for (final t in source)
             PopupMenuItem<int>(
               value: t.index,
-              child: _checked(_audioTrackLabel(t, t.index), _audioIndex == t.index),
+              child: _checked(
+                _audioTrackLabel(t, t.index),
+                _audioIndex == t.index,
+              ),
             )
         else ...[
           for (var i = 0; i < tracks.length; i++)
@@ -1781,8 +2031,10 @@ class _PlayerPageState extends State<PlayerPage> {
   /// 以前弹的是 AlertDialog：一个改音量的动作占用整块屏幕、还要点「返回」关掉，
   /// 播放时很打断。现在跟音轨 / 倍速一样是浮层，点外面就收。
   void _showVolume() {
-    final anchor = _volumeAnchor.currentContext?.findRenderObject() as RenderBox?;
-    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox?;
+    final anchor =
+        _volumeAnchor.currentContext?.findRenderObject() as RenderBox?;
+    final overlay =
+        Overlay.of(context).context.findRenderObject() as RenderBox?;
     if (anchor == null || overlay == null) return;
     const w = 76.0;
     const h = 224.0;
@@ -1881,14 +2133,14 @@ class _PlayerPageState extends State<PlayerPage> {
     final base = s.contains('hevc') || s.contains('h265')
         ? 'H.265 / HEVC'
         : s.contains('avc') || s.contains('h264')
-            ? 'H.264 / AVC'
-            : s.contains('av1')
-                ? 'AV1'
-                : s.contains('vp9')
-                    ? 'VP9'
-                    : s.isEmpty
-                        ? '—'
-                        : '$raw';
+        ? 'H.264 / AVC'
+        : s.contains('av1')
+        ? 'AV1'
+        : s.contains('vp9')
+        ? 'VP9'
+        : s.isEmpty
+        ? '—'
+        : '$raw';
     final tags = <String>[];
     if (_reasons.contains('dolbyVision')) {
       tags.add('DV');
@@ -1906,9 +2158,13 @@ class _PlayerPageState extends State<PlayerPage> {
       if (!mounted) return;
     }
     // 码率：源码率按「文件大小 ÷ 时长」算，目标码率取当前档位 × 实际编码
-    final srcKbps = sourceKbpsOf(widget.sourceBytes ?? 0, widget.durationMs ?? 0);
+    final srcKbps = sourceKbpsOf(
+      widget.sourceBytes ?? 0,
+      widget.durationMs ?? 0,
+    );
     final tgtKbps = _isTranscode
-        ? (playQualityPresetOf(_preset)?.bitrateFor(_actualCodec ?? _codec) ?? 0)
+        ? (playQualityPresetOf(_preset)?.bitrateFor(_actualCodec ?? _codec) ??
+              0)
         : 0;
     showModalBottomSheet<void>(
       context: context,
@@ -1924,10 +2180,15 @@ class _PlayerPageState extends State<PlayerPage> {
               style: const TextStyle(color: Colors.white, fontSize: 17),
             ),
             const SizedBox(height: NasTokens.spaceMd),
-            _infoRow(tr('player.playbackSource'),
-                _isTranscode ? tr('player.sourceTranscode') : tr('player.sourceDirect')),
+            _infoRow(
+              tr('player.playbackSource'),
+              _isTranscode
+                  ? tr('player.sourceTranscode')
+                  : tr('player.sourceDirect'),
+            ),
             // 是否转码中：直连时这一行没有意义，不显示
-            if (_isTranscode) _infoRow(tr('player.transcodeState'), _jobStateText),
+            if (_isTranscode)
+              _infoRow(tr('player.transcodeState'), _jobStateText),
             _infoRow(
               tr('player.bitrate'),
               _isTranscode && tgtKbps > 0
@@ -1937,8 +2198,11 @@ class _PlayerPageState extends State<PlayerPage> {
                     })
                   : mbpsLabel(srcKbps),
             ),
-            _infoRow(tr('player.quality'),
-                playQualityPresetOf(_preset)?.labelFor(_actualCodec ?? _codec) ?? _preset),
+            _infoRow(
+              tr('player.quality'),
+              playQualityPresetOf(_preset)?.labelFor(_actualCodec ?? _codec) ??
+                  _preset,
+            ),
             // 转码时把「源编码 → 实际输出编码」写在同一行，别只给分辨率/码率。
             // 编码回落（如 DV 片源 AV1 → H.264）也会在这里直接看到原因。
             _infoRow(
@@ -1955,12 +2219,34 @@ class _PlayerPageState extends State<PlayerPage> {
               tr('player.resolution'),
               c['width'] == null ? '—' : '${c['width']} × ${v(c['height'])}',
             ),
-            if (_reasons.isNotEmpty)
-              _infoRow(tr('player.hdr'), _reasonText),
-            _infoRow(tr('player.audioNormalize'),
-                PlayPreferences.audioNormalize ? tr('player.on') : tr('player.off')),
-            _infoRow(tr('player.audioDownmix'),
-                PlayPreferences.audioDownmix ? tr('player.on') : tr('player.off')),
+            if (_reasons.isNotEmpty) _infoRow(tr('player.hdr'), _reasonText),
+            // 渲染器 / 色调映射：色不对时先看这两行，比猜「显卡不支持」有用
+            _infoRow(tr('player.renderer'), _caps.summary),
+            _infoRow(
+              tr('player.toneMap'),
+              _srcHdr.isHdr ? tr('player.on') : tr('player.off'),
+            ),
+            _infoRow(
+              tr('player.dvDirect'),
+              _caps.dolbyVisionDirect ? tr('player.on') : tr('player.off'),
+            ),
+            if (_display.known)
+              _infoRow(
+                tr('player.tv.hdrCapability'),
+                _display.maxHdr == HdrLevel.none
+                    ? tr('player.tv.hdrNone')
+                    : tr('player.reason.${_display.maxHdr.reason}'),
+              ),
+            _infoRow(
+              tr('player.audioNormalize'),
+              PlayPreferences.audioNormalize
+                  ? tr('player.on')
+                  : tr('player.off'),
+            ),
+            _infoRow(
+              tr('player.audioDownmix'),
+              PlayPreferences.audioDownmix ? tr('player.on') : tr('player.off'),
+            ),
             const SizedBox(height: NasTokens.spaceSm),
           ],
         ),
@@ -1969,22 +2255,22 @@ class _PlayerPageState extends State<PlayerPage> {
   }
 
   Widget _infoRow(String k, String val) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(k, style: const TextStyle(color: Colors.white54, fontSize: 13)),
-            const SizedBox(width: 12),
-            Flexible(
-              child: Text(
-                val,
-                textAlign: TextAlign.end,
-                style: const TextStyle(color: Colors.white, fontSize: 13),
-              ),
-            ),
-          ],
+    padding: const EdgeInsets.symmetric(vertical: 4),
+    child: Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(k, style: const TextStyle(color: Colors.white54, fontSize: 13)),
+        const SizedBox(width: 12),
+        Flexible(
+          child: Text(
+            val,
+            textAlign: TextAlign.end,
+            style: const TextStyle(color: Colors.white, fontSize: 13),
+          ),
         ),
-      );
+      ],
+    ),
+  );
 
   void _showSettings() {
     showModalBottomSheet<void>(
@@ -2182,8 +2468,8 @@ class _PlayerPageState extends State<PlayerPage> {
           vol <= 0
               ? Icons.volume_off
               : vol < 50
-                  ? Icons.volume_down
-                  : Icons.volume_up,
+              ? Icons.volume_down
+              : Icons.volume_up,
           tr('player.volume'),
           _showVolume,
         ),
@@ -2194,8 +2480,11 @@ class _PlayerPageState extends State<PlayerPage> {
         ? _btn(Icons.playlist_play, tr('player.playlist'), _showPlaylist)
         : null;
     final info = _btn(Icons.info_outline, tr('player.info'), _showInfo);
-    final settings =
-        _btn(Icons.settings_outlined, tr('player.settings'), _showSettings);
+    final settings = _btn(
+      Icons.settings_outlined,
+      tr('player.settings'),
+      _showSettings,
+    );
     final fullscreen = _btn(
       _immersive ? Icons.fullscreen_exit : Icons.fullscreen,
       _immersive ? tr('player.fullscreenExit') : tr('player.fullscreen'),
@@ -2233,14 +2522,7 @@ class _PlayerPageState extends State<PlayerPage> {
       speed,
       quality,
       _btn(Icons.more_horiz, tr('common.more'), () {
-        _showMore([
-          subtitle,
-          audio,
-          ?playlist,
-          info,
-          settings,
-          ?lock,
-        ]);
+        _showMore([subtitle, audio, ?playlist, info, settings, ?lock]);
       }),
       fullscreen,
     ];
@@ -2252,222 +2534,235 @@ class _PlayerPageState extends State<PlayerPage> {
       backgroundColor: const Color(0xFF1B1B1B),
       builder: (_) => Padding(
         padding: const EdgeInsets.all(NasTokens.spaceLg),
-        child: Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: extras,
-        ),
+        child: Wrap(spacing: 8, runSpacing: 8, children: extras),
       ),
     );
   }
 
   Widget _progressRow() => StreamBuilder<Duration>(
-        stream: _player.stream.position,
-        builder: (_, pos) => StreamBuilder<Duration>(
-          stream: _player.stream.duration,
-          builder: (_, dur) {
-            // 播放器时间轴 → 片源时间（从中途起转时要加偏移），时间与滑块都按它来
-            final p = _absPosition(pos.data ?? Duration.zero);
-            final d = _timelineDuration(dur.data ?? Duration.zero);
-            final max = d.inMilliseconds;
-            final cur = p.inMilliseconds.clamp(0, max > 0 ? max : 0);
-            // 「已加载」画到哪儿：直链 = 整片（等于没有第二段），转码 = 已转出位置。
-            // 转码时就给 Slider 的 secondaryTrackValue，轨道形状自己画粗的那一段。
-            final loadedMs = _loadedEnd.inMilliseconds;
-            final loaded = !_isTranscode || max <= 0
-                ? null
-                : loadedMs.clamp(cur, max).toDouble();
-            return Row(
-              children: [
-                // 与 Slider 同源：必须用夹取后的 cur，否则 position 异常时
-                // 左边显示 26:28:05、滑块却被 clamp 到满格。
-                Text(_fmt(Duration(milliseconds: cur)),
-                    style: const TextStyle(color: Colors.white70, fontSize: 12)),
-                Expanded(
-                  child: SliderTheme(
-                    data: SliderTheme.of(context).copyWith(
-                      thumbShape: const RoundSliderThumbShape(
-                        enabledThumbRadius: 6,
-                      ),
-                      trackHeight: _LoadedTrackShape.baseHeight,
-                      trackShape: const _LoadedTrackShape(),
-                      // 已加载段：比底轨粗一倍，一眼能看出「能跳到哪儿」
-                      inactiveTrackColor: const Color(0x3DFFFFFF),
-                      secondaryActiveTrackColor: const Color(0x8AFFFFFF),
-                    ),
-                    child: Slider(
-                      value: cur.toDouble(),
-                      max: max > 0 ? max.toDouble() : 1.0,
-                      secondaryTrackValue: loaded,
-                      // 拖动时只跟随已加载区间；松手才决定要不要为「还没转出来的位置」
-                      // 另起会话（`_seekTo` 的 allowJump）
-                      onChanged: max > 0
-                          ? (v) => _seekTo(
-                                Duration(milliseconds: v.round()),
-                                allowJump: false,
-                              )
-                          : null,
-                      onChangeEnd: max > 0
-                          ? (v) => _seekTo(Duration(milliseconds: v.round()))
-                          : null,
-                    ),
+    stream: _player.stream.position,
+    builder: (_, pos) => StreamBuilder<Duration>(
+      stream: _player.stream.duration,
+      builder: (_, dur) {
+        // 播放器时间轴 → 片源时间（从中途起转时要加偏移），时间与滑块都按它来
+        final p = _absPosition(pos.data ?? Duration.zero);
+        final d = _timelineDuration(dur.data ?? Duration.zero);
+        final max = d.inMilliseconds;
+        final cur = p.inMilliseconds.clamp(0, max > 0 ? max : 0);
+        // 「已加载」画到哪儿：直链 = 整片（等于没有第二段），转码 = 已转出位置。
+        // 转码时就给 Slider 的 secondaryTrackValue，轨道形状自己画粗的那一段。
+        final loadedMs = _loadedEnd.inMilliseconds;
+        final loaded = !_isTranscode || max <= 0
+            ? null
+            : loadedMs.clamp(cur, max).toDouble();
+        return Row(
+          children: [
+            // 与 Slider 同源：必须用夹取后的 cur，否则 position 异常时
+            // 左边显示 26:28:05、滑块却被 clamp 到满格。
+            Text(
+              _fmt(Duration(milliseconds: cur)),
+              style: const TextStyle(color: Colors.white70, fontSize: 12),
+            ),
+            Expanded(
+              child: SliderTheme(
+                data: SliderTheme.of(context).copyWith(
+                  thumbShape: const RoundSliderThumbShape(
+                    enabledThumbRadius: 6,
                   ),
+                  trackHeight: _LoadedTrackShape.baseHeight,
+                  trackShape: const _LoadedTrackShape(),
+                  // 已加载段：比底轨粗一倍，一眼能看出「能跳到哪儿」
+                  inactiveTrackColor: const Color(0x3DFFFFFF),
+                  secondaryActiveTrackColor: const Color(0x8AFFFFFF),
                 ),
-                Text(_fmt(d),
-                    style: const TextStyle(color: Colors.white70, fontSize: 12)),
-              ],
-            );
-          },
-        ),
-      );
+                child: Slider(
+                  value: cur.toDouble(),
+                  max: max > 0 ? max.toDouble() : 1.0,
+                  secondaryTrackValue: loaded,
+                  // 拖动时只跟随已加载区间；松手才决定要不要为「还没转出来的位置」
+                  // 另起会话（`_seekTo` 的 allowJump）
+                  onChanged: max > 0
+                      ? (v) => _seekTo(
+                          Duration(milliseconds: v.round()),
+                          allowJump: false,
+                        )
+                      : null,
+                  onChangeEnd: max > 0
+                      ? (v) => _seekTo(Duration(milliseconds: v.round()))
+                      : null,
+                ),
+              ),
+            ),
+            Text(
+              _fmt(d),
+              style: const TextStyle(color: Colors.white70, fontSize: 12),
+            ),
+          ],
+        );
+      },
+    ),
+  );
 
   Widget _leftControls(bool wide) => StreamBuilder<bool>(
-        stream: _player.stream.playing,
-        builder: (_, snap) {
-          final playing = snap.data ?? false;
-          return Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _btn(
-                playing ? Icons.pause : Icons.play_arrow,
-                playing ? tr('player.pause') : tr('player.play'),
-                () => _player.playOrPause(),
-              ),
-              // 有播放列表才给「上一集 / 下一集」；没有时这两个位置直接消失，
-              // 控制栏不会因为少了按钮而留空。
-              if (wide && _hasPlaylist) ...[
-                _btn(Icons.skip_previous, tr('player.prev'),
-                    () => _playAdjacent(-1)),
-                _btn(Icons.skip_next, tr('player.next'),
-                    () => _playAdjacent(1)),
-              ],
-              _btn(Icons.replay_10, tr('player.rewind10'),
-                  () => _seekBy(-10)),
-              _btn(Icons.forward_30, tr('player.forward30'),
-                  () => _seekBy(30)),
-              PopupMenuButton<String>(
-                tooltip: tr('player.loop'),
-                color: const Color(0xFF222222),
-                icon: Icon(
-                  _loop == PlaylistMode.single
-                      ? Icons.repeat_one
-                      : _loop == PlaylistMode.loop || _shuffle
-                          ? Icons.repeat
-                          : Icons.format_list_numbered,
-                  color: Colors.white,
-                  size: 20,
+    stream: _player.stream.playing,
+    builder: (_, snap) {
+      final playing = snap.data ?? false;
+      return Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _btn(
+            playing ? Icons.pause : Icons.play_arrow,
+            playing ? tr('player.pause') : tr('player.play'),
+            () => _player.playOrPause(),
+          ),
+          // 有播放列表才给「上一集 / 下一集」；没有时这两个位置直接消失，
+          // 控制栏不会因为少了按钮而留空。
+          if (wide && _hasPlaylist) ...[
+            _btn(
+              Icons.skip_previous,
+              tr('player.prev'),
+              () => _playAdjacent(-1),
+            ),
+            _btn(Icons.skip_next, tr('player.next'), () => _playAdjacent(1)),
+          ],
+          _btn(Icons.replay_10, tr('player.rewind10'), () => _seekBy(-10)),
+          _btn(Icons.forward_30, tr('player.forward30'), () => _seekBy(30)),
+          PopupMenuButton<String>(
+            tooltip: tr('player.loop'),
+            color: const Color(0xFF222222),
+            icon: Icon(
+              _loop == PlaylistMode.single
+                  ? Icons.repeat_one
+                  : _loop == PlaylistMode.loop || _shuffle
+                  ? Icons.repeat
+                  : Icons.format_list_numbered,
+              color: Colors.white,
+              size: 20,
+            ),
+            onSelected: (v) {
+              if (v == 'single') {
+                _setLoop(PlaylistMode.single);
+              } else if (v == 'all') {
+                _setLoop(PlaylistMode.loop);
+              } else if (v == 'shuffle') {
+                _setLoop(PlaylistMode.loop, shuffle: true);
+              } else {
+                _setLoop(PlaylistMode.none);
+              }
+              _poke();
+            },
+            itemBuilder: (_) => [
+              PopupMenuItem(
+                value: 'sequence',
+                child: _checked(
+                  tr('player.loopSequence'),
+                  _loop == PlaylistMode.none && !_shuffle,
                 ),
-                onSelected: (v) {
-                  if (v == 'single') {
-                    _setLoop(PlaylistMode.single);
-                  } else if (v == 'all') {
-                    _setLoop(PlaylistMode.loop);
-                  } else if (v == 'shuffle') {
-                    _setLoop(PlaylistMode.loop, shuffle: true);
-                  } else {
-                    _setLoop(PlaylistMode.none);
-                  }
-                  _poke();
-                },
-                itemBuilder: (_) => [
-                  PopupMenuItem(
-                      value: 'sequence',
-                      child: _checked(tr('player.loopSequence'),
-                          _loop == PlaylistMode.none && !_shuffle)),
-                  PopupMenuItem(
-                      value: 'single',
-                      child: _checked(tr('player.loopSingle'),
-                          _loop == PlaylistMode.single)),
-                  PopupMenuItem(
-                      value: 'all',
-                      child: _checked(tr('player.loopAll'),
-                          _loop == PlaylistMode.loop && !_shuffle)),
-                  PopupMenuItem(
-                      value: 'shuffle',
-                      child:
-                          _checked(tr('player.loopShuffle'), _shuffle)),
-                ],
+              ),
+              PopupMenuItem(
+                value: 'single',
+                child: _checked(
+                  tr('player.loopSingle'),
+                  _loop == PlaylistMode.single,
+                ),
+              ),
+              PopupMenuItem(
+                value: 'all',
+                child: _checked(
+                  tr('player.loopAll'),
+                  _loop == PlaylistMode.loop && !_shuffle,
+                ),
+              ),
+              PopupMenuItem(
+                value: 'shuffle',
+                child: _checked(tr('player.loopShuffle'), _shuffle),
               ),
             ],
-          );
-        },
+          ),
+        ],
       );
+    },
+  );
 
   Widget _topBar(bool wide) => Positioned(
-        top: 0,
-        left: 0,
-        right: 0,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [Color(0xAA000000), Color(0x00000000)],
-            ),
-          ),
-          child: SafeArea(
-            bottom: false,
-            child: Row(
-              children: [
-                _btn(Icons.arrow_back, tr('player.back'),
-                    () => Navigator.of(context).maybePop()),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: Text(
-                    widget.title ?? tr('ui.video.001'),
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: Colors.white, fontSize: 15),
-                  ),
-                ),
-                if (wide) _btn(Icons.info_outline, tr('player.info'), _showInfo),
-                if (wide) _btn(Icons.help_outline, tr('player.help'), _showSettings),
-              ],
-            ),
-          ),
+    top: 0,
+    left: 0,
+    right: 0,
+    child: Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0xAA000000), Color(0x00000000)],
         ),
-      );
+      ),
+      child: SafeArea(
+        bottom: false,
+        child: Row(
+          children: [
+            _btn(
+              Icons.arrow_back,
+              tr('player.back'),
+              () => Navigator.of(context).maybePop(),
+            ),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                widget.title ?? tr('ui.video.001'),
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: Colors.white, fontSize: 15),
+              ),
+            ),
+            if (wide) _btn(Icons.info_outline, tr('player.info'), _showInfo),
+            if (wide)
+              _btn(Icons.help_outline, tr('player.help'), _showSettings),
+          ],
+        ),
+      ),
+    ),
+  );
 
   Widget _bottomBar(bool wide) => Positioned(
-        left: 0,
-        right: 0,
-        bottom: 0,
-        child: Container(
-          padding: const EdgeInsets.fromLTRB(12, 28, 12, 8),
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.bottomCenter,
-              end: Alignment.topCenter,
-              colors: [Color(0xCC000000), Color(0x00000000)],
-            ),
-          ),
-          child: SafeArea(
-            top: false,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    child: Container(
+      padding: const EdgeInsets.fromLTRB(12, 28, 12, 8),
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.bottomCenter,
+          end: Alignment.topCenter,
+          colors: [Color(0xCC000000), Color(0x00000000)],
+        ),
+      ),
+      child: SafeArea(
+        top: false,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _progressRow(),
+            Row(
               children: [
-                _progressRow(),
-                Row(
-                  children: [
-                    _leftControls(wide),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: SingleChildScrollView(
-                        scrollDirection: Axis.horizontal,
-                        reverse: true,
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: _rightControls(wide),
-                        ),
-                      ),
+                _leftControls(wide),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    reverse: true,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: _rightControls(wide),
                     ),
-                  ],
+                  ),
                 ),
               ],
             ),
-          ),
+          ],
         ),
-      );
+      ),
+    ),
+  );
 
   Widget _centerControls(bool wide) {
     if (wide) return const SizedBox.shrink();
@@ -2497,8 +2792,7 @@ class _PlayerPageState extends State<PlayerPage> {
                 ),
               ),
               const SizedBox(width: 24),
-              _btn(Icons.forward_30, tr('player.forward30'),
-                  () => _seekBy(30)),
+              _btn(Icons.forward_30, tr('player.forward30'), () => _seekBy(30)),
             ],
           ),
         ),
@@ -2522,13 +2816,21 @@ class _PlayerPageState extends State<PlayerPage> {
               _absPosition(snap.data ?? Duration.zero).inMilliseconds,
             );
             if (text.isEmpty) return const SizedBox.shrink();
+            // 字号 / 位置来自 `VideoSubtitlePrefs`（TV 面板可调，默认 1.0 / 底部，
+            // 与旧版完全一致）。位置档 0/1/2 分别再抬高 0 / 90 / 200。
+            final scale = VideoSubtitlePrefs.instance.scale;
+            final posOffset = switch (VideoSubtitlePrefs.instance.position) {
+              1 => 90.0,
+              2 => 200.0,
+              _ => 0.0,
+            };
             return Align(
               alignment: Alignment.bottomCenter,
               child: Padding(
                 padding: EdgeInsets.only(
                   left: 32,
                   right: 32,
-                  bottom: _controls && !_locked ? 140 : 48,
+                  bottom: (_controls && !_locked ? 140 : 48) + posOffset,
                 ),
                 child: Container(
                   padding: const EdgeInsets.symmetric(
@@ -2542,9 +2844,9 @@ class _PlayerPageState extends State<PlayerPage> {
                   child: Text(
                     text,
                     textAlign: TextAlign.center,
-                    style: const TextStyle(
+                    style: TextStyle(
                       color: Colors.white,
-                      fontSize: 20,
+                      fontSize: 20 * scale,
                       height: 1.35,
                       fontWeight: FontWeight.w500,
                     ),
@@ -2575,20 +2877,19 @@ class _PlayerPageState extends State<PlayerPage> {
                     tr('player.preparing'),
                     style: const TextStyle(color: Colors.white, fontSize: 16),
                   ),
-                  const SizedBox(height: NasTokens.spaceSm),
-                  Text(
-                    tr('player.preparingHint', {'reason': _reasonText}),
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(color: Colors.white70, fontSize: 13),
-                  ),
-                  const SizedBox(height: NasTokens.spaceMd),
-                  OutlinedButton(
-                    onPressed: () {
-                      setState(() => _preparing = false);
-                      _openUrl(_directUrl);
-                    },
-                    child: Text(tr('player.tryOriginal')),
-                  ),
+                  // 这行「检测到 杜比视界 / HEVC…边转边播」以前常驻加载页，
+                  // 用户看到的是一堆看不懂的术语。原因仍然可查：播放信息面板里
+                  // 「HDR」那一行就是它。
+                  if (!_tvMode) ...[
+                    const SizedBox(height: NasTokens.spaceMd),
+                    OutlinedButton(
+                      onPressed: () {
+                        setState(() => _preparing = false);
+                        _openUrl(_directUrl);
+                      },
+                      child: Text(tr('player.tryOriginal')),
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -2613,8 +2914,10 @@ class _PlayerPageState extends State<PlayerPage> {
                   child: CircularProgressIndicator(strokeWidth: 2),
                 ),
                 SizedBox(width: 8),
-                Text(tr(_jumping ? 'player.seekingTarget' : 'player.switching'),
-                    style: const TextStyle(color: Colors.white)),
+                Text(
+                  tr(_jumping ? 'player.seekingTarget' : 'player.switching'),
+                  style: const TextStyle(color: Colors.white),
+                ),
               ],
             ),
           ),
@@ -2653,188 +2956,858 @@ class _PlayerPageState extends State<PlayerPage> {
   }
 
   Widget _errorLayer() => Center(
-        child: Padding(
-          padding: const EdgeInsets.all(NasTokens.spaceLg),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
+    child: Padding(
+      padding: const EdgeInsets.all(NasTokens.spaceLg),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            tr('ui.video.h891441'),
+            style: TextStyle(
+              color: context.nasDanger,
+              fontSize: NasTokens.fontSubtitle,
+            ),
+          ),
+          const SizedBox(height: NasTokens.spaceSm),
+          Text(
+            _error!,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: Colors.white70,
+              fontSize: NasTokens.fontCaption,
+            ),
+          ),
+          const SizedBox(height: NasTokens.spaceMd),
+          // 播放失败后错误层会盖住控制栏，用户点不到画质菜单 —— 这就是
+          // 「切换分辨率 / 编码方式不生效」的实际表现。这里把恢复入口直接
+          // 放到错误页上：重试当前地址，或一键换到最稳的 H.264 重新建会话。
+          Wrap(
+            alignment: WrapAlignment.center,
+            spacing: NasTokens.spaceSm,
             children: [
-              Text(
-                tr('ui.video.h891441'),
-                style: TextStyle(
-                  color: context.nasDanger,
-                  fontSize: NasTokens.fontSubtitle,
+              if (_isTranscode && _codec != 'h264')
+                OutlinedButton(
+                  onPressed: _retryWithH264,
+                  child: Text(tr('player.retryWithH264')),
                 ),
+              OutlinedButton(
+                onPressed: _retryPlay,
+                child: Text(tr('player.retry')),
               ),
-              const SizedBox(height: NasTokens.spaceSm),
-              Text(
-                _error!,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: Colors.white70,
-                  fontSize: NasTokens.fontCaption,
-                ),
+              OutlinedButton(
+                onPressed: () => Navigator.of(context).maybePop(),
+                child: Text(tr('common.back')),
               ),
-              const SizedBox(height: NasTokens.spaceMd),
-              // 播放失败后错误层会盖住控制栏，用户点不到画质菜单 —— 这就是
-              // 「切换分辨率 / 编码方式不生效」的实际表现。这里把恢复入口直接
-              // 放到错误页上：重试当前地址，或一键换到最稳的 H.264 重新建会话。
-              Wrap(
-                alignment: WrapAlignment.center,
-                spacing: NasTokens.spaceSm,
-                children: [
-                  if (_isTranscode && _codec != 'h264')
-                    OutlinedButton(
-                      onPressed: _retryWithH264,
-                      child: Text(tr('player.retryWithH264')),
-                    ),
-                  OutlinedButton(
-                    onPressed: _retryPlay,
-                    child: Text(tr('player.retry')),
+            ],
+          ),
+          const SizedBox(height: NasTokens.spaceSm),
+          Text(
+            tr('ui.video.h4ad584'),
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: Colors.white54,
+              fontSize: NasTokens.fontCaption,
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+
+  // ---------------------------------------------------------------- TV 控制层
+  //
+  // 遥控器只有五类键：方向、OK、返回、播放/暂停、快进/快退。这里全部用
+  // 「索引式焦点」处理（_tvRow / _tvIndex），不依赖 Flutter 的焦点遍历，
+  // 也不依赖控件是否布局在可视区域内 —— 按钮数量随片源变化，靠几何走焦点
+  // 会在「有没有上一集」这种差异上直接卡死。
+
+  int get _tvPlayIndex => 0;
+
+  List<_TvAction> _tvActions() {
+    final playing = _player.state.playing;
+    return <_TvAction>[
+      _TvAction(
+        icon: playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
+        label: tr(playing ? 'player.pause' : 'player.play'),
+        onTap: () {
+          _player.playOrPause();
+          _poke();
+        },
+      ),
+      _TvAction(
+        icon: Icons.replay_10_rounded,
+        label: tr('player.rewind10'),
+        onTap: () => _seekBy(-10),
+      ),
+      _TvAction(
+        icon: Icons.forward_30_rounded,
+        label: tr('player.forward30'),
+        onTap: () => _seekBy(30),
+      ),
+      if (_hasPlaylist)
+        _TvAction(
+          icon: Icons.skip_previous_rounded,
+          label: tr('player.prev'),
+          onTap: () => _playAdjacent(-1),
+        ),
+      if (_hasPlaylist)
+        _TvAction(
+          icon: Icons.skip_next_rounded,
+          label: tr('player.next'),
+          onTap: () => _playAdjacent(1),
+        ),
+      _TvAction(
+        icon: Icons.speed_rounded,
+        label: tr('player.speed'),
+        onTap: _tvSpeedPanel,
+      ),
+      _TvAction(
+        icon: _activeSub == null ? Icons.subtitles_outlined : Icons.subtitles,
+        label: tr('player.subtitle'),
+        onTap: _tvSubtitlePanel,
+      ),
+      _TvAction(
+        icon: Icons.audiotrack_outlined,
+        label: tr('player.audioTrack'),
+        onTap: _tvAudioPanel,
+      ),
+      _TvAction(
+        icon: Icons.hd_outlined,
+        label: tr('player.quality'),
+        onTap: _tvQualityPanel,
+      ),
+      _TvAction(
+        icon: Icons.info_outline_rounded,
+        label: tr('player.info'),
+        onTap: _tvInfoPanel,
+      ),
+    ];
+  }
+
+  void _tvMove(int dx, int dy) {
+    final actions = _tvActions();
+    if (dy < 0) {
+      if (_tvRow == 1) {
+        setState(() {
+          _tvRow = 0;
+          _tvSeeking = false;
+        });
+      }
+      return;
+    }
+    if (dy > 0) {
+      if (_tvRow == 0) {
+        setState(() {
+          _tvRow = 1;
+          _tvSeeking = false;
+        });
+      }
+      return;
+    }
+    if (_tvRow == 0) {
+      // 进度条行：左右 = 调待跳转目标（10 秒一档，长按连续触发）
+      _tvSeekNudge(dx * 10);
+      return;
+    }
+    final next = (_tvIndex + dx).clamp(0, actions.length - 1);
+    if (next != _tvIndex) setState(() => _tvIndex = next);
+  }
+
+  void _tvSeekNudge(int seconds) {
+    final total = _sourceDuration.inMilliseconds;
+    final cur = _tvSeeking
+        ? _tvSeekMs
+        : _absPosition(_player.state.position).inMilliseconds.toDouble();
+    final minMs = _startMs.toDouble();
+    final maxMs = total > 0 ? total.toDouble() : double.infinity;
+    setState(() {
+      _tvSeeking = true;
+      _tvSeekMs = (cur + seconds * 1000).clamp(minMs, maxMs);
+    });
+  }
+
+  Future<void> _tvSeekCommit() async {
+    final target = Duration(milliseconds: _tvSeekMs.round());
+    setState(() => _tvSeeking = false);
+    await _seekTo(target);
+    _poke();
+  }
+
+  /// 返回键语义（TV）：先收面板 / 取消 seek 预览 / 收控制层，最后才退出播放。
+  void _tvBack() {
+    if (_tvSeeking) {
+      setState(() => _tvSeeking = false);
+      return;
+    }
+    if (_controls) {
+      _hideTimer?.cancel();
+      setState(() => _controls = false);
+      return;
+    }
+    _allowPop = true;
+    setState(() {});
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) Navigator.of(context).maybePop();
+    });
+  }
+
+  KeyEventResult _onTvKey(KeyEvent event) {
+    if (event is KeyUpEvent) return KeyEventResult.ignored;
+    final k = event.logicalKey;
+
+    final isOk =
+        k == LogicalKeyboardKey.enter ||
+        k == LogicalKeyboardKey.numpadEnter ||
+        k == LogicalKeyboardKey.select ||
+        k == LogicalKeyboardKey.gameButtonA ||
+        k == LogicalKeyboardKey.space;
+    final isBack =
+        k == LogicalKeyboardKey.escape ||
+        k == LogicalKeyboardKey.backspace ||
+        k == LogicalKeyboardKey.goBack;
+
+    if (isBack) {
+      _tvBack();
+      return KeyEventResult.handled;
+    }
+
+    // 媒体键：不管控制层在不在都直接生效（电视遥控器最爱用这两个）
+    if (k == LogicalKeyboardKey.mediaPlayPause) {
+      _player.playOrPause();
+      _poke();
+      return KeyEventResult.handled;
+    }
+    if (k == LogicalKeyboardKey.mediaFastForward) {
+      _seekBy(30);
+      _poke();
+      return KeyEventResult.handled;
+    }
+    if (k == LogicalKeyboardKey.mediaRewind) {
+      _seekBy(-10);
+      _poke();
+      return KeyEventResult.handled;
+    }
+
+    if (!_controls) {
+      // 控制层收起时：左右直接快进快退，上下切集，OK 唤出控制层
+      if (k == LogicalKeyboardKey.arrowLeft) {
+        _seekBy(-10);
+        _poke();
+        return KeyEventResult.handled;
+      }
+      if (k == LogicalKeyboardKey.arrowRight) {
+        _seekBy(30);
+        _poke();
+        return KeyEventResult.handled;
+      }
+      if (k == LogicalKeyboardKey.arrowUp && _hasPlaylist) {
+        _playAdjacent(-1);
+        return KeyEventResult.handled;
+      }
+      if (k == LogicalKeyboardKey.arrowDown && _hasPlaylist) {
+        _playAdjacent(1);
+        return KeyEventResult.handled;
+      }
+      if (isOk) {
+        setState(() {
+          _controls = true;
+          _tvRow = 1;
+          _tvIndex = _tvPlayIndex;
+        });
+        _resetHideTimer();
+        return KeyEventResult.handled;
+      }
+      return KeyEventResult.ignored;
+    }
+
+    if (k == LogicalKeyboardKey.arrowLeft) {
+      _tvMove(-1, 0);
+      return KeyEventResult.handled;
+    }
+    if (k == LogicalKeyboardKey.arrowRight) {
+      _tvMove(1, 0);
+      return KeyEventResult.handled;
+    }
+    if (k == LogicalKeyboardKey.arrowUp) {
+      _tvMove(0, -1);
+      return KeyEventResult.handled;
+    }
+    if (k == LogicalKeyboardKey.arrowDown) {
+      _tvMove(0, 1);
+      return KeyEventResult.handled;
+    }
+    if (isOk) {
+      if (_tvRow == 0) {
+        if (_tvSeeking) {
+          unawaited(_tvSeekCommit());
+        } else {
+          _tvSeekNudge(0);
+        }
+      } else {
+        final actions = _tvActions();
+        if (_tvIndex >= 0 && _tvIndex < actions.length) {
+          actions[_tvIndex].onTap();
+        }
+      }
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
+  Widget _tvTopBar() {
+    final m = TvLayout.of(context);
+    return Positioned(
+      top: 0,
+      left: 0,
+      right: 0,
+      child: Container(
+        padding: EdgeInsets.symmetric(horizontal: m.px(24), vertical: m.px(16)),
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [Color(0xB3000000), Color(0x00000000)],
+          ),
+        ),
+        child: SafeArea(
+          bottom: false,
+          child: Row(
+            children: [
+              Icon(
+                Icons.arrow_back_rounded,
+                color: Colors.white,
+                size: m.px(26),
+              ),
+              SizedBox(width: m.px(10)),
+              Expanded(
+                child: Text(
+                  widget.title ?? tr('ui.video.001'),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: m.px(24),
+                    fontWeight: FontWeight.w700,
                   ),
-                  OutlinedButton(
-                    onPressed: () => Navigator.of(context).maybePop(),
-                    child: Text(tr('common.back')),
-                  ),
-                ],
-              ),
-              const SizedBox(height: NasTokens.spaceSm),
-              Text(
-                tr('ui.video.h4ad584'),
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: Colors.white54,
-                  fontSize: NasTokens.fontCaption,
                 ),
+              ),
+              Text(
+                tr('tv.player.hint'),
+                style: TextStyle(color: Colors.white54, fontSize: m.px(13)),
               ),
             ],
           ),
         ),
-      );
+      ),
+    );
+  }
+
+  Widget _tvBottomBar() {
+    final m = TvLayout.of(context);
+    final actions = _tvActions();
+    return Positioned(
+      left: 0,
+      right: 0,
+      bottom: 0,
+      child: Container(
+        padding: EdgeInsets.fromLTRB(m.px(24), m.px(40), m.px(24), m.px(20)),
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.bottomCenter,
+            end: Alignment.topCenter,
+            colors: [Color(0xD9000000), Color(0x00000000)],
+          ),
+        ),
+        child: SafeArea(
+          top: false,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _tvProgress(),
+              SizedBox(height: m.px(14)),
+              TvPlayerBar(
+                focusedIndex: _tvRow == 1 ? _tvIndex : -1,
+                buttons: [
+                  for (var i = 0; i < actions.length; i += 1)
+                    TvPlayerButton(
+                      icon: actions[i].icon,
+                      label: actions[i].label,
+                      highlighted: _tvRow == 1 && _tvIndex == i,
+                      onTap: () {
+                        setState(() {
+                          _tvRow = 1;
+                          _tvIndex = i;
+                        });
+                        actions[i].onTap();
+                      },
+                    ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _tvProgress() {
+    return StreamBuilder<Duration>(
+      stream: _player.stream.position,
+      initialData: _player.state.position,
+      builder: (_, snap) {
+        final total = _timelineDuration(_player.state.duration);
+        final totalMs = total.inMilliseconds;
+        double frac(Duration d) =>
+            totalMs <= 0 ? 0 : (d.inMilliseconds / totalMs).clamp(0.0, 1.0);
+        final abs = _absPosition(snap.data ?? Duration.zero);
+        final played = frac(
+          Duration(
+            milliseconds: _tvSeeking ? _tvSeekMs.round() : abs.inMilliseconds,
+          ),
+        );
+        return TvPlayerProgress(
+          progress: played,
+          loaded: _isTranscode ? frac(_loadedEnd) : null,
+          seekTarget: _tvSeeking ? played : null,
+          highlighted: _tvRow == 0,
+          leftLabel: _fmt(abs),
+          rightLabel: _fmt(total),
+        );
+      },
+    );
+  }
+
+  /// 片源 / 播放信息（TV 面板版）。键 → 值两列网格，遥控器上下左右都能翻。
+  List<TvPanelOption> _tvInfoOptions() {
+    final c = widget.compat ?? const <String, dynamic>{};
+    String v(dynamic x) => x == null || '$x'.isEmpty ? '—' : '$x';
+    final srcKbps = sourceKbpsOf(
+      widget.sourceBytes ?? 0,
+      widget.durationMs ?? 0,
+    );
+    final tgtKbps =
+        playQualityPresetOf(_preset)?.bitrateFor(_actualCodec ?? _codec) ?? 0;
+    String row(String k, String val) => '$k|$val';
+    final pairs = <String>[
+      row(
+        tr('player.playbackSource'),
+        _isTranscode ? tr('player.sourceTranscode') : tr('player.sourceDirect'),
+      ),
+      if (_isTranscode) row(tr('player.transcodeState'), _jobStateText),
+      row(
+        tr('player.bitrate'),
+        _isTranscode && tgtKbps > 0
+            ? tr('player.rateTo', {
+                'from': mbpsLabel(srcKbps),
+                'to': mbpsLabel(tgtKbps),
+              })
+            : mbpsLabel(srcKbps),
+      ),
+      row(
+        tr('player.quality'),
+        playQualityPresetOf(_preset)?.labelFor(_actualCodec ?? _codec) ??
+            _preset,
+      ),
+      row(tr('player.videoCodec'), _sourceCodecLabel(c['videoCodec'])),
+      row(tr('player.audioCodec'), v(c['audioCodec'])),
+      row(
+        tr('player.resolution'),
+        c['width'] == null ? '—' : '${c['width']} × ${v(c['height'])}',
+      ),
+      row(
+        tr('player.hdr'),
+        _srcHdr == HdrLevel.none
+            ? 'SDR'
+            : tr('player.reason.${_srcHdr.reason}'),
+      ),
+      row(
+        tr('player.tv.hdrCapability'),
+        _display.known
+            ? (_display.maxHdr == HdrLevel.none
+                  ? tr('player.tv.hdrNone')
+                  : tr('player.reason.${_display.maxHdr.reason}'))
+            : tr('player.tv.hdrUnknown'),
+      ),
+      row(tr('player.renderer'), _caps.summary),
+      row(
+        tr('player.toneMap'),
+        _srcHdr.isHdr ? tr('player.on') : tr('player.off'),
+      ),
+      row(
+        tr('player.dvDirect'),
+        _caps.dolbyVisionDirect ? tr('player.on') : tr('player.off'),
+      ),
+    ];
+    return [
+      for (final p in pairs)
+        TvPanelOption(
+          value: '__info',
+          label: p.split('|').first,
+          subtitle: p.split('|').last,
+        ),
+    ];
+  }
+
+  Future<void> _tvInfoPanel() async {
+    await TvPlayerPanel.show(
+      context,
+      title: tr('player.mediaInfo'),
+      options: _tvInfoOptions(),
+      columns: 2,
+    );
+    _poke();
+  }
+
+  Future<void> _tvSpeedPanel() async {
+    const speeds = <double>[0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
+    final picked = await TvPlayerPanel.show(
+      context,
+      title: tr('player.speed'),
+      options: [
+        for (final s in speeds)
+          TvPanelOption(
+            value: '$s',
+            label: s == 1.0 ? '1.0x' : '${s}x',
+            selected: (_rate - s).abs() < 0.001,
+          ),
+      ],
+      columns: 3,
+    );
+    if (picked == null) return;
+    final v = double.tryParse(picked);
+    if (v != null) await _setRate(v);
+    _poke();
+  }
+
+  Future<void> _tvSubtitlePanel() async {
+    final options = <TvPanelOption>[
+      TvPanelOption(
+        value: VideoSubtitlePrefs.off,
+        label: tr('ui.video.023'),
+        selected: _activeSub == null,
+      ),
+      for (final sub in _subs)
+        TvPanelOption(
+          value: sub.name,
+          label: _subLabel(sub),
+          selected: _activeSub == sub.name,
+        ),
+      TvPanelOption(
+        value: '__size-',
+        label: tr('player.tv.subtitleSmaller'),
+        subtitle: '${(VideoSubtitlePrefs.instance.scale * 100).round()}%',
+      ),
+      TvPanelOption(
+        value: '__size+',
+        label: tr('player.tv.subtitleLarger'),
+        subtitle: '${(VideoSubtitlePrefs.instance.scale * 100).round()}%',
+      ),
+      for (var i = 0; i < 3; i += 1)
+        TvPanelOption(
+          value: '__pos$i',
+          label: tr('player.tv.subtitlePos.$i'),
+          selected: VideoSubtitlePrefs.instance.position == i,
+        ),
+    ];
+    final picked = await TvPlayerPanel.show(
+      context,
+      title: tr('player.tv.subtitleTitle'),
+      options: options,
+      columns: 3,
+    );
+    if (picked == null) return;
+    switch (picked) {
+      case '__size-':
+        await VideoSubtitlePrefs.instance.setScale(
+          VideoSubtitlePrefs.instance.scale - 0.1,
+        );
+        if (mounted) setState(() {});
+        break;
+      case '__size+':
+        await VideoSubtitlePrefs.instance.setScale(
+          VideoSubtitlePrefs.instance.scale + 0.1,
+        );
+        if (mounted) setState(() {});
+        break;
+      case '__pos0':
+      case '__pos1':
+      case '__pos2':
+        await VideoSubtitlePrefs.instance.setPosition(
+          int.parse(picked.substring(5)),
+        );
+        if (mounted) setState(() {});
+        break;
+      case VideoSubtitlePrefs.off:
+        await _chooseSubtitle(VideoSubtitlePrefs.off, null);
+        break;
+      default:
+        final file = _findSub(picked);
+        await _chooseSubtitle(file?.lang ?? VideoSubtitlePrefs.auto, file);
+    }
+    _poke();
+  }
+
+  Future<void> _tvAudioPanel() async {
+    final tracks = _player.state.tracks.audio;
+    final source = _audioTracks;
+    final options = <TvPanelOption>[
+      if (source.isNotEmpty)
+        for (final t in source)
+          TvPanelOption(
+            value: '${t.index}',
+            label: _audioTrackLabel(t, t.index),
+            selected: _audioIndex == t.index,
+          )
+      else
+        for (var i = 0; i < tracks.length; i += 1)
+          TvPanelOption(
+            value: '$i',
+            label:
+                tracks[i].title ??
+                tracks[i].language ??
+                tr('player.audioTrack'),
+            selected: _audioIndex == i,
+          ),
+      if (source.isEmpty && tracks.isEmpty)
+        TvPanelOption(value: '__none', label: tr('player.noAudioTracks')),
+    ];
+    final picked = await TvPlayerPanel.show(
+      context,
+      title: tr('player.audioTrack'),
+      options: options,
+      columns: 2,
+    );
+    final i = int.tryParse(picked ?? '');
+    if (i == null) return;
+    await _selectAudio(i);
+    _poke();
+  }
+
+  Future<void> _tvQualityPanel() async {
+    final options = presetsForSource(_srcHeight);
+    final picked = await TvPlayerPanel.show(
+      context,
+      title: tr('player.quality'),
+      options: [
+        for (final p in options)
+          TvPanelOption(
+            value: p.key,
+            label: p.labelFor(_codec),
+            selected: _preset == p.key,
+          ),
+      ],
+      hint: tr('player.qualityHint', {
+        'preset': playQualityPresetOf(_preset)?.labelFor(_codec) ?? _preset,
+      }),
+      columns: 3,
+    );
+    if (picked == null || picked == _preset) return;
+    await _switchQuality(picked);
+    _poke();
+  }
+
+  Widget _noticeLayer() {
+    final text = _notice;
+    if (text == null) return const SizedBox.shrink();
+    return Positioned(
+      top: 0,
+      left: 0,
+      right: 0,
+      child: SafeArea(
+        bottom: false,
+        child: Center(
+          child: Container(
+            margin: const EdgeInsets.only(top: 66),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            constraints: const BoxConstraints(maxWidth: 720),
+            decoration: BoxDecoration(
+              color: const Color(0xE6262626),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: Colors.white24),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(
+                  Icons.info_outline_rounded,
+                  color: Colors.white70,
+                  size: 18,
+                ),
+                const SizedBox(width: 8),
+                Flexible(
+                  child: Text(
+                    text,
+                    style: const TextStyle(color: Colors.white, fontSize: 13),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
+    final tv = TvScope.of(context);
     final wide = MediaQuery.sizeOf(context).width >= 720;
-    return Focus(
-      autofocus: true,
-      onKeyEvent: _onKey,
-      child: Scaffold(
-        backgroundColor: Colors.black,
-        body: Stack(
-          // 必须 expand：字幕层 / 状态层在没内容时返回 SizedBox.shrink()，
-          // 它们是「非定位子节点」，默认的 StackFit.loose 会据此把整个 Stack
-          // 算成 0×0 —— 画面、进度条、工具栏全部落在一个零尺寸盒子里，
-          // 表现就是黑屏 + 只有声音（平台视图也拿不到有效尺寸，不生成 slot）。
-          fit: StackFit.expand,
-          children: [
-            Positioned.fill(
-              child: MouseRegion(
-                // 桌面端鼠标一动就把控件唤回来：只靠 onTap 的话控件隐藏后
-                // 用户得先点一下才看得到进度条，Web 上尤其反直觉。
-                onHover: (_) => _poke(),
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  // 单击 = 切换控件显隐（也是进 / 出沉浸的唯一手势）
-                  onTap: _toggleControls,
-                  // 双击 = 全屏（见 _onDoubleTap）
-                  onDoubleTap: _onDoubleTap,
-                  // 横向拖动整块画面 = 快进快退（松手才真跳，见 _onSeekDragEnd）
-                  onHorizontalDragStart: _onSeekDragStart,
-                  onHorizontalDragUpdate: _onSeekDragUpdate,
-                  onHorizontalDragEnd: _onSeekDragEnd,
-                  // 竖向拖动 = 切上一条 / 下一条（仅在有队列时生效，否则松手即忽略）
-                  onVerticalDragStart: _onVerticalDragStart,
-                  onVerticalDragUpdate: _onVerticalDragUpdate,
-                  onVerticalDragEnd: _onVerticalDragEnd,
-                  onLongPressStart: (_) {
-                    _boosting = true;
-                    _player.setRate(2.0);
-                    setState(() {});
-                  },
-                  onLongPressEnd: (_) {
-                    _boosting = false;
-                    _player.setRate(_rate);
-                    setState(() {});
-                  },
-                  child: _videoSurface(),
-                ),
-              ),
-            ),
-            if (_error != null)
-              Positioned.fill(child: _errorLayer())
-            else ...[
-              _subtitleLayer(),
-              _statusLayer(),
-              if (_controls && !_locked) ...[
-                // 顶栏（含左上角返回）必须跟着控件一起出现：以前全屏时
-                // `!_immersive` 会把它藏掉，手机 app 全屏以后**没有任何返回入口**，
-                // 用户只能杀进程。现在点一下画面就出来，再点一下连它一起收起（沉浸）。
-                _topBar(wide),
-                _centerControls(wide),
-                _bottomBar(wide),
-              ],
-              if (_locked)
-                Positioned(
-                  left: 12,
-                  bottom: 12,
-                  child: _btn(Icons.lock, tr('player.unlock'), () {
-                    setState(() => _locked = false);
-                    _poke();
-                  }),
-                ),
-              if (_boosting)
-                Positioned(
-                  top: 16,
-                  left: 0,
-                  right: 0,
-                  child: Center(
-                    child: Card(
-                      color: const Color(0xCC222222),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 6,
-                        ),
-                        child: Text(
-                          tr('player.speedBoost'),
-                          style: const TextStyle(color: Colors.white),
-                        ),
-                      ),
-                    ),
+    return PopScope(
+      // TV：返回键先收控制层 / 取消 seek，再退出播放（见 _tvBack）
+      canPop: _allowPop || !tv,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && tv) _tvBack();
+      },
+      child: Focus(
+        autofocus: true,
+        onKeyEvent: (node, event) {
+          final result = tv ? _onTvKey(event) : _onKey(node, event);
+          // TV 上任何一次按键都算「还在操作」，重新计时自动隐藏
+          if (tv && result == KeyEventResult.handled && _controls) {
+            _resetHideTimer();
+          }
+          return result;
+        },
+        child: Scaffold(
+          backgroundColor: Colors.black,
+          body: Stack(
+            // 必须 expand：字幕层 / 状态层在没内容时返回 SizedBox.shrink()，
+            // 它们是「非定位子节点」，默认的 StackFit.loose 会据此把整个 Stack
+            // 算成 0×0 —— 画面、进度条、工具栏全部落在一个零尺寸盒子里，
+            // 表现就是黑屏 + 只有声音（平台视图也拿不到有效尺寸，不生成 slot）。
+            fit: StackFit.expand,
+            children: [
+              Positioned.fill(
+                child: MouseRegion(
+                  // 桌面端鼠标一动就把控件唤回来：只靠 onTap 的话控件隐藏后
+                  // 用户得先点一下才看得到进度条，Web 上尤其反直觉。
+                  onHover: (_) => _poke(),
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    // 单击 = 切换控件显隐（也是进 / 出沉浸的唯一手势）
+                    onTap: _toggleControls,
+                    // 双击 = 全屏（见 _onDoubleTap）
+                    onDoubleTap: _onDoubleTap,
+                    // 横向拖动整块画面 = 快进快退（松手才真跳，见 _onSeekDragEnd）
+                    onHorizontalDragStart: _onSeekDragStart,
+                    onHorizontalDragUpdate: _onSeekDragUpdate,
+                    onHorizontalDragEnd: _onSeekDragEnd,
+                    // 竖向拖动 = 切上一条 / 下一条（仅在有队列时生效，否则松手即忽略）
+                    onVerticalDragStart: _onVerticalDragStart,
+                    onVerticalDragUpdate: _onVerticalDragUpdate,
+                    onVerticalDragEnd: _onVerticalDragEnd,
+                    onLongPressStart: (_) {
+                      _boosting = true;
+                      _player.setRate(2.0);
+                      setState(() {});
+                    },
+                    onLongPressEnd: (_) {
+                      _boosting = false;
+                      _player.setRate(_rate);
+                      setState(() {});
+                    },
+                    child: _videoSurface(),
                   ),
                 ),
-              // 拖动进度时在画面正中显示目标时间；双击快进给一个 900ms 的短提示。
-              // 两者不同时出现（拖动中不会触发双击）。
-              if (_dragSeeking || _seekHint != null)
-                Positioned.fill(
-                  child: IgnorePointer(
+              ),
+              if (_error != null)
+                Positioned.fill(child: _errorLayer())
+              else ...[
+                _subtitleLayer(),
+                _statusLayer(),
+                if (_controls && !_locked) ...[
+                  // 顶栏（含左上角返回）必须跟着控件一起出现：以前全屏时
+                  // `!_immersive` 会把它藏掉，手机 app 全屏以后**没有任何返回入口**，
+                  // 用户只能杀进程。现在点一下画面就出来，再点一下连它一起收起（沉浸）。
+                  if (tv) _tvTopBar() else _topBar(wide),
+                  if (!tv) _centerControls(wide),
+                  if (tv) _tvBottomBar() else _bottomBar(wide),
+                ],
+                if (_locked)
+                  Positioned(
+                    left: 12,
+                    bottom: 12,
+                    child: _btn(Icons.lock, tr('player.unlock'), () {
+                      setState(() => _locked = false);
+                      _poke();
+                    }),
+                  ),
+                if (_boosting)
+                  Positioned(
+                    top: 16,
+                    left: 0,
+                    right: 0,
                     child: Center(
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 18,
-                          vertical: 10,
-                        ),
-                        decoration: BoxDecoration(
-                          color: const Color(0xCC000000),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Text(
-                          _dragSeeking ? _seekPreviewText : (_seekHint ?? ''),
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 20,
-                            fontWeight: FontWeight.w600,
+                      child: Card(
+                        color: const Color(0xCC222222),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 6,
+                          ),
+                          child: Text(
+                            tr('player.speedBoost'),
+                            style: const TextStyle(color: Colors.white),
                           ),
                         ),
                       ),
                     ),
                   ),
-                ),
+                // 拖动进度时在画面正中显示目标时间；双击快进给一个 900ms 的短提示。
+                // 两者不同时出现（拖动中不会触发双击）。
+                if (_dragSeeking || _seekHint != null || _tvSeeking)
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: Center(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 18,
+                            vertical: 10,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xCC000000),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            _tvSeeking
+                                ? '${_fmt(Duration(milliseconds: _tvSeekMs.round()))}'
+                                      '  (${_tvSeekMs >= _absPosition(_player.state.position).inMilliseconds ? '+' : ''}'
+                                      '${((_tvSeekMs - _absPosition(_player.state.position).inMilliseconds) / 1000).round()}s)'
+                                : _dragSeeking
+                                ? _seekPreviewText
+                                : (_seekHint ?? ''),
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 20,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+              // 提示条放在最上层：全屏 / 控件隐藏时也要看得见
+              _noticeLayer(),
             ],
-          ],
+          ),
         ),
       ),
     );
   }
+}
+
+/// TV 控制层的一个动作（图标 + 文案 + 回调）。
+class _TvAction {
+  const _TvAction({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
 }
 
 /// 音量浮窗的内容：竖着的滑块 + 百分比 + 静音开关。
@@ -2967,7 +3940,8 @@ class _LoadedTrackShape extends SliderTrackShape with BaseSliderTrackShape {
         ),
         const Radius.circular(baseHeight / 2),
       ),
-      Paint()..color = sliderTheme.inactiveTrackColor ?? const Color(0x3DFFFFFF),
+      Paint()
+        ..color = sliderTheme.inactiveTrackColor ?? const Color(0x3DFFFFFF),
     );
 
     void segment(double fromDx, double toDx, double height, Color color) {

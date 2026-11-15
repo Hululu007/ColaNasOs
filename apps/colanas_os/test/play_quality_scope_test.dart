@@ -146,4 +146,26 @@ void main() {
       expect(clampPresetForSource('nope', 720), 'nope');
     });
   });
+
+  group('fallbackPresetPreservingHeight 兜底先保分辨率', () {
+    test('4K 片源兜底到 4K 档，不是 1080P 3M', () {
+      // 「选了原画，播着播着自己变成 1080p 3m」就是这里退错了档
+      expect(fallbackPresetPreservingHeight(2160), '2160p_15m');
+      expect(fallbackPresetPreservingHeight(2076), '2160p_15m');
+    });
+
+    test('1080p 片源兜底到 1080P 最高码率档', () {
+      expect(fallbackPresetPreservingHeight(1080), '1080p_8m');
+      expect(fallbackPresetPreservingHeight(800), '720p_3m');
+    });
+
+    test('片源高度未知 / 非法时回默认档', () {
+      expect(fallbackPresetPreservingHeight(0), defaultPlayPreset);
+      expect(fallbackPresetPreservingHeight(-1), defaultPlayPreset);
+    });
+
+    test('AV1 编码也按同分辨率挑最高码率档', () {
+      expect(fallbackPresetPreservingHeight(1080, codec: 'av1'), '1080p_8m');
+    });
+  });
 }

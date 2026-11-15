@@ -2,6 +2,7 @@ package com.colanas.os
 
 import android.content.pm.PackageManager
 import android.os.Build
+import android.view.Display
 import com.ryanheise.audioservice.AudioServiceActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -13,6 +14,7 @@ class MainActivity : AudioServiceActivity() {
 
     companion object {
         private const val BACKUP_CHANNEL = "com.colanas.os/photo_backup"
+        private const val DISPLAY_CHANNEL = "com.colanas.os/display_caps"
         private const val REQ_NOTIFICATIONS = 1001
     }
 
@@ -50,6 +52,33 @@ class MainActivity : AudioServiceActivity() {
                     else -> result.notImplemented()
                 }
             }
+
+        // 电视 HDR 能力：播放器按它决定「直连原画」还是「服务端色调映射转码」。
+        // 只读能力，不改任何播放状态；老系统 / 通道异常时返回空数组，
+        // Dart 侧按「能力未知」处理（不退化成「不支持」）。
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, DISPLAY_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "hdrTypes" -> result.success(readHdrTypes())
+                    else -> result.notImplemented()
+                }
+            }
+    }
+
+    /// `Display.HdrCapabilities` 的四种类型：
+    /// 1 = Dolby Vision，2 = HDR10，3 = HLG，4 = HDR10+（与 Dart 侧 HdrLevel 对齐）。
+    private fun readHdrTypes(): List<Int> {
+        return runCatching {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return@runCatching emptyList<Int>()
+            val display: Display = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                display ?: windowManager.defaultDisplay
+            } else {
+                @Suppress("DEPRECATION")
+                windowManager.defaultDisplay
+            }
+            val caps = display.hdrCapabilities ?: return@runCatching emptyList<Int>()
+            caps.supportedHdrTypes?.toList() ?: emptyList()
+        }.getOrDefault(emptyList())
     }
 
     private fun notificationGranted(): Boolean {

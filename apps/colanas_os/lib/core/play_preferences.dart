@@ -24,6 +24,18 @@ class PlayPreferences {
     return playQualityPresetOf(saved ?? '')?.key ?? defaultPlayPreset;
   }
 
+  /// 用户**显式保存过**的档位；没存过返回 null。
+  ///
+  /// 播放器要用它判断「是不是第一次用」：TV 端第一次进来默认原画（电视本来就
+  /// 该放原片，转码是降级），桌面 / Web 仍然默认 [defaultPlayPreset]。
+  /// 不能直接用 [preset] 判断 —— 它已经把默认值填进去了，分不出「没存过」。
+  static String? get savedPreset {
+    final saved =
+        SettingsStore.instance.getString(_presetKey) ??
+        SettingsStore.instance.getString('video.preset');
+    return playQualityPresetOf(saved ?? '')?.key;
+  }
+
   static String get codec {
     final saved =
         SettingsStore.instance.getString(_codecKey) ??
@@ -31,9 +43,11 @@ class PlayPreferences {
     return playCodecOf(saved ?? '')?.key ?? defaultPlayCodec;
   }
 
-  static bool get audioNormalize => SettingsStore.instance.getBool(_normalizeKey) == true;
+  static bool get audioNormalize =>
+      SettingsStore.instance.getBool(_normalizeKey) == true;
 
-  static bool get audioDownmix => SettingsStore.instance.getBool(_downmixKey) == true;
+  static bool get audioDownmix =>
+      SettingsStore.instance.getBool(_downmixKey) == true;
 
   /// 所有端统一的默认提前转码时长（分钟）。
   /// 服务端 API 有同样的兜底值（`DEFAULT_LEAD_MINUTES`），保证 SDK / 直接调用
@@ -56,12 +70,16 @@ class PlayPreferences {
     return v > 60 ? 60 : v;
   }
 
-  static Future<void> saveLeadMinutes(int minutes) => SettingsStore.instance.setString(
+  static Future<void> saveLeadMinutes(int minutes) =>
+      SettingsStore.instance.setString(
         _leadKey,
         '${minutes <= 0 ? 0 : (minutes > 60 ? 60 : minutes)}',
       );
 
-  static Future<void> save({required String preset, required String codec}) async {
+  static Future<void> save({
+    required String preset,
+    required String codec,
+  }) async {
     await SettingsStore.instance.setString(_presetKey, preset);
     await SettingsStore.instance.setString(_codecKey, codec);
   }
@@ -73,7 +91,11 @@ class PlayPreferences {
       SettingsStore.instance.setString(_codecKey, codec);
 
   static Future<void> saveAudio({bool? normalize, bool? downmix}) async {
-    if (normalize != null) await SettingsStore.instance.setBool(_normalizeKey, normalize);
-    if (downmix != null) await SettingsStore.instance.setBool(_downmixKey, downmix);
+    if (normalize != null) {
+      await SettingsStore.instance.setBool(_normalizeKey, normalize);
+    }
+    if (downmix != null) {
+      await SettingsStore.instance.setBool(_downmixKey, downmix);
+    }
   }
 }
