@@ -8,6 +8,7 @@ import { probePeerInstance } from '../../../kernel/dev-instance';
 import type { KernelApi, ServerModule } from '../../../kernel/types';
 import { filesRoot, resolveAnyPath } from '../files/fs-root';
 import { isOfflinePath, offlineSmbPrefixes } from '../video/sources';
+import { probeVideo } from '../video/ffmpeg';
 import { listSubtitles } from '../video/subtitles';
 import { embeddedIndex, ensureEmbeddedFile } from '../video/embedded-subs';
 import { PLAYER_SCHEMAS } from './schemas';
@@ -270,7 +271,11 @@ async function buildStaticVodPlaylist(
   row: SessionRow,
   token: string,
 ): Promise<string | null> {
-  const totalMs = await sourceDurationMsOf(k, row.item_id);
+  let totalMs = await sourceDurationMsOf(k, row.item_id);
+  // 时长没入库就现场补一次 —— 没有时长这一条会退化成「只有一个分片的播放列表」
+  // （见 healDurationOf 的注释），那是「播几秒停十几秒」的真因。
+  if (totalMs <= 0) totalMs = await healDurationOf(k, row.item_id);
+  const unknownDuration = totalMs <= 0;
   const actual = actualCodecOf(k, session);
   // 三个编码统一 fMP4（2026-11-16）：MPEG-TS 的 PTS 从 1.48s 起、每片再 +2s，
   // 与静态列表的 EXTINF（0/2/4…）对不上，hls.js 按播放列表建的 buffer 与实际
@@ -283,8 +288,11 @@ async function buildStaticVodPlaylist(
   const segPerPart = leadMs > 0 ? Math.max(1, Math.ceil(leadMs / SEG_MS)) : 0;
   const startMs = Math.max(0, Number(row.start_ms) || 0);
   const remainMs = Math.max(0, totalMs - startMs);
-  // 片源时长还没入库（刚扫描完 / 探测失败）时也不能退回 EVENT 列表：
-  // 用已转出的片数先给一个可播列表，后续分片由播放器按序拉取。
+  // 片源时长已知 → 静态 VOD（按整片预列，播放器从头按序拉就完事）。
+  // 时长未知 → 只能列「已转出的那些片」，这时**绝不能**写 ENDLIST：
+  // 写了一个只有 2 秒的列表就是「播放结束」，播放器播完 2 秒停在原地等，
+  // 用户看到的就是「播几秒停十几秒」。改成 EVENT 让播放器按 targetduration
+  // 继续轮询，后续分段一落盘就接上。
   const totalSegs =
     remainMs > 0
       ? Math.max(1, Math.ceil(remainMs / SEG_MS))
@@ -296,7 +304,7 @@ async function buildStaticVodPlaylist(
     `#EXT-X-VERSION:${fmp4 ? 7 : 3}`,
     `#EXT-X-TARGETDURATION:${SEG_MS / 1000}`,
     '#EXT-X-MEDIA-SEQUENCE:0',
-    '#EXT-X-PLAYLIST-TYPE:VOD',
+    `#EXT-X-PLAYLIST-TYPE:${unknownDuration ? 'EVENT' : 'VOD'}`,
     '#EXT-X-START:TIME-OFFSET=0',
   ];
   // fMP4 只声明**一次** MAP，指向 p0 的 init.mp4。
@@ -319,13 +327,14 @@ async function buildStaticVodPlaylist(
       if (lastPart !== null) lines.push('#EXT-X-DISCONTINUITY');
       lastPart = part;
     }
-    const dur = i === totalSegs - 1
+    // 时长未知时每片都是完整的一拍，末片没有「不足 2 秒」的概念
+    const dur = !unknownDuration && i === totalSegs - 1
       ? Math.max(0.1, (remainMs - i * SEG_MS) / 1000)
       : SEG_MS / 1000;
     lines.push(`#EXTINF:${dur.toFixed(3)},`);
     lines.push(`seg${String(local).padStart(5, '0')}.${ext}${q}`);
   }
-  lines.push('#EXT-X-ENDLIST');
+  if (!unknownDuration) lines.push('#EXT-X-ENDLIST');
   return `${lines.join('\n')}\n`;
 }
 
@@ -339,6 +348,47 @@ async function sourceDurationMsOf(k: KernelApi, itemId: string): Promise<number>
     `.execute(k.db)
   ).rows;
   return Math.max(0, Number(rows[0]?.duration) || 0);
+}
+
+/**
+ * 时长没入库时现场 ffprobe 一次，并把结果写回 `video_items`。
+ *
+ * 库里有一整批片源 `duration` 是 NULL（扫描时探测失败，或文件当时还在写）：
+ * 2026-11-17 实测 `E:/other/kfc` 5313 条里 753 条没有时长。
+ * 没有时长 → 播放列表只能按「已转出的片数」列片，而一片只有 2 秒，
+ * 于是列表长度 2 秒、播完就 `播放结束`，用户看到的是「播几秒停十几秒」，
+ * 跟码率 / 解码 / 网络都没关系。
+ *
+ * `ffmpeg -i` 只读文件头，一两百毫秒就回来；写回库以后这条片再也不走这条兜底。
+ * 顺手把高度 / 编码一起补上（客户端的档位菜单和「直连指纹」都依赖它们）。
+ */
+async function healDurationOf(k: KernelApi, itemId: string): Promise<number> {
+  const rel = await itemPath(k, itemId);
+  if (!rel) return 0;
+  const abs = resolveAnyPath(filesRoot(), rel);
+  if (!abs) return 0;
+  try {
+    const meta = await probeVideo(abs);
+    const ms = meta.durationMs ?? 0;
+    if (ms <= 0) return 0;
+    await sql`
+      update video_items
+         set duration = ${ms},
+             width = coalesce(width, ${meta.width}),
+             height = coalesce(height, ${meta.height}),
+             video_codec = coalesce(video_codec, ${meta.videoCodec}),
+             audio_codec = coalesce(audio_codec, ${meta.audioCodec})
+       where id = ${itemId}
+    `.execute(k.db);
+    k.log.info(
+      { item: itemId, durationMs: ms, height: meta.height, codec: meta.videoCodec },
+      '[player] 片源时长缺失，已现场探测并写回',
+    );
+    return ms;
+  } catch {
+    // 探测失败就当没有：下面按 EVENT 列表处理，播放器会一直等新片
+    return 0;
+  }
 }
 
 /**

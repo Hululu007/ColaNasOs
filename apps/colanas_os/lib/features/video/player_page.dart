@@ -510,7 +510,25 @@ class _PlayerPageState extends State<PlayerPage> {
     // 连带转码会话与 open() 全都不执行（黑屏）。统一推到首帧之后再启动。
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      if (_needTranscode && widget.itemId != null) {
+      // 「要不要走转码」有两个理由，以前只认前一个：
+      //   1. 结构上直连不行（MKV / HEVC / DV / 浏览器不认的容器）—— _needTranscode；
+      //   2. 用户自己存了转码档（比如 1080P 2.4M）—— 这时根本就不该碰直链。
+      // 只判 1 的后果（2026-11-17 实测）：片源是 MP4 + H.264，结构上「能直连」，
+      // 于是一进播放页就拿 4K 原片（55Mbps）去 open，外网根本喂不饱 →
+      // 8 秒只走 2.5 秒（0.3 倍速），用户看到「播几秒停十几秒」；同时直连守卫
+      // 十几秒后判定「原画无画面」，又弹一条「原画播放失败，已切到 1080P」——
+      // 明明用户从头到尾选的都是 1080P，界面却在演「自己改画质」。
+      //
+      // 只认「显式存过」的档位（savedPreset != null）：从没选过画质的桌面 / Web
+      // 用户保持原来的直连（4K 片不该因为一个默认值就被压成 1080P），
+      // 手机端首次进来仍由直连守卫按实测速度兜底。
+      //
+      // 注意 initialPreset != null 时调用方已经建好会话（详情页「转码」对话框），
+      // 那个地址本身就是目标档位，必须直接 open，不能再自己建一遍会话。
+      final savedPreset = PlayPreferences.savedPreset;
+      final wantsTranscode =
+          widget.initialPreset == null && savedPreset != null && savedPreset != 'original';
+      if ((_needTranscode || wantsTranscode) && widget.itemId != null) {
         // 以前这里会把「原画」直接改写成 1080P 3M —— 于是用户明明选了原画，
         // 播放器却自己降档（「过了一会儿变成 1080p 3m」的主因之一）。
         // 现在不再改写：直连不直连由 _prepareCompatible 按「本机能不能正确显示」
@@ -977,15 +995,21 @@ class _PlayerPageState extends State<PlayerPage> {
     var reason = '';
     var w = 0;
     var advanced = Duration.zero;
+    var elapsed = Duration.zero;
     for (var i = 0; i < 10; i += 1) {
       await Future<void>.delayed(const Duration(seconds: 1));
       if (!mounted || _isTranscode || _error != null) return;
+      elapsed = Duration(seconds: i + 1);
       w = _player.state.width ?? 0;
       advanced = _player.state.position - startPos;
       // 只看 width 不够：libmpv 对某些 HEVC 10bit / DV 片源能报出视频尺寸，
       // 但画面帧出不来（用户看到的就是「有声音、画面停住」）。
-      // 所以再要求「播放位置真的往前走了」，否则一律按播不了处理。
-      if (w > 0 && advanced > const Duration(seconds: 2)) {
+      // 也不能只看「位置往前走了」：外网喂不饱 4K 原片时，8 秒能走 2.5 秒，
+      // 旧判据把它当「直连正常」，用户那边就是「播几秒停十几秒」。
+      // 所以要求位置**跟得上时间轴**（≥55% 实时速度）才算真的能播。
+      final keptUp =
+          advanced.inMilliseconds >= elapsed.inMilliseconds * 0.55;
+      if (w > 0 && keptUp && advanced > const Duration(seconds: 2)) {
         ClientLogger.instance.info(
           '直连正常 width=$w advanced=${advanced.inMilliseconds}ms 用时${i + 1}s',
           route: 'player.directGuard',
@@ -1017,12 +1041,23 @@ class _PlayerPageState extends State<PlayerPage> {
     if (!mounted || _isTranscode || _error != null) return;
     w = _player.state.width ?? 0;
     advanced = _player.state.position - startPos;
-    if (w > 0 && advanced > const Duration(seconds: 2)) return;
+    if (w > 0 &&
+        advanced > const Duration(seconds: 2) &&
+        advanced.inMilliseconds >= elapsed.inMilliseconds * 0.55) {
+      return;
+    }
+    if (reason.isEmpty) {
+      // 有数据、也在走，但走得太慢：外网 / 无线喂不饱片源码率。
+      // 这种情况不记进「这台机器解不动」（换网络就好了），但必须切转码档。
+      reason = advanced > const Duration(seconds: 2)
+          ? '链路跟不上 ${advanced.inMilliseconds}ms/${elapsed.inMilliseconds}ms'
+          : '超时';
+    }
     ClientLogger.instance.info(
       '直连检测 width=$w advanced=${advanced.inMilliseconds}ms '
       'buffered=${(kIsWeb ? Duration.zero : _player.state.buffer).inMilliseconds}ms '
       'playing=${_player.state.playing} buffering=${_player.state.buffering} '
-      '${reason.isEmpty ? '超时' : reason}',
+      '$reason',
       route: 'player.directGuard',
     );
     // 兜底档：桌面端保分辨率（4K 直连失败不该跳成 1080P），手机 / Web / TV
