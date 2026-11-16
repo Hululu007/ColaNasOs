@@ -14,6 +14,7 @@ import '../../core/app_version.dart';
 import '../../core/autostart.dart';
 import '../../core/display_labels.dart';
 import '../../core/i18n_setup.dart';
+import '../../core/perf_diagnostics.dart';
 import '../../core/session.dart';
 import '../../core/settings_store.dart';
 import 'help_page.dart';
@@ -92,6 +93,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
   /// 日志级别筛选：errorWarn（默认）/ error / warn / info（由服务端过滤）
   String _logsLevel = 'errorWarn';
+
   /// 分页：第 1 页是最新日志，往后翻是更旧的内容
   int _logPage = 0;
   int _logPageSize = 50;
@@ -203,7 +205,10 @@ class _SettingsPageState extends State<SettingsPage> {
       });
       NasSnack.showOn(messenger, tr('settings.saved'));
     } catch (e) {
-      NasSnack.showOn(messenger, tr('common.saveFailed', {'error': '${_hint(e) ?? e}'}));
+      NasSnack.showOn(
+        messenger,
+        tr('common.saveFailed', {'error': '${_hint(e) ?? e}'}),
+      );
     } finally {
       if (mounted) setState(() => _savingServer = false);
     }
@@ -237,7 +242,10 @@ class _SettingsPageState extends State<SettingsPage> {
       });
       NasSnack.showOn(messenger, tr('settings.tlsUploaded'));
     } catch (e) {
-      NasSnack.showOn(messenger, tr('common.saveFailed', {'error': '${_hint(e) ?? e}'}));
+      NasSnack.showOn(
+        messenger,
+        tr('common.saveFailed', {'error': '${_hint(e) ?? e}'}),
+      );
     }
   }
 
@@ -377,11 +385,15 @@ class _SettingsPageState extends State<SettingsPage> {
     try {
       final res = await ApiSession.instance.client.systemCacheClear();
       await _loadCache();
-      NasSnack.showOn(messenger, 
-            tr('settings.cacheCleared', {'size': formatBytes(res.freedBytes)}),
-          );
+      NasSnack.showOn(
+        messenger,
+        tr('settings.cacheCleared', {'size': formatBytes(res.freedBytes)}),
+      );
     } catch (e) {
-      NasSnack.showOn(messenger, tr('common.errorWith', {'error': '${_hint(e) ?? e}'}));
+      NasSnack.showOn(
+        messenger,
+        tr('common.errorWith', {'error': '${_hint(e) ?? e}'}),
+      );
     } finally {
       if (mounted) setState(() => _clearingCache = false);
     }
@@ -418,7 +430,10 @@ class _SettingsPageState extends State<SettingsPage> {
       );
     } catch (e) {
       if (!mounted) return;
-      NasSnack.showOn(messenger, tr('common.errorWith', {'error': '${_hint(e) ?? e}'}));
+      NasSnack.showOn(
+        messenger,
+        tr('common.errorWith', {'error': '${_hint(e) ?? e}'}),
+      );
     } finally {
       if (mounted) setState(() => _compactingDb = false);
     }
@@ -452,7 +467,10 @@ class _SettingsPageState extends State<SettingsPage> {
     } catch (e) {
       if (!mounted) return;
       setState(() => _restarting = false);
-      NasSnack.showOn(messenger, tr('common.errorWith', {'error': '${_hint(e) ?? e}'}));
+      NasSnack.showOn(
+        messenger,
+        tr('common.errorWith', {'error': '${_hint(e) ?? e}'}),
+      );
     }
   }
 
@@ -483,9 +501,10 @@ class _SettingsPageState extends State<SettingsPage> {
     if (url.isEmpty) return;
     ApiSession.instance.configure(url);
     _urlCtrl.text = ApiSession.instance.baseUrl;
-    NasSnack.show(context, 
-          tr('settings.switched', {'url': ApiSession.instance.baseUrl}),
-        );
+    NasSnack.show(
+      context,
+      tr('settings.switched', {'url': ApiSession.instance.baseUrl}),
+    );
   }
 
   Widget _section(String title, List<Widget> children) {
@@ -532,7 +551,10 @@ class _SettingsPageState extends State<SettingsPage> {
               expanded: true,
               value: _llmProvider,
               items: [
-                const DropdownMenuItem(value: 'deepseek', child: Text('DeepSeek')),
+                const DropdownMenuItem(
+                  value: 'deepseek',
+                  child: Text('DeepSeek'),
+                ),
                 DropdownMenuItem(
                   value: 'bailian',
                   child: Text(tr('settings.llm.providerBailian')),
@@ -551,7 +573,8 @@ class _SettingsPageState extends State<SettingsPage> {
                   _llmModelCtrl.text = 'deepseek-flash';
                   _llmWebSearch = false;
                 } else if (v == 'bailian') {
-                  _llmBaseCtrl.text = 'https://dashscope.aliyuncs.com/compatible-mode/v1';
+                  _llmBaseCtrl.text =
+                      'https://dashscope.aliyuncs.com/compatible-mode/v1';
                   _llmModelCtrl.text = 'deepseek-v3';
                   _llmWebSearch = true;
                 } else if (v == 'openai') {
@@ -1035,9 +1058,8 @@ class _SettingsPageState extends State<SettingsPage> {
     return _section(tr('ui.settings.h59156f'), [
       InkWell(
         borderRadius: BorderRadius.circular(NasTokens.radiusSm),
-        onTap: () => Navigator.of(context).push(
-          MaterialPageRoute<void>(builder: (_) => const HelpPage()),
-        ),
+        onTap: () => Navigator.of(context)
+            .push(MaterialPageRoute<void>(builder: (_) => const HelpPage())),
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: NasTokens.spaceSm),
           child: Row(
@@ -1289,8 +1311,9 @@ class _SettingsPageState extends State<SettingsPage> {
           IconButton(
             tooltip: tr('accounts.fileLog.prev'),
             icon: const Icon(Icons.chevron_left),
-            onPressed:
-                _logPage > 0 && !_logsLoading ? () => _goLogPage(_logPage - 1) : null,
+            onPressed: _logPage > 0 && !_logsLoading
+                ? () => _goLogPage(_logPage - 1)
+                : null,
           ),
           Text('${_logPage + 1}'),
           IconButton(
@@ -1340,10 +1363,99 @@ class _SettingsPageState extends State<SettingsPage> {
     ]);
   }
 
+  /// 性能诊断 + 流畅模式。
+  ///
+  /// 默认全关：正常使用不采集任何明细。用户反馈卡顿时打开开关、在卡顿页面
+  /// 操作 1~2 分钟、点「立即上报一次」，把本机或服务端诊断文件回传即可。
+  Widget _perfSection() {
+    final perf = PerfDiagnostics.instance;
+    final hintStyle = TextStyle(
+      fontSize: NasTokens.fontCaption,
+      color: context.nasTextSecondary,
+    );
+    return _section(tr('settings.perf.title'), [
+      ValueListenableBuilder<bool>(
+        valueListenable: perf.enabled,
+        builder: (context, on, _) => SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          secondary: const Icon(Icons.monitor_heart_outlined),
+          title: Text(tr('settings.perf.enable')),
+          subtitle: Text(tr('settings.perf.enableHint'), style: hintStyle),
+          value: on,
+          onChanged: (v) async {
+            await perf.setEnabled(v);
+            if (mounted) setState(() {});
+          },
+        ),
+      ),
+      ValueListenableBuilder<bool>(
+        valueListenable: AppSettings.instance.reduceBlur,
+        builder: (context, on, _) => SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          secondary: const Icon(Icons.speed_rounded),
+          title: Text(tr('settings.perf.smooth')),
+          subtitle: Text(tr('settings.perf.smoothHint'), style: hintStyle),
+          value: on,
+          onChanged: AppSettings.instance.setReduceBlur,
+        ),
+      ),
+      const SizedBox(height: NasTokens.spaceSm),
+      Text(tr('settings.perf.help'), style: hintStyle),
+      const SizedBox(height: NasTokens.spaceSm),
+      Wrap(
+        spacing: NasTokens.spaceSm,
+        runSpacing: NasTokens.spaceXs,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          ValueListenableBuilder<bool>(
+            valueListenable: perf.enabled,
+            builder: (context, on, _) => OutlinedButton.icon(
+              // 结果由下面的「最近上报」一行展示，不再额外弹提示
+              onPressed: on ? perf.reportNow : null,
+              icon: const Icon(Icons.upload_file_outlined, size: 18),
+              label: Text(tr('settings.perf.reportNow')),
+            ),
+          ),
+          ValueListenableBuilder<String>(
+            valueListenable: perf.lastReport,
+            builder: (context, text, _) => Text(
+              text.isEmpty
+                  ? '${tr('settings.perf.last')}: —'
+                  : '${tr('settings.perf.last')}: $text',
+              style: hintStyle,
+            ),
+          ),
+        ],
+      ),
+      const SizedBox(height: NasTokens.spaceXs),
+      ValueListenableBuilder<String>(
+        valueListenable: perf.localLogPath,
+        builder: (context, path, _) => path.isEmpty
+            ? const SizedBox.shrink()
+            : SelectableText(
+                '${tr('settings.perf.local')}: $path',
+                style: hintStyle,
+              ),
+      ),
+      ValueListenableBuilder<String>(
+        valueListenable: perf.serverLogPath,
+        builder: (context, path, _) => path.isEmpty
+            ? const SizedBox.shrink()
+            : SelectableText(
+                '${tr('settings.perf.server')}: $path',
+                style: hintStyle,
+              ),
+      ),
+    ]);
+  }
+
   Widget _about() {
     return _section(tr('settings.about'), [
       // 客户端/服务端共用这套界面，但它是客户端；标题栏之外再在关于页点明身份
-      Text(tr('app.clientName'), style: Theme.of(context).textTheme.titleMedium),
+      Text(
+        tr('app.clientName'),
+        style: Theme.of(context).textTheme.titleMedium,
+      ),
       const SizedBox(height: NasTokens.spaceXs),
       Text(
         tr('settings.version', {'version': kAppVersion}),
@@ -1424,6 +1536,7 @@ class _SettingsPageState extends State<SettingsPage> {
         return [_logsSection(), const SizedBox(height: NasTokens.spaceLg)];
       case 'other':
         return [
+          _perfSection(),
           _maintenance(),
           _about(),
           const SizedBox(height: NasTokens.spaceLg),

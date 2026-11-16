@@ -344,8 +344,8 @@ class _PhotoPageState extends State<PhotoPage> {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
-                  // 面板材质，别再落到深色主题近黑的 surfaceContainerHighest
-                  color: context.nasStyle.panelColor,
+                  // 小标签用亮一档的玻璃色，panelColor 在深色下仍像黑块
+                  color: context.nasStyle.chipColor,
                   borderRadius: BorderRadius.circular(5),
                   border: Border.all(color: context.nasStyle.panelBorderColor),
                 ),
@@ -1664,8 +1664,8 @@ if (ok != true) return;
               separatorBuilder: (_, _) => const SizedBox(width: NasTokens.spaceXs),
               itemBuilder: (context, i) => ActionChip(
                 visualDensity: VisualDensity.compact,
-                // chip 默认着色在深色主题下是近黑胶囊，统一走面板材质
-                backgroundColor: context.nasStyle.panelColor,
+                // chip 默认着色在深色主题下是近黑胶囊，统一走亮一档玻璃色
+                backgroundColor: context.nasStyle.chipColor,
                 side: BorderSide(color: context.nasStyle.panelBorderColor),
                 label: Text(_recentSearches[i]),
                 onPressed: () => _applySuggestion(_recentSearches[i]),
@@ -1691,7 +1691,7 @@ if (ok != true) return;
                 return ActionChip(
                   visualDensity: VisualDensity.compact,
                   // 同上：人物/地点联想胶囊不再用默认近黑底
-                  backgroundColor: context.nasStyle.panelColor,
+                  backgroundColor: context.nasStyle.chipColor,
                   side: BorderSide(color: context.nasStyle.panelBorderColor),
                   label: Text('${s['value']}'),
                   onPressed: () => _applySuggestion('${s['value']}'),

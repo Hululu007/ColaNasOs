@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:nas_core/nas_core.dart';
@@ -50,6 +51,13 @@ class _PhotoGrowthTrackPageState extends State<PhotoGrowthTrackPage> {
   /// 列表页一屏 20 段，逐段请求会打出一串接口调用；失败或还没回来时回落到
   /// stage 自带的封面 / 次图 / 补充图（不足 5 张就有几张显示几张，不补空位）。
   final Map<String, List<PhotoItem>> _stagePhotos = {};
+
+  /// 图片解码后的真实宽高比（按路径记）。
+  ///
+  /// EXIF 旋转过的竖拍照片在库里存的是旋转前尺寸，拿元数据排布会把竖图当横图，
+  /// 结果它所在的那一列被撑高、旁边几列底部空一大截。缩略图解码后把真实比例
+  /// 回填到这里，块内重新按「最矮列优先」均衡一次。
+  final Map<String, double> _measuredRatios = {};
 
   static const int maxPhotos = 8;
 
@@ -440,7 +448,8 @@ class _PhotoGrowthTrackPageState extends State<PhotoGrowthTrackPage> {
                 children: [
                   CircleAvatar(
                     radius: 28,
-                    backgroundColor: context.nasStyle.panelColor,
+                    // 头像兜底用亮一档玻璃色，panelColor 圆片看起来仍是黑的
+                    backgroundColor: context.nasStyle.chipColor,
                     child: const Icon(Icons.add),
                   ),
                   const SizedBox(height: 4),
@@ -472,7 +481,8 @@ class _PhotoGrowthTrackPageState extends State<PhotoGrowthTrackPage> {
                     ),
                     child: CircleAvatar(
                       radius: 26,
-                      backgroundColor: context.nasStyle.panelColor,
+                      // 人物底图：没头像/加载中时用亮一档玻璃色，别露黑底
+                      backgroundColor: context.nasStyle.chipColor,
                       backgroundImage: p.coverFaceId == null
                           ? null
                           : NetworkImage(
@@ -765,12 +775,13 @@ class _PhotoGrowthTrackPageState extends State<PhotoGrowthTrackPage> {
     final buckets = List.generate(used, (_) => <_GrowthPhoto>[]);
     final heights = List.filled(used, 0.0);
     for (final p in photos) {
+      // 用真实宽高比估算列高：竖图只撑高它自己那一列，旁边短图继续往空档里填。
       var target = 0;
       for (var c = 1; c < used; c++) {
         if (heights[c] < heights[target]) target = c;
       }
       buckets[target].add(p);
-      heights[target] += colWidth / p.ratio + gap;
+      heights[target] += colWidth / _ratioOf(p) + gap;
     }
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -784,9 +795,11 @@ class _PhotoGrowthTrackPageState extends State<PhotoGrowthTrackPage> {
               children: [
                 for (final p in buckets[c]) ...[
                   _GrowthPhotoTile(
+                    key: ValueKey(p.path),
                     path: p.path,
                     width: colWidth,
                     fallbackRatio: p.ratio,
+                    onRatioMeasured: (r) => _onRatioMeasured(p.path, r),
                   ),
                   const SizedBox(height: gap),
                 ],
@@ -796,6 +809,18 @@ class _PhotoGrowthTrackPageState extends State<PhotoGrowthTrackPage> {
         ],
       ],
     );
+  }
+
+  /// 排布用的宽高比：解码量到的真实比例优先，没量到才用元数据估算。
+  double _ratioOf(_GrowthPhoto p) =>
+      (_measuredRatios[p.path] ?? p.ratio).clamp(0.5, 2.4).toDouble();
+
+  /// 缩略图解码完成后回填真实比例，块内按新比例重新均衡一次。
+  void _onRatioMeasured(String path, double ratio) {
+    final old = _measuredRatios[path];
+    if (old != null && (old - ratio).abs() < 0.01) return;
+    if (!mounted) return;
+    setState(() => _measuredRatios[path] = ratio);
   }
 
   /// 块内文字：诗句 + 段序号/张数。日期和地点角标在块头。
@@ -854,11 +879,11 @@ class _PhotoGrowthTrackPageState extends State<PhotoGrowthTrackPage> {
   Widget _unknownChip() {
     final style = context.nasStyle;
     final scheme = Theme.of(context).colorScheme;
-    // 以前是黑色半透明底 + 白字，压在面板上像一块黑补丁；改用面板材质 + 主题描边
+    // 以前是黑色半透明底 + 白字，压在面板上像一块黑补丁；改用亮一档玻璃色 + 主题描边
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
       decoration: BoxDecoration(
-        color: style.panelColor,
+        color: style.chipColor,
         borderRadius: BorderRadius.circular(6),
         border: Border.all(color: scheme.primary.withValues(alpha: 0.35)),
       ),
@@ -919,9 +944,11 @@ class _PhotoGrowthTrackPageState extends State<PhotoGrowthTrackPage> {
 /// 只看元数据会把竖图当成横图，块内排布就会出现大块留白。
 class _GrowthPhotoTile extends StatefulWidget {
   const _GrowthPhotoTile({
+    super.key,
     required this.path,
     required this.width,
     required this.fallbackRatio,
+    this.onRatioMeasured,
   });
 
   final String path;
@@ -929,6 +956,9 @@ class _GrowthPhotoTile extends StatefulWidget {
   /// 列宽：照片按这个宽度铺满，高度由比例算
   final double width;
   final double fallbackRatio;
+
+  /// 解码出真实宽高比后回填给上层，让整块照片区重新均衡排布
+  final void Function(double ratio)? onRatioMeasured;
 
   @override
   State<_GrowthPhotoTile> createState() => _GrowthPhotoTileState();
@@ -990,10 +1020,16 @@ class _GrowthPhotoTileState extends State<_GrowthPhotoTile> {
       (info, _) {
         final h = info.image.height;
         if (h <= 0) return;
-        final ratio = info.image.width / h;
+        final ratio = (info.image.width / h)
+            .clamp(_minRatio, _maxRatio)
+            .toDouble();
         if (!mounted) return;
         if (_measured == null || (_measured! - ratio).abs() > 0.01) {
           setState(() => _measured = ratio);
+          // 图片很可能已在缓存里，listener 会在构建过程中同步回调；
+          // 延到微任务再通知上层重排，避免在 build 里触发祖先 setState。
+          final notify = widget.onRatioMeasured;
+          if (notify != null) scheduleMicrotask(() => notify(ratio));
         }
       },
       onError: (Object error, StackTrace? stack) {},
@@ -1466,12 +1502,15 @@ class _PinnedPersonBar extends SliverPersistentHeaderDelegate {
   @override
   Widget build(BuildContext context, double shrinkOffset, bool overlapsContent) {
     final spec = context.nasStyle;
-    final solid = Color.alphaBlend(spec.panelColor, spec.baseColor);
-    return Container(
+    // 与站内其它面板同一套材质：半透明面板色 + 背景模糊 + 风格描边。
+    // 之前把 panelColor 和 baseColor 合成为不透明色，深色主题下合成结果接近
+    // 纯黑，吸顶条就成了一条黑底（2026-11-14 反馈）。保留模糊是为了让滚过去的
+    // 内容不会从头像和名字的缝里透出来。
+    final surface = Container(
       height: extent,
       decoration: BoxDecoration(
-        color: solid,
-        border: Border(bottom: BorderSide(color: Theme.of(context).dividerColor)),
+        color: spec.panelColor,
+        border: Border(bottom: BorderSide(color: spec.panelBorderColor)),
         boxShadow: overlapsContent
             ? [
                 BoxShadow(
@@ -1483,6 +1522,16 @@ class _PinnedPersonBar extends SliverPersistentHeaderDelegate {
             : null,
       ),
       child: child,
+    );
+    if (spec.panelBlur <= 0) return surface;
+    return ClipRect(
+      child: BackdropFilter(
+        filter: ui.ImageFilter.blur(
+          sigmaX: spec.panelBlur,
+          sigmaY: spec.panelBlur,
+        ),
+        child: surface,
+      ),
     );
   }
 

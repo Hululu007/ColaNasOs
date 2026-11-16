@@ -95,8 +95,8 @@ class _PhotoAssistantPageState extends State<PhotoAssistantPage> {
               ActionChip(
                 label: Text(tr(key)),
                 onPressed: _busy ? null : () => _ask(tr(key)),
-                // 预置问题胶囊：走面板材质，别用默认近黑底
-                backgroundColor: context.nasStyle.panelColor,
+                // 预置问题胶囊：走亮一档玻璃色，别用默认近黑底
+                backgroundColor: context.nasStyle.chipColor,
                 side: BorderSide(color: context.nasStyle.panelBorderColor),
               ),
           ],

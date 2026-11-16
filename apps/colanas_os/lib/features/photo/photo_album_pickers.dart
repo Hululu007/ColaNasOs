@@ -419,8 +419,8 @@ class _DateRangeDialogState extends State<_DateRangeDialog> {
                   ActionChip(
                     label: Text(label, style: const TextStyle(fontSize: NasTokens.fontCaption)),
                     onPressed: () => _applyPreset(key),
-                    // 日期预设胶囊走面板材质，别用默认近黑底
-                    backgroundColor: context.nasStyle.panelColor,
+                    // 日期预设胶囊走亮一档玻璃色，别用默认近黑底
+                    backgroundColor: context.nasStyle.chipColor,
                     side: BorderSide(color: context.nasStyle.panelBorderColor),
                   ),
                 ActionChip(
@@ -432,7 +432,7 @@ class _DateRangeDialogState extends State<_DateRangeDialog> {
                     _start = null;
                     _end = null;
                   }),
-                  backgroundColor: context.nasStyle.panelColor,
+                  backgroundColor: context.nasStyle.chipColor,
                   side: BorderSide(color: context.nasStyle.panelBorderColor),
                 ),
               ],

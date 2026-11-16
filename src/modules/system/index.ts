@@ -9,6 +9,7 @@ import type { ServerModule } from '../../../kernel/types';
 import { Err } from '../../../kernel/errors';
 import { registerSystemSettings } from './settings';
 import { registerDevClientLog } from './dev-log';
+import { registerPerfReport } from './perf-report';
 import { gpuProbe } from '../../../kernel/gpu-probe';
 import type { FastifyRequest, FastifyReply } from 'fastify';
 
@@ -471,6 +472,10 @@ export const system: ServerModule = {
 
     // 全局设置 / 缓存清理 / 重启 / 更新检查（配置中心）
     registerSystemSettings(app, k);
+
+    // 客户端性能诊断上报：装机版也要能用（用户点开开关才会上报）。
+    // hide:true → 不进契约 / 不生成 client / SDK 产物不变。
+    registerPerfReport(app, k);
 
     // 开发期客户端日志批量上报：与 kernel/index.ts 的 devTokenEnabled 同款判断，
     // 正式服务端不注册这个路由；hide:true 保证它也不进契约 / 不生成 client。

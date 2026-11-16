@@ -2,6 +2,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
+import '../effects.dart';
 import '../style.dart';
 import '../tokens.dart';
 
@@ -44,7 +45,7 @@ class NasPanel extends StatelessWidget {
     final spec = context.nasStyle;
     final r = radius ?? spec.radius;
     final borderRadius = BorderRadius.circular(r);
-    final sigma = blur ?? spec.panelBlur;
+    final sigma = NasEffects.reduceBlur ? 0.0 : (blur ?? spec.panelBlur);
 
     final surface = Container(
       width: width,

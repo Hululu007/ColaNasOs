@@ -28,6 +28,12 @@ class AppSettings {
   /// 界面字体：`system` / `sans` / `serif` / `mono`（见 `NasFonts`）
   final ValueNotifier<String> fontId = ValueNotifier<String>(NasFonts.system);
 
+  /// 流畅模式：关闭面板毛玻璃模糊（`NasEffects.reduceBlur`）。
+  ///
+  /// **默认关**：极光玻璃是默认观感，不能因为少数机器卡就默认降级。
+  /// 老显卡 / 4K 屏这类 GPU 吃得紧的场景由用户在「设置 → 其他 → 性能诊断」里打开。
+  final ValueNotifier<bool> reduceBlur = ValueNotifier<bool>(false);
+
   /// TV / 大屏模式：大字号 + 常显侧栏 + D-pad 焦点导航
   final ValueNotifier<bool> tvMode = ValueNotifier<bool>(kTvBuild);
 
@@ -52,6 +58,7 @@ class AppSettings {
           styleId,
           fontId,
           tvMode,
+          reduceBlur,
           capabilityNotice,
           startAtBoot,
         ],
@@ -75,6 +82,8 @@ class AppSettings {
 
     final font = SettingsStore.instance.getString('theme.font');
     if (font != null && NasFonts.ids.contains(font)) fontId.value = font;
+
+    reduceBlur.value = SettingsStore.instance.getBool('ui.reduceBlur') == true;
 
     // 未保存过时沿用构建开关（电视盒子固件可直接编 `COLANAS_TV=1`）
     final tv = SettingsStore.instance.getString('ui.tv');
@@ -131,6 +140,12 @@ class AppSettings {
   Future<void> setFont(String id) async {
     fontId.value = NasFonts.ids.contains(id) ? id : NasFonts.system;
     await SettingsStore.instance.setString('theme.font', fontId.value);
+  }
+
+  /// 流畅模式：关掉面板毛玻璃模糊（GPU 省一层 BackdropFilter）
+  Future<void> setReduceBlur(bool on) async {
+    reduceBlur.value = on;
+    await SettingsStore.instance.setBool('ui.reduceBlur', on);
   }
 
   Future<void> setTvMode(bool enabled) async {

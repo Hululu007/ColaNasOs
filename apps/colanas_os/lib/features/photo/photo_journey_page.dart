@@ -169,8 +169,8 @@ class _PhotoJourneyPageState extends State<PhotoJourneyPage> {
                 label: Text(tr('photo.journey.segment', {'index': '${i + 1}'})),
                 selected: i == _segment,
                 onSelected: (_) => _select(i),
-                // chip 默认着色在深色主题下是近黑胶囊，统一走面板材质
-                backgroundColor: context.nasStyle.panelColor,
+                // chip 默认着色在深色主题下是近黑胶囊，统一走亮一档玻璃色
+                backgroundColor: context.nasStyle.chipColor,
                 side: BorderSide(color: context.nasStyle.panelBorderColor),
                 selectedColor: Theme.of(context)
                     .colorScheme

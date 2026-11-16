@@ -8,6 +8,7 @@ import '../core/dev_overlap.dart';
 import '../core/endpoint_host.dart';
 import '../core/app_settings.dart';
 import '../core/app_visibility.dart';
+import '../core/perf_diagnostics.dart';
 import '../core/session.dart';
 import '../core/settings_store.dart';
 import '../features/accounts/accounts_page.dart';
@@ -92,6 +93,8 @@ class _AppShellState extends State<AppShell> {
     super.initState();
     // 应用 ≤4 个时没有工作台，启动直接落在第一个应用上
     _selected = _ids.first;
+    // 性能诊断按「当前页面」归集帧耗时（诊断关闭时是空操作）
+    PerfDiagnostics.instance.setSurface(_selected);
     // 外部入口（Electron 托盘的「同步任务」）请求切 App 时走这里
     AppShell.openAppRequest = _open;
     // 手机端二级页左上角的房子：回到根页面（有工作台时是工作台）
@@ -123,7 +126,8 @@ class _AppShellState extends State<AppShell> {
                 vertical: NasTokens.spaceSm,
               ),
               border: Border.all(
-                color: Theme.of(context).colorScheme.tertiary.withValues(alpha: 0.55),
+                color: Theme.of(context).colorScheme.tertiary
+                    .withValues(alpha: 0.55),
               ),
               child: Row(
                 children: [
@@ -148,12 +152,12 @@ class _AppShellState extends State<AppShell> {
                         Padding(
                           padding: const EdgeInsets.only(top: 2),
                           child: Text(
-                            tr('dev.overlap.hint', {
-                              'port': '${peer ?? 7788}',
-                            }),
+                            tr('dev.overlap.hint', {'port': '${peer ?? 7788}'}),
                             style: TextStyle(
                               fontSize: NasTokens.fontCaption,
-                              color: Theme.of(context).colorScheme.onSurfaceVariant,
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onSurfaceVariant,
                             ),
                           ),
                         ),
@@ -220,9 +224,7 @@ class _AppShellState extends State<AppShell> {
   };
 
   static List<AppDescriptor> get _apps => visibleAppsForCurrentUser(
-    AppRegistry.apps.where(
-      (a) => a.available && _pageById.containsKey(a.id),
-    ),
+    AppRegistry.apps.where((a) => a.available && _pageById.containsKey(a.id)),
   );
 
   /// 应用 ≤4 个时不放「工作台」：直接把第一个应用当首页（用户 2026-11-12）。
@@ -234,7 +236,10 @@ class _AppShellState extends State<AppShell> {
     for (final a in _apps) a.id,
   ];
 
-  void _open(String id) => setState(() => _selected = id);
+  void _open(String id) {
+    PerfDiagnostics.instance.setSurface(id);
+    setState(() => _selected = id);
+  }
 
   String _labelOf(String id) {
     if (id == 'home') return tr('nav.home');
@@ -354,11 +359,15 @@ class _AppShellState extends State<AppShell> {
                 // App 页的顶栏要把底色铺到状态栏下面，所以 top: false。
                 top: currentId == 'home',
                 bottom: false,
-                child: _withDevOverlapNotice(
-                  _withCapabilityNotice(currentId, body, NasTokens.spaceSm),
-                  NasTokens.spaceSm,
+                child: RepaintBoundary(
+                  child: _withDevOverlapNotice(
+                    _withCapabilityNotice(currentId, body, NasTokens.spaceSm),
+                    NasTokens.spaceSm,
+                  ),
                 ),
+                // 紧凑布局同理：内容单独一层，滚动不重绘上层装饰
               ),
+
               // 常驻播放条：无曲目时高度为 0，不占位
               bottomNavigationBar: const MiniPlayerBar(),
             ),
@@ -426,9 +435,13 @@ class _AppShellState extends State<AppShell> {
                         ),
                         SizedBox(height: gap),
                         Expanded(
-                          child: _withDevOverlapNotice(
-                            _withCapabilityNotice(currentId, body, gap),
-                            gap,
+                          // 页面内容独立图层：列表滚动 / 图片渐显只重绘内容区，
+                          // 不会顺带重绘顶栏（它带 BackdropFilter 毛玻璃）。
+                          child: RepaintBoundary(
+                            child: _withDevOverlapNotice(
+                              _withCapabilityNotice(currentId, body, gap),
+                              gap,
+                            ),
                           ),
                         ),
                         // 常驻播放条：宽屏放在内容区下方（不遮挡侧栏）

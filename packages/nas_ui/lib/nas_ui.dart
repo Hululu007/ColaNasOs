@@ -20,6 +20,7 @@ export 'src/components/skeleton.dart';
 export 'src/components/states.dart';
 export 'src/components/top_bar.dart';
 export 'src/components/workbench_card.dart';
+export 'src/effects.dart';
 export 'src/format.dart';
 export 'src/i18n.dart';
 export 'src/responsive.dart';

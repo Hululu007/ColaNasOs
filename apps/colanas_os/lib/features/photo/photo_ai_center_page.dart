@@ -229,8 +229,8 @@ class _PhotoAiCenterPageState extends State<PhotoAiCenterPage> {
                 height: 52,
                 child: p.coverPath == null
                     ? ColoredBox(
-                        // 头像兜底走面板材质，别压成近黑圆
-                        color: context.nasStyle.panelColor,
+                        // 头像兜底用亮一档玻璃色，别压成近黑圆
+                        color: context.nasStyle.chipColor,
                         child: Icon(
                           Icons.person_outline,
                           color: scheme.onSurfaceVariant,

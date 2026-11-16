@@ -1050,7 +1050,7 @@ class _PhotoAnnualReportState extends State<PhotoAnnualReport> {
                     decoration: BoxDecoration(
                       color: i == 0
                           ? theme.colorScheme.primary
-                          : context.nasStyle.panelColor,
+                          : context.nasStyle.chipColor,
                       borderRadius: BorderRadius.circular(14),
                     ),
                     child: Text(
