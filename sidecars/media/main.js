@@ -34,14 +34,54 @@ const send = (obj) => {
   if (process.stdout.writable) process.stdout.write(JSON.stringify(obj) + '\n');
 };
 
+/**
+ * 找 ffmpeg：优先 `COLANAS_FFMPEG`（内核会传绝对路径），其次仓库自带的
+ * `vendor/ffmpeg`，最后才退回 PATH。
+ *
+ * 顺序很重要：PATH 上常常是别的软件捎带的精简版 ffmpeg（实测 ImageMagick 那个
+ * 7.0.1 essentials 没有 `scale_d3d11` / `tonemap_d3d11` / `libplacebo`），
+ * 一旦用它，硬解零拷贝会因为「滤镜不存在」**静默退化成软解 + 硬编** ——
+ * 速度掉一半还不报错，只有 `stats` 里的 filters 能看出来。
+ */
 function findFfmpeg() {
   const cands = [];
-  if (process.env.COLANAS_FFMPEG) cands.push(process.env.COLANAS_FFMPEG);
-  cands.push(process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg');
-  return cands[0];
+  const env = process.env.COLANAS_FFMPEG;
+  if (env && env.trim()) cands.push(env.trim());
+  const exe = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
+  const vendorRoot = nodePath.join(__dirname, '..', '..', 'vendor', 'ffmpeg');
+  cands.push(nodePath.join(vendorRoot, exe), nodePath.join(vendorRoot, 'bin', exe));
+  const hit = cands.find((p) => {
+    try {
+      return fs.existsSync(p);
+    } catch {
+      return false;
+    }
+  });
+  return hit || exe;
 }
 
 const FFMPEG = findFfmpeg();
+// 启动就把「用的哪个 ffmpeg + 缺哪些硬件滤镜」写进内核日志。
+// 精简版 ffmpeg（PATH 上常见）缺 scale_d3d11 / tonemap_d3d11 / libplacebo 时，
+// 零拷贝链会无声退化成「CPU 软解 + 硬编」，速度掉一半但一个错都不报 ——
+// 只有看得到这行才能立刻定位。探测结果有缓存，代价是每进程一次 -filters。
+try {
+  const flt = gpu.detectFilters(FFMPEG);
+  const lacks = [
+    'scale_d3d11',
+    'tonemap_d3d11',
+    'scale_cuda',
+    'tonemap_cuda',
+    'scale_qsv',
+    'libplacebo',
+  ].filter((n) => !gpu.hasCap(flt, n));
+  console.error(
+    `[media] ffmpeg=${FFMPEG} 缺硬件滤镜=${lacks.join(',') || '无'}` +
+      (lacks.length ? '（相关片源会退化成软解）' : ''),
+  );
+} catch {
+  /* 探测失败不影响转码，按原有的逐级回退走 */
+}
 
 const stats = { thumbs: 0, transcodes: 0, reused: 0, fails: 0 };
 const inflight = new Map();
