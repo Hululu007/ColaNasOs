@@ -1258,7 +1258,12 @@ export const videoPlayer: ServerModule = {
           // 这里由服务端直接把它推回队列。
           if (!isPlaylist && part && liveStatus === 'paused') {
             const have = partsOf(k, session);
-            if (part === `p${have.length}`) {
+            // 当前段（最后一段）和下一段都可能被请求。以前只认 `p{have.length}`，
+            // 漏掉了「最后一段还没转完就 paused」：播放器请求段内第 78 片、
+            // 段里只有 30 片时永远等不到（实测 `seg00078.ts?part=p13`
+            // 每次 `waitedMs=10s`、`producedBefore=30`，一直不恢复）。
+            const cur = `p${Math.max(0, have.length - 1)}`;
+            if (part === `p${have.length}` || part === cur) {
               await sql`
                 update player_sessions set status = 'pending', updated_at = ${now()}
                  where id = ${session} and status = 'paused'

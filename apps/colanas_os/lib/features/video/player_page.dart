@@ -1804,6 +1804,21 @@ class _PlayerPageState extends State<PlayerPage> {
   /// [allowJump] = false 用于拖动过程（`onChanged` 每帧都来）：那时只处理
   /// 区间内的实时跟随，跳出区间的等松手（`onChangeEnd`）再建会话，
   /// 否则一次拖动会掐掉好几轮 ffmpeg。
+  /// 播放器已缓冲到的**片源绝对位置**（会话时间轴 + 起转偏移）。
+  ///
+  /// 只信播放器手里的缓冲：服务端的 `transcodedMs` 只说明「转到哪儿了」，
+  /// 不代表播放器已经拿到 —— 两者能差好几分钟（见 [_seekTo] 里的注释）。
+  ///
+  /// `PlayerState.buffer` 两端语义不同：Web 是 `element.buffered.end(最后一段)`
+  /// （会话时间轴上的绝对位置），原生 libmpv 是「当前位置之后还有多少秒」。
+  Duration _bufferedEndAbs() {
+    final pos = _player.state.position;
+    final buf = _player.state.buffer;
+    final end = kIsWeb ? buf : pos + buf;
+    if (end <= Duration.zero) return Duration.zero;
+    return end + _startOffset;
+  }
+
   Future<void> _seekTo(Duration target, {bool allowJump = true}) async {
     _lastSeekAt = DateTime.now();
     final total = _timelineDuration(_player.state.duration);
@@ -1819,6 +1834,21 @@ class _PlayerPageState extends State<PlayerPage> {
       // Web 上 seek 会把当前 play() 打断（"interrupted by a new load request"），
       // 浏览器不会自己续上；想让位置动起来只能显式再 play。仅当用户意图是播。
       if (_wantPlay) unawaited(_ensurePlayingAfterOpen());
+      return;
+    }
+    // 目标超「播放器已缓冲的末尾」时不要原地 seek。
+    //
+    // `_loadedEnd` 用的是**服务端已转出**，它可能远大于播放器手里的分片：
+    // 实测 4K DV 拖到 43 分钟，服务端 p13 段只产出 30 片（60s）就停了，
+    // 播放器原地 seek 过去拿不到分片 → `readyState=1` 干等（日志里
+    // `seg00078.ts part=p13 waitedMs=10198 producedBefore=30` 连刷），
+    // 而 pump 只会开新段（p14），不会补完 p13 的半截段 ⇒ 永远等不到。
+    // 这种位置直接重建会话（从 target 起转 2s 分片），比干等可靠。
+    final bufferedAbs = _bufferedEndAbs();
+    if (bufferedAbs > Duration.zero &&
+        t > bufferedAbs + const Duration(seconds: 2) &&
+        allowJump) {
+      await _jumpTo(t);
       return;
     }
     if (seekNeedsJump(target: t, start: _startOffset, loadedEnd: _loadedEnd)) {
