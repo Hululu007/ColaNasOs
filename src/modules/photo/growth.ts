@@ -1,4 +1,5 @@
 import { sql } from 'kysely';
+import { favoriteOf, notTrashed } from './state';
 import type { KernelApi } from '../../../kernel/types';
 import { chinaPlacePath } from './geo/china';
 import { haversineKm } from './geo/geohash';
@@ -194,14 +195,15 @@ async function loadAssets(k: KernelApi, owner: string, personId: string): Promis
   const rows = (
     await sql<AssetRow>`
       select i.id, i.rel_path, i.taken_at, i.latitude, i.longitude,
-             i.geohash4, i.geohash5, i.width, i.height, i.favorite, i.phash,
+             i.geohash4, i.geohash5, i.width, i.height,
+             ${favoriteOf('i.id', owner)} as favorite, i.phash,
              f.quality, f.score, f.box_left, f.box_top, f.box_width, f.box_height,
              f.img_width, f.img_height
         from photo_items i
         join photo_faces f on f.photo_id = i.id and f.cluster_id = ${personId}
-       where i.in_trash = 0
+       where ${notTrashed('i.id', owner)}
          and coalesce(i.media_kind, 'image') <> 'video'
-         and i.library_id in (select id from photo_libraries where owner_id = ${owner})
+         and i.library_id in (select id from photo_library_scope where owner_id = ${owner})
        order by i.taken_at asc, i.id asc
     `.execute(k.db)
   ).rows;
@@ -310,10 +312,10 @@ async function loadGpsTimeline(
     }>`
       select taken_at, latitude, longitude, geohash4, geohash5
         from photo_items
-       where in_trash = 0
+       where ${notTrashed('photo_items.id', owner)}
          and latitude is not null and longitude is not null
          and coalesce(media_kind, 'image') <> 'video'
-         and library_id in (select id from photo_libraries where owner_id = ${owner})
+         and library_id in (select id from photo_library_scope where owner_id = ${owner})
          and taken_at between ${from} and ${to}
        order by taken_at asc
     `.execute(k.db)
@@ -650,7 +652,11 @@ async function loadStageSizes(k: KernelApi, rows: GrowthStageRow[]) {
 }
 
 /** 每段补充照片：候选池 rank 2..6 里取最多 2 张（前端会再去掉与封面/次图重合的）。 */
-async function loadStageExtras(k: KernelApi, stageIds: string[]): Promise<Map<string, string[]>> {
+async function loadStageExtras(
+  k: KernelApi,
+  owner: string,
+  stageIds: string[],
+): Promise<Map<string, string[]>> {
   const out = new Map<string, string[]>();
   if (stageIds.length === 0) return out;
   const rows = (
@@ -662,7 +668,7 @@ async function loadStageExtras(k: KernelApi, stageIds: string[]): Promise<Map<st
         left join photo_items c on c.id = s.cover_asset_id
        where a.stage_id in (${sql.join(stageIds.map((id) => sql`${id}`), sql`, `)})
          and a.rank between 2 and 6
-         and i.in_trash = 0
+         and ${notTrashed('i.id', owner)}
          and coalesce(i.media_kind, 'image') <> 'video'
          -- 补充图和封面保持同一方向：竖屏段里混一张横图会非常割裂
          and (coalesce(c.width, 0) > coalesce(c.height, 0))
@@ -687,9 +693,9 @@ async function trackFingerprint(k: KernelApi, owner: string, personId: string) {
       select count(distinct i.id) as n, coalesce(max(i.taken_at), 0) as last_at
         from photo_items i
         join photo_faces f on f.photo_id = i.id and f.cluster_id = ${personId}
-       where i.in_trash = 0
+       where ${notTrashed('i.id', owner)}
          and coalesce(i.media_kind, 'image') <> 'video'
-         and i.library_id in (select id from photo_libraries where owner_id = ${owner})
+         and i.library_id in (select id from photo_library_scope where owner_id = ${owner})
     `.execute(k.db)
   ).rows[0];
   return { count: num(row?.n), lastAt: num(row?.last_at) };
@@ -931,7 +937,7 @@ export async function listStages(
   const page = rows.slice(0, limit);
   const last = page.length > 0 ? page[page.length - 1] : null;
   const sizes = await loadStageSizes(k, page);
-  const extras = await loadStageExtras(k, page.map((r) => r.id));
+  const extras = await loadStageExtras(k, owner, page.map((r) => r.id));
   const agg = (
     await sql<{
       stage_count: number;
@@ -991,8 +997,8 @@ export async function stagePhotos(
   limit: number,
 ) {
   const cur = decodeCursor(cursor);
-  let where = sql`i.in_trash = 0
-     and i.library_id in (select id from photo_libraries where owner_id = ${owner})
+  let where = sql`${notTrashed('i.id', owner)}
+     and i.library_id in (select id from photo_library_scope where owner_id = ${owner})
      and i.taken_at between ${num(stage.start_at)} and ${num(stage.end_at)}
      and exists (select 1 from photo_faces f
                   where f.photo_id = i.id and f.cluster_id = ${stage.person_id})`;
@@ -1001,7 +1007,7 @@ export async function stagePhotos(
   }
   const rows = (
     await sql<PhotoItemRow>`
-      select i.* from photo_items i
+      select i.*, ${favoriteOf('i.id', owner)} as favorite from photo_items i
        where ${where}
        order by i.taken_at asc, i.id asc
        limit ${limit + 1}
@@ -1012,8 +1018,8 @@ export async function stagePhotos(
   const total = (
     await sql<{ n: number }>`
       select count(*) as n from photo_items i
-       where i.in_trash = 0
-         and i.library_id in (select id from photo_libraries where owner_id = ${owner})
+       where ${notTrashed('i.id', owner)}
+         and i.library_id in (select id from photo_library_scope where owner_id = ${owner})
          and i.taken_at between ${num(stage.start_at)} and ${num(stage.end_at)}
          and exists (select 1 from photo_faces f
                       where f.photo_id = i.id and f.cluster_id = ${stage.person_id})
@@ -1059,11 +1065,11 @@ export async function stagePhotosBatch(
   type BatchRow = PhotoItemRow & { stage_id: string; rank: number; phash: string | null };
   const rows = (
     await sql<BatchRow>`
-      select a.stage_id, a.rank, i.*
+      select a.stage_id, a.rank, i.*, ${favoriteOf('i.id', owner)} as favorite
         from photo_growth_stage_assets a
         join photo_items i on i.id = a.asset_id
        where a.stage_id in (${idSql})
-         and i.in_trash = 0
+         and ${notTrashed('i.id', owner)}
          and coalesce(i.media_kind, 'image') <> 'video'
        order by a.stage_id asc, a.rank asc
     `.execute(k.db)
@@ -1113,9 +1119,9 @@ export async function stagePhotosBatch(
     if (picked.length < perStage && num(stage.photo_count) > picked.length) {
       const extra = (
         await sql<PhotoItemRow & { phash: string | null }>`
-          select i.* from photo_items i
-           where i.in_trash = 0
-             and i.library_id in (select id from photo_libraries where owner_id = ${owner})
+          select i.*, ${favoriteOf('i.id', owner)} as favorite from photo_items i
+           where ${notTrashed('i.id', owner)}
+             and i.library_id in (select id from photo_library_scope where owner_id = ${owner})
              and i.taken_at between ${num(stage.start_at)} and ${num(stage.end_at)}
              and exists (select 1 from photo_faces f
                           where f.photo_id = i.id and f.cluster_id = ${stage.person_id})
@@ -1207,8 +1213,8 @@ export async function repinStage(
   const rows = (
     await sql<{ rel_path: string }>`
       select i.rel_path from photo_items i
-       where i.id = ${assetId} and i.in_trash = 0
-         and i.library_id in (select id from photo_libraries where owner_id = ${owner})
+       where i.id = ${assetId} and ${notTrashed('i.id', owner)}
+         and i.library_id in (select id from photo_library_scope where owner_id = ${owner})
          and i.taken_at between ${num(stage.start_at)} and ${num(stage.end_at)}
          and exists (select 1 from photo_faces f
                       where f.photo_id = i.id and f.cluster_id = ${stage.person_id})

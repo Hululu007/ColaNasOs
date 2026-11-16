@@ -7,6 +7,7 @@ import { extractFrames } from '../media-frames';
 import { applyAlbumRulesForItems } from '../album-rules';
 import { assignCluster, fromBuffer } from './face';
 import { invalidatePhotoVectorIndex, searchPhotoVectors } from './vector-index';
+import { notTrashed } from '../state';
 import { aiAvailable, ensureSidecar, ffmpegPath } from './sidecar';
 import {
   aiConfig,
@@ -774,7 +775,9 @@ export async function registerPhotoVision(app: any, k: KernelApi): Promise<void>
           select i.id, i.rel_path, i.taken_at, a.score
             from photo_activities a
             join photo_items i on i.id = a.photo_id
-           where a.label = ${q.label ?? ''} and a.score >= 0.078 and i.in_trash = 0
+           where a.label = ${q.label ?? ''} and a.score >= 0.078
+             and ${notTrashed('i.id', String((req as any).user?.sub || ''))}
+             and i.library_id in (select id from photo_library_scope where owner_id = ${String((req as any).user?.sub || '')})
            order by i.taken_at desc limit ${limit}
         `.execute(k.db)
       ).rows;
@@ -801,6 +804,9 @@ export async function registerPhotoVision(app: any, k: KernelApi): Promise<void>
     }),
     async (req: FastifyRequest) => {
       const uid = String((req as any).user?.sub || '');
+      // 集合式聚合：先按可见范围扫一遍活动，再用窗口函数给每个标签挑封面。
+      // 老写法对每个 label 再跑两条相关子查询（label 索引 + 按时间排序），
+      // 标签一多就是成百上千次重复排序。
       const rows = (
         await sql<{
           label: string;
@@ -808,26 +814,24 @@ export async function registerPhotoVision(app: any, k: KernelApi): Promise<void>
           cover_id: string | null;
           cover_path: string | null;
         }>`
-          select a.label, count(*) as n,
-                 (select a2.photo_id
-                    from photo_activities a2
-                    join photo_items i2 on i2.id = a2.photo_id
-                   where a2.label = a.label and a2.score >= 0.078
-                     and i2.in_trash = 0
-                     and i2.library_id in (select id from photo_libraries where owner_id = ${uid})
-                   order by i2.taken_at desc limit 1) as cover_id,
-                 (select i3.rel_path
-                    from photo_activities a3
-                    join photo_items i3 on i3.id = a3.photo_id
-                   where a3.label = a.label and a3.score >= 0.078
-                     and i3.in_trash = 0
-                     and i3.library_id in (select id from photo_libraries where owner_id = ${uid})
-                   order by i3.taken_at desc limit 1) as cover_path
-            from photo_activities a
-            join photo_items i on i.id = a.photo_id
-           where a.score >= 0.078 and i.in_trash = 0
-             and i.library_id in (select id from photo_libraries where owner_id = ${uid})
-           group by a.label order by n desc limit 100
+          with vis as (
+            select a.label, a.photo_id, i.rel_path, i.taken_at
+              from photo_activities a
+              join photo_items i on i.id = a.photo_id
+             where a.score >= 0.078
+               and i.library_id in (select id from photo_library_scope where owner_id = ${uid})
+               and ${notTrashed('i.id', uid)}
+          ),
+          ranked as (
+            select label, photo_id, rel_path,
+                   row_number() over (partition by label order by taken_at desc) as rn
+              from vis
+          )
+          select label, count(*) as n,
+                 max(case when rn = 1 then photo_id end) as cover_id,
+                 max(case when rn = 1 then rel_path end) as cover_path
+            from ranked
+           group by label order by n desc limit 100
         `.execute(k.db)
       ).rows;
       return {
@@ -853,13 +857,15 @@ export async function registerPhotoVision(app: any, k: KernelApi): Promise<void>
         response: { 200: ref('PhotoSceneSummary') },
       },
     }),
-    async () => {
+    async (req: FastifyRequest) => {
+      const uid = String((req as any).user?.sub || '');
       const rows = (
         await sql<{ label: string; n: number }>`
           select s.label, count(*) as n
             from photo_scenes s
             join photo_items i on i.id = s.photo_id
-           where i.in_trash = 0
+           where ${notTrashed('i.id', uid)}
+             and i.library_id in (select id from photo_library_scope where owner_id = ${uid})
            group by s.label order by n desc limit 100
         `.execute(k.db)
       ).rows;
@@ -881,6 +887,7 @@ export async function registerPhotoVision(app: any, k: KernelApi): Promise<void>
     }),
     async (req: FastifyRequest) => {
       const uid = String((req as any).user?.sub || '');
+      // 与活动分布同构的集合式聚合：一次扫描 + 一次窗口排序，避免按标签重复查封面。
       const rows = (
         await sql<{
           label: string;
@@ -889,26 +896,26 @@ export async function registerPhotoVision(app: any, k: KernelApi): Promise<void>
           cover_id: string | null;
           cover_path: string | null;
         }>`
-          select t.label,
-                 count(*) as n,
-                 sum(case when t.gate = 'confident' then 1 else 0 end) as confident,
-                 (select t2.photo_id
-                    from photo_scene_tags t2
-                    join photo_items i2 on i2.id = t2.photo_id
-                   where t2.label = t.label and i2.in_trash = 0
-                     and i2.library_id in (select id from photo_libraries where owner_id = ${uid})
-                   order by i2.taken_at desc, t2.score desc limit 1) as cover_id,
-                 (select i3.rel_path
-                    from photo_scene_tags t3
-                    join photo_items i3 on i3.id = t3.photo_id
-                   where t3.label = t.label and i3.in_trash = 0
-                     and i3.library_id in (select id from photo_libraries where owner_id = ${uid})
-                   order by i3.taken_at desc, t3.score desc limit 1) as cover_path
-            from photo_scene_tags t
-            join photo_items i on i.id = t.photo_id
-           where i.in_trash = 0
-             and i.library_id in (select id from photo_libraries where owner_id = ${uid})
-           group by t.label
+          with vis as (
+            select t.label, t.photo_id, t.gate, t.score, i.rel_path, i.taken_at
+              from photo_scene_tags t
+              join photo_items i on i.id = t.photo_id
+             where i.library_id in (select id from photo_library_scope where owner_id = ${uid})
+               and ${notTrashed('i.id', uid)}
+          ),
+          ranked as (
+            select label, photo_id, rel_path, gate,
+                   row_number() over (
+                     partition by label order by taken_at desc, score desc
+                   ) as rn
+              from vis
+          )
+          select label, count(*) as n,
+                 sum(case when gate = 'confident' then 1 else 0 end) as confident,
+                 max(case when rn = 1 then photo_id end) as cover_id,
+                 max(case when rn = 1 then rel_path end) as cover_path
+            from ranked
+           group by label
            order by n desc
            limit 120
         `.execute(k.db)
@@ -949,8 +956,8 @@ export async function registerPhotoVision(app: any, k: KernelApi): Promise<void>
             from photo_scene_tags t
             join photo_items i on i.id = t.photo_id
            where t.label = ${label}
-             and i.in_trash = 0
-             and i.library_id in (select id from photo_libraries where owner_id = ${uid})
+             and ${notTrashed('i.id', uid)}
+             and i.library_id in (select id from photo_library_scope where owner_id = ${uid})
              ${q.onlyConfident === true ? sql`and t.gate = 'confident'` : sql``}
            order by t.score desc
            limit ${limit}
@@ -991,8 +998,8 @@ export async function registerPhotoVision(app: any, k: KernelApi): Promise<void>
             from photo_scene_tags t
             join photo_items i on i.id = t.photo_id
            where t.photo_id = ${id}
-             and i.in_trash = 0
-             and i.library_id in (select id from photo_libraries where owner_id = ${uid})
+             and ${notTrashed('i.id', uid)}
+             and i.library_id in (select id from photo_library_scope where owner_id = ${uid})
            order by t.score desc
            limit 20
         `.execute(k.db)
@@ -1025,11 +1032,13 @@ export async function registerPhotoVision(app: any, k: KernelApi): Promise<void>
     async (req: FastifyRequest) => {
       const q = (req.query || {}) as { label?: string; limit?: number };
       const limit = Math.min(Number(q.limit || 60) || 60, 200);
+      const uid = String((req as any).user?.sub || '');
       const rows = (
         await sql<{ id: string; rel_path: string; taken_at: number; score: number }>`
           select i.id, i.rel_path, i.taken_at, s.score
           from photo_scenes s join photo_items i on i.id = s.photo_id
-          where s.label = ${q.label ?? ''} and i.in_trash = 0
+          where s.label = ${q.label ?? ''} and ${notTrashed('i.id', uid)}
+            and i.library_id in (select id from photo_library_scope where owner_id = ${uid})
           order by i.taken_at desc limit ${limit}
         `.execute(k.db)
       ).rows;
@@ -1077,7 +1086,7 @@ export async function registerPhotoVision(app: any, k: KernelApi): Promise<void>
       // 比 `library_id in (select ...)` 让 SQLite 每次重算子查询更稳。
       const libIds = (
         await sql<{ id: string }>`
-          select id from photo_libraries where owner_id = ${uid}
+          select id from photo_library_scope where owner_id = ${uid}
         `.execute(k.db)
       ).rows.map((r) => String(r.id));
       if (libIds.length === 0) return { items: [] };
@@ -1107,7 +1116,7 @@ export async function registerPhotoVision(app: any, k: KernelApi): Promise<void>
                cand.map((c) => sql`${c.photoId}`),
                sql`, `,
              )})
-               and in_trash = 0
+               and ${notTrashed('photo_items.id', uid)}
                and library_id in (${libIn})
           `.execute(k.db)
         ).rows;

@@ -43,7 +43,7 @@ export async function registerPhotoLive(
         select id, rel_path, size, mime, live_kind, live_size, live_ms,
                live_offset, live_vendor, live_path from photo_items
          where id = ${q.id || ''}
-           and library_id in (select id from photo_libraries where owner_id = ${uid})
+           and library_id in (select id from photo_library_scope where owner_id = ${uid})
       `.execute(k.db);
       const row = res.rows[0];
       if (!row) return reply.code(404).send({ error: Err.notFound, message: 'photo not found' });

@@ -1,5 +1,6 @@
 import { sql } from 'kysely';
 import type { Kysely } from 'kysely';
+import { notTrashed } from './state';
 
 /**
  * 规则相册：相册除了「手工往里加照片」，还能配一组命中条件，符合的自动进来。
@@ -97,18 +98,24 @@ export async function backfillAlbumByRules(
   db: Kysely<any>,
   albumId: string,
   rules: AlbumRule[],
+  owner = '',
 ): Promise<number> {
   const where = albumRulesWhere(rules);
   if (!where) return 0;
   const now = Math.floor(Date.now() / 1000);
   // 一条 insert ... select 就够：让 SQLite 自己算命中集合，比拉 id 回来再逐条插快得多，
   // 也不用担心两万张照片把内存撑爆。
+  // 有 owner 时必须限定「这个账号能看到且没删的照片」：同源目录是多账号共用的，
+  // 不限定会把别人库里的照片也收进规则相册。
+  const scope = owner
+    ? sql`and i.library_id in (select id from photo_library_scope where owner_id = ${owner})
+          and ${notTrashed('i.id', owner)}`
+    : sql``;
   const res: any = await sql`
     insert or ignore into photo_album_items (album_id, item_id, added_at)
     select ${albumId}, i.id, ${now}
       from photo_items i
-     where i.in_trash = 0
-       and ${where}
+     where ${where} ${scope}
   `.execute(db);
   return Number(res?.numAffectedRows ?? 0) || 0;
 }
@@ -137,11 +144,12 @@ export async function applyAlbumRulesForItems(
     sql`, `,
   );
 
+  // 共享来源后「照片属于库」不再等于「相册能看到」：要按相册 owner 的共享范围再判一次。
   const albums = (
-    await sql<{ id: string; rules_json: string }>`
-      select distinct a.id, a.rules_json
+    await sql<{ id: string; owner_id: string; rules_json: string }>`
+      select distinct a.id, a.owner_id, a.rules_json
         from photo_albums a
-        join photo_libraries l on l.owner_id = a.owner_id
+        join photo_library_scope l on l.owner_id = a.owner_id
         join photo_items i on i.library_id = l.id
        where a.rules_json <> '[]'
          and i.id in (${inList})
@@ -158,7 +166,8 @@ export async function applyAlbumRulesForItems(
       insert or ignore into photo_album_items (album_id, item_id, added_at)
       select ${album.id}, i.id, ${now}
         from photo_items i
-       where i.in_trash = 0 and i.id in (${inList}) and ${where}
+       where i.id in (${inList}) and ${where}
+         and ${notTrashed('i.id', String(album.owner_id || ''))}
     `.execute(db);
     added += Number(res?.numAffectedRows ?? 0) || 0;
   }

@@ -4,6 +4,7 @@ import type { KernelApi } from '../../../../kernel/types';
 import { secured } from '../../../../kernel/route';
 import { Err } from '../../../../kernel/errors';
 import { TAG, PhotoItemRow, toItem, encodeCursor, decodeCursor, newId, likePattern } from '../util';
+import { favoriteOf, notTrashed, onlyFavorite } from '../state';
 import type { PhotoHelpers } from '../helpers';
 
 /**
@@ -78,7 +79,7 @@ function boundingBox(p: PlaceCondition) {
 }
 
 /** 只拼「条件」部分（不含 owner / in_trash），供批量聚合复用 */
-function condOf(c: Conditions) {
+function condOf(c: Conditions, owner: string) {
   const parts: ReturnType<typeof sql>[] = [];
   if (c.scene) {
     parts.push(sql`exists (select 1 from photo_scenes s where s.photo_id = i.id and s.label = ${c.scene})`);
@@ -96,7 +97,7 @@ function condOf(c: Conditions) {
   }
   if (c.from != null) parts.push(sql`i.taken_at >= ${Number(c.from)}`);
   if (c.to != null) parts.push(sql`i.taken_at <= ${Number(c.to)}`);
-  if (c.favorite === true) parts.push(sql`i.favorite = 1`);
+  if (c.favorite === true) parts.push(sql`${onlyFavorite('i.id', owner)}`);
   if (c.place) {
     const { latitude, longitude, dLat, dLng } = boundingBox(c.place);
     parts.push(
@@ -109,9 +110,9 @@ function condOf(c: Conditions) {
 }
 
 function whereOf(owner: string, c: Conditions) {
-  return sql`i.in_trash = 0
-    and i.library_id in (select id from photo_libraries where owner_id = ${owner})
-    and (${condOf(c)})`;
+  return sql`${notTrashed('i.id', owner)}
+    and i.library_id in (select id from photo_library_scope where owner_id = ${owner})
+    and (${condOf(c, owner)})`;
 }
 
 /**
@@ -138,14 +139,14 @@ async function statsOfMany(
     // 别名必须走 sql.raw：sql`` 里所有插值都会被参数化成 `?`，
     // 写成 `as c${i}` 会生成 `as c?` —— 语法错误，整条请求 500。
     const cols = batch.map(
-      (c, i) => sql`sum(case when (${condOf(c)}) then 1 else 0 end) as ${sql.raw(`c${i}`)}`,
+      (c, i) => sql`sum(case when (${condOf(c, owner)}) then 1 else 0 end) as ${sql.raw(`c${i}`)}`,
     );
     const row = (
       await sql`
         select ${sql.join(cols, sql`, `)}
           from photo_items i
-         where i.in_trash = 0
-           and i.library_id in (select id from photo_libraries where owner_id = ${owner})
+         where ${notTrashed('i.id', owner)}
+           and i.library_id in (select id from photo_library_scope where owner_id = ${owner})
       `.execute(k.db)
     ).rows[0] as Record<string, number> | undefined;
 
@@ -359,7 +360,7 @@ export async function registerPhotoSmartRules(
         : sql``;
       const rows = (
         await sql<PhotoItemRow>`
-          select i.* from photo_items i
+          select i.*, ${favoriteOf('i.id', owner)} as favorite from photo_items i
            where ${where}${cursorPart}
            order by i.taken_at desc, i.id
            limit ${limit + 1}
@@ -423,7 +424,7 @@ export async function registerPhotoSmartRules(
       const dir = sql.raw(asc ? 'asc' : 'desc');
       const rows = (
         await sql<PhotoItemRow>`
-          select i.* from photo_items i
+          select i.*, ${favoriteOf('i.id', owner)} as favorite from photo_items i
            where ${where}${cursorPart}
            order by i.taken_at ${dir}, i.id ${dir}
            limit ${limit + 1}

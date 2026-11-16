@@ -4,6 +4,7 @@ import { sql } from 'kysely';
 import type { KernelApi } from '../../../../kernel/types';
 import { fromBuffer } from './face';
 import { modelRoot } from './sidecar';
+import { notTrashed } from '../state';
 
 /**
  * 照片级向量检索（CLIP 图文同空间）。
@@ -215,8 +216,8 @@ export async function scorePhotoVector(
     await sql<{ photo_id: string; vec: Buffer }>`
       select e.photo_id, e.vec from photo_embeddings e
         join photo_items i on i.id = e.photo_id
-       where e.dim = ${qv.length} and i.in_trash = 0
-         and i.library_id in (select id from photo_libraries where owner_id = ${opts.uid})
+       where e.dim = ${qv.length} and ${notTrashed('i.id', opts.uid)}
+         and i.library_id in (select id from photo_library_scope where owner_id = ${opts.uid})
        limit ${scanLimit}
     `.execute(k.db)
   ).rows;

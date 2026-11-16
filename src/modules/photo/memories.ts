@@ -5,7 +5,10 @@ import { secured } from '../../../kernel/route';
 import type { KernelApi } from '../../../kernel/types';
 import { describePlace } from './geo/place-label';
 import { coverRanker } from './cover';
+import { notTrashed } from './state';
 import type { FastifyRequest } from 'fastify';
+
+const uidOf = (req: FastifyRequest) => String(req.user?.sub || '');
 
 /**
  * 相册「记忆」四件套：一日一帧 / 人生章节（按年成书）/ 票夹 / 年度记录。
@@ -378,8 +381,8 @@ async function photosBetween(
       select id, rel_path, taken_at, geohash5, latitude, longitude, camera, width, height,
              media_kind, duration_ms, live_kind
         from photo_items
-       where in_trash = 0 and taken_at >= ${from} and taken_at < ${to}
-         and (${uid} = '' or library_id in (select id from photo_libraries where owner_id = ${uid}))
+       where ${notTrashed('photo_items.id', uid)} and taken_at >= ${from} and taken_at < ${to}
+         and (${uid} = '' or library_id in (select id from photo_library_scope where owner_id = ${uid}))
        order by taken_at asc
        limit ${limit}
     `.execute(db)
@@ -623,7 +626,8 @@ export async function registerPhotoMemories(app: any, k: KernelApi): Promise<voi
             select i.id, i.rel_path, i.taken_at, o.text as ocr
               from photo_items i
               left join photo_ocr o on o.photo_id = i.id
-             where i.in_trash = 0
+             where ${notTrashed('i.id', uidOf(req))}
+               and i.library_id in (select id from photo_library_scope where owner_id = ${uidOf(req)})
              order by i.taken_at desc
              limit 4000
           `.execute(k.db)
@@ -874,7 +878,9 @@ export async function registerPhotoMemories(app: any, k: KernelApi): Promise<voi
             select cast(strftime('%Y', taken_at, 'unixepoch', 'localtime') as integer) as y,
                    count(*) as n
               from photo_items
-             where in_trash = 0 and geohash5 = ${cell}
+             where ${notTrashed('photo_items.id', uidOf(req))}
+               and library_id in (select id from photo_library_scope where owner_id = ${uidOf(req)})
+               and geohash5 = ${cell}
              group by y order by y asc
           `.execute(k.db)
         ).rows;

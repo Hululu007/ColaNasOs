@@ -6,6 +6,7 @@ import { secured } from '../../../../kernel/route';
 import type { KernelApi } from '../../../../kernel/types';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { now, ref } from './schemas';
+import { notTrashed } from '../state';
 import {
   aiConfig,
   saveAiConfig,
@@ -99,7 +100,7 @@ export async function registerPhotoAiSettings(app: FastifyInstance, k: KernelApi
     async (req: FastifyRequest) => {
       const cfg = aiConfig(k);
       const uid = String((req as any).user?.sub || '');
-      const owner = sql`i.in_trash = 0 and i.library_id in (select id from photo_libraries where owner_id = ${uid})`;
+      const owner = sql`${notTrashed('i.id', uid)} and i.library_id in (select id from photo_library_scope where owner_id = ${uid})`;
       // 进度 = 「做过这项分析的照片数」，不是「检出结果的照片数」。
       // 以前按结果表 count：没有文字的照片永远不写 photo_ocr、没活动的永远不写
       // photo_activities，OCR / 活动的进度条就永远停在 45% / 24%，看着像没跑完，
@@ -454,11 +455,11 @@ export async function registerPhotoAiSettings(app: FastifyInstance, k: KernelApi
       const uid = String((req as any).user?.sub || '');
       const owner = sql`photo_id in (
         select id from photo_items
-         where library_id in (select id from photo_libraries where owner_id = ${uid})
+         where library_id in (select id from photo_library_scope where owner_id = ${uid})
       )`;
       const itemOwner = sql`id in (
         select id from photo_items
-         where library_id in (select id from photo_libraries where owner_id = ${uid})
+         where library_id in (select id from photo_library_scope where owner_id = ${uid})
       )`;
       const kind = String(body.kind || '');
       let count = 0;
@@ -557,8 +558,8 @@ export async function registerPhotoAiSettings(app: FastifyInstance, k: KernelApi
       const rows = (
         await sql<{ id: string; rel_path: string }>`
           select i.id, i.rel_path from photo_items i
-           where i.in_trash = 0
-             and i.library_id in (select id from photo_libraries where owner_id = ${uid})
+           where ${notTrashed('i.id', uid)}
+             and i.library_id in (select id from photo_library_scope where owner_id = ${uid})
              and exists (select 1 from photo_embeddings e where e.photo_id = i.id)
              and not exists (select 1 from photo_faces f where f.photo_id = i.id)
            order by i.taken_at desc limit ${limit}

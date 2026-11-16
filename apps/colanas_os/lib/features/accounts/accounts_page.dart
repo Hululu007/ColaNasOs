@@ -40,6 +40,8 @@ class _AccountsPageState extends State<AccountsPage> {
   String? _policyError;
   List<Map<String, dynamic>> _policyPaths = const [];
   bool _policySaving = false;
+  /// 正在写策略时又产生了新改动：等本轮写完再用最新列表补写一次
+  bool _policyDirty = false;
 
   @override
   void initState() {
@@ -160,37 +162,82 @@ class _AccountsPageState extends State<AccountsPage> {
     }
   }
 
-  Future<void> _savePolicy() async {
+  /// 选目录 / 删目录 / 改动作后立即落库（不再要求用户再点一次保存）。
+  ///
+  /// `userPolicySet` 是整份列表覆盖写，所以这里做串行 + 合并：正在写时新改动
+  /// 只标脏，本轮结束后拿**最新**列表再写一次，避免旧快照把刚加的目录冲掉。
+  /// 写失败时提示「这次没保存成功」，并重新拉取策略，把界面回滚到服务端
+  /// 实际生效的状态 —— 不允许出现「界面显示已加、服务端其实没有」。
+  Future<void> _persistPolicy() async {
     final user = _selectedUser;
     if (user == null) return;
+    final uid = '${user['id']}';
+    if (_policySaving) {
+      _policyDirty = true;
+      return;
+    }
     setState(() => _policySaving = true);
     final messenger = ScaffoldMessenger.of(context);
     try {
-      await ApiSession.instance.client.userPolicySet(
-        body: <String, dynamic>{
-          // 不传 allowedApps：服务端按「未传 = 保持不变」处理，应用白名单
-          // 由创建账号时的权限选择决定，本页只改目录授权。
-          'uid': '${user['id']}',
-          'paths': _policyPaths
-              .where((p) => '${p['path'] ?? ''}'.trim().isNotEmpty)
-              .map(
-                (p) => <String, dynamic>{
-                  'path': '${p['path']}',
-                  'actions': _actionsOfRule(p),
-                },
-              )
-              .toList(),
-        },
-      );
-      NasSnack.showOn(messenger, tr('accounts.policy.saved'));
+      while (true) {
+        _policyDirty = false;
+        final saved = await ApiSession.instance.client.userPolicySet(
+          body: <String, dynamic>{
+            // 不传 allowedApps：服务端按「未传 = 保持不变」处理，应用白名单
+            // 由创建账号时的权限选择决定，本页只改目录授权。
+            'uid': uid,
+            'paths': _policyPaths
+                .where((p) => '${p['path'] ?? ''}'.trim().isNotEmpty)
+                .map(
+                  (p) => <String, dynamic>{
+                    'path': '${p['path']}',
+                    'actions': _actionsOfRule(p),
+                  },
+                )
+                .toList(),
+          },
+        );
+        // 等待期间又有新改动：本轮结果跳过，直接用最新列表再写一次
+        final changedMeanwhile = _policyDirty;
+        if (!mounted || _selectedId != uid) return;
+        if (changedMeanwhile) continue;
+        // 回写服务端归一后的路径（`D:\X` → `/D:/X`），列表与实际生效保持一致
+        final paths = (saved['paths'] as List<dynamic>? ?? const [])
+            .whereType<Map>()
+            .map(
+              (e) => <String, dynamic>{
+                'path': '${e['path'] ?? ''}',
+                'actions': _actionsOfRule(Map<String, dynamic>.from(e)),
+              },
+            )
+            .toList();
+        setState(() => _policyPaths = paths);
+        break;
+      }
+      if (mounted) NasSnack.showOn(messenger, tr('accounts.policy.saved'));
     } catch (e) {
       NasSnack.showOn(
         messenger,
         tr('common.saveFailed', {'error': '${_hint(e) ?? e}'}),
       );
+      // 回滚到服务端实际保存的内容（失败的那次改动不能留在界面上）
+      if (mounted && _selectedId == uid) await _loadPolicy(uid);
     } finally {
+      _policyDirty = false;
       if (mounted) setState(() => _policySaving = false);
     }
+  }
+
+  /// 删除某条目录授权（立即生效）
+  Future<void> _removePolicyPath(int index) async {
+    if (index < 0 || index >= _policyPaths.length) return;
+    setState(() {
+      _policyPaths = [
+        for (var j = 0; j < _policyPaths.length; j++)
+          if (j != index) _policyPaths[j],
+      ];
+    });
+    await _persistPolicy();
   }
 
   Future<void> _createUser() async {
@@ -696,6 +743,8 @@ class _AccountsPageState extends State<AccountsPage> {
         {'path': path, 'actions': actions},
       ];
     });
+    // 选中即生效：不再等页面底部的保存按钮
+    await _persistPolicy();
   }
 
   /// 选一个目录：文件根内折算成相对路径（兼容既有规则），根外的盘符 / UNC
@@ -760,6 +809,7 @@ class _AccountsPageState extends State<AccountsPage> {
       ),
     );
     if (ok != true || !mounted) return;
+    if (index >= _policyPaths.length) return;
     setState(() {
       _policyPaths = [
         for (var j = 0; j < _policyPaths.length; j++)
@@ -768,6 +818,8 @@ class _AccountsPageState extends State<AccountsPage> {
               : _policyPaths[j],
       ];
     });
+    // 动作变更同样立即生效
+    await _persistPolicy();
   }
 
   Widget _userList() {
@@ -1078,6 +1130,15 @@ class _AccountsPageState extends State<AccountsPage> {
               icon: const Icon(Icons.add, size: 16),
               label: Text(tr('accounts.policy.addPath')),
             ),
+            if (_policySaving)
+              const Padding(
+                padding: EdgeInsets.only(left: NasTokens.spaceXs),
+                child: SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              ),
           ],
         ),
         if (isFullAccess)
@@ -1128,24 +1189,12 @@ class _AccountsPageState extends State<AccountsPage> {
                   IconButton(
                     icon: const Icon(Icons.delete_outline, size: 18),
                     tooltip: tr('ui.accounts.019'),
-                    onPressed: () => setState(() {
-                      _policyPaths = [
-                        for (var j = 0; j < _policyPaths.length; j++)
-                          if (j != i) _policyPaths[j],
-                      ];
-                    }),
+                    // 删除立即生效（含写失败回滚）
+                    onPressed: () => _removePolicyPath(i),
                   ),
                 ],
               ),
             ),
-        const SizedBox(height: NasTokens.spaceMd),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: FilledButton(
-            onPressed: _policySaving ? null : _savePolicy,
-            child: Text(tr('common.save')),
-          ),
-        ),
       ],
     );
   }

@@ -1,5 +1,5 @@
 import { sql } from 'kysely';
-import { pathWhere, visibilityOf } from '../../files/visibility';
+import { pathVisible, pathWhere, visibilityOf } from '../../files/visibility';
 import { Type } from '@sinclair/typebox';
 import { ftsPhrase } from '../../files/fts';
 import { actorKey } from '../jp-actor';
@@ -7,7 +7,7 @@ import { secured } from '../../../../kernel/route';
 import { libTypeOf, normalizeLibType } from '../media-type';
 import { missingEpisodes } from '../series';
 import { rankMarksOf } from '../jp-rank';
-import { effectiveSources, offlineCond, offlineSmbPrefixes, sourceRootCond } from '../sources';
+import { effectiveSources, offlineCond, offlineSmbPrefixes, sourceRootCond, sourcesOfMany } from '../sources';
 import { jpTagCond, resolutionCond } from '../jp-filter';
 import {
   bindVideoListCacheInvalidation,
@@ -717,6 +717,10 @@ export async function registerVideoItems(app: FastifyInstance, k: KernelApi, h: 
         const q = (req.query || {}) as { id?: string };
         const row = q.id ? await h.loadAnyItem(q.id) : null;
         if (!row) return reply.code(404).send({ error: Err.notFound, message: 'item not found' });
+        // 详情按 id 直取，列表过滤挡不住手拼 id；授权范围外一律当不存在
+        if (!pathVisible(visibilityOf(k.config, req.user), row.rel_path)) {
+          return reply.code(404).send({ error: Err.notFound, message: 'item not found' });
+        }
         return toItem(row);
       },
     );
@@ -892,35 +896,55 @@ export async function registerVideoItems(app: FastifyInstance, k: KernelApi, h: 
         const q = (req.query || {}) as { libraryId?: string };
         // 首页统计也只统计「首页显示」的库；显式点进某个库时仍按该库统计。
         // 离线 SMB 来源的条目不计入，保证统计数字和列表里看得到的条数一致。
+        // 目录授权同样要算进来：否则小号看到的片数仍是整机总数（2026-11-14）。
         const offline = await offlineSmbPrefixes(k.db);
         const offlineStatCond =
           offline.length > 0 ? sql`and ${offlineCond(offline, 'rel_path')}` : sql``;
-        const libs = q.libraryId
-          ? await sql<{ n: number }>`
-              select count(*) as n from video_libraries where id = ${q.libraryId}
-            `.execute(k.db)
-          : await sql<{ n: number }>`
-              select count(*) as n from video_libraries
-               where coalesce(show_in_home, 1) <> 0
-                 and not (conn_type = 'smb' and coalesce(online_state, 0) = ${ONLINE_NO})
-            `.execute(k.db);
-        const agg = q.libraryId
-          ? await sql<{ n: number; total: number | null }>`
-              select count(*) as n, sum(duration) as total from video_items
-               where library_id = ${q.libraryId}
-                 ${offlineStatCond}
-            `.execute(k.db)
-          : await sql<{ n: number; total: number | null }>`
-              select count(*) as n, sum(duration) as total
-                from video_items
-               where library_id in (
-                 select id from video_libraries where coalesce(show_in_home, 1) <> 0
-               )
-                 ${offlineStatCond}
-            `.execute(k.db);
+        const vis = visibilityOf(k.config, req.user);
+        const libRows = (
+          await sql<{
+            id: string;
+            root_path: string;
+            show_in_home: number | null;
+            conn_type: string | null;
+            online_state: number | null;
+          }>`
+            select id, root_path, show_in_home, conn_type, online_state from video_libraries
+          `.execute(k.db)
+        ).rows;
+        const srcMap = await sourcesOfMany(
+          k.db,
+          libRows.map((l) => l.id),
+        );
+        const libVisible = (l: (typeof libRows)[number]): boolean => {
+          if (!vis.unrestricted) {
+            const rows = srcMap.get(l.id) ?? [];
+            const okAcl =
+              rows.length > 0
+                ? rows.some((s) => pathVisible(vis, s.root_path))
+                : pathVisible(vis, l.root_path);
+            if (!okAcl) return false;
+          }
+          if (q.libraryId) return l.id === q.libraryId;
+          return (
+            Number(l.show_in_home) !== 0 &&
+            !(normalizeConnType(l.conn_type) === 'smb' && Number(l.online_state) === ONLINE_NO)
+          );
+        };
+        const libIds = libRows.filter(libVisible).map((l) => l.id);
+        if (libIds.length === 0) return { libraries: 0, items: 0, durationMs: 0 };
+        const libList = sql.join(
+          libIds.map((id) => sql`${id}`),
+          sql`, `,
+        );
+        const agg = await sql<{ n: number; total: number | null }>`
+          select count(*) as n, sum(duration) as total from video_items
+           where library_id in (${libList})
+             ${offlineStatCond}
+        `.execute(k.db);
         const row = agg.rows[0];
         return {
-          libraries: Number(libs.rows[0]?.n) || 0,
+          libraries: libIds.length,
           items: Number(row?.n) || 0,
           durationMs: Number(row?.total) || 0,
         };
@@ -1181,10 +1205,25 @@ export async function registerVideoItems(app: FastifyInstance, k: KernelApi, h: 
 
         // 「首页显示」关闭的库，在首页任何区块（来源 / 推荐 / 继续观看 / 最近添加）都不能出现；
         // 整库来源都离线的 SMB 库也直接不显示，避免点进去是一片空/裂图。
+        // 目录授权同样在这一层生效：库的任一来源落在授权范围内才显示，
+        // 否则「只授权了一个影视文件夹」的小号仍会在首页看到全部库（2026-11-14）。
+        const vis = visibilityOf(k.config, req.user);
+        const sourcesByLib = await sourcesOfMany(
+          k.db,
+          libs.map((l) => l.id),
+        );
+        const aclVisible = (l: { id: string; root_path?: string | null }): boolean => {
+          if (vis.unrestricted) return true;
+          const rows = sourcesByLib.get(l.id) ?? [];
+          return rows.length > 0
+            ? rows.some((s) => pathVisible(vis, s.root_path))
+            : pathVisible(vis, String(l.root_path ?? ''));
+        };
         const visibleLibs = libs.filter(
           (l) =>
             Number(l.show_in_home) !== 0 &&
-            !(normalizeConnType(l.conn_type) === 'smb' && Number(l.online_state) === ONLINE_NO),
+            !(normalizeConnType(l.conn_type) === 'smb' && Number(l.online_state) === ONLINE_NO) &&
+            aclVisible(l),
         );
         const visibleIds = visibleLibs.map((l) => l.id);
         const sources = visibleLibs.map((l) => ({
@@ -1321,6 +1360,7 @@ export async function registerVideoItems(app: FastifyInstance, k: KernelApi, h: 
              where p.owner_id = ${uid} and p.percent > 0 and p.percent < 95
                ${libFilter}
                ${offline.length > 0 ? sql`and ${offlineCond(offline, 'v.rel_path')}` : sql``}
+               and (${pathWhere(vis, 'v.rel_path')})
              order by p.updated_at desc
              limit ${playLimit}
           `.execute(k.db)
@@ -1344,6 +1384,7 @@ export async function registerVideoItems(app: FastifyInstance, k: KernelApi, h: 
                 select * from (${withWatched}) v
                  where library_id = ${l.id} and media_type = 'video'
                    ${offline.length > 0 ? sql`and ${offlineCond(offline, 'v.rel_path')}` : sql``}
+                   and (${pathWhere(vis, 'v.rel_path')})
                  order by mtime desc
                  limit ${addLimit}
               `.execute(k.db)
@@ -1369,6 +1410,7 @@ export async function registerVideoItems(app: FastifyInstance, k: KernelApi, h: 
                 select * from image_items
                  where library_id = ${l.id}
                    ${offline.length > 0 ? sql`and ${offlineCond(offline, 'rel_path')}` : sql``}
+                   and (${pathWhere(vis, 'rel_path')})
                  order by coalesce(taken_at, 0) desc, id desc
                  limit ${addLimit}
               `.execute(k.db)

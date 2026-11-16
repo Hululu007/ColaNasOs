@@ -6,6 +6,7 @@ import type { KernelApi } from '../../../kernel/types';
 import { coveringCells, precisionForBounds } from './geo/geohash';
 import { placesAvailable } from './geo/places';
 import { describePlace } from './geo/place-label';
+import { notTrashed } from './state';
 import { Err } from '../../../kernel/errors';
 import type { FastifyRequest, FastifyReply } from 'fastify';
 
@@ -423,8 +424,8 @@ export async function registerPhotoMap(app: any, k: KernelApi): Promise<void> {
                      order by taken_at desc, id desc
                    ) as rn
               from photo_items
-             where in_trash = 0
-               and library_id in (select id from photo_libraries where owner_id = ${uid})
+             where ${notTrashed('photo_items.id', uid)}
+               and library_id in (select id from photo_library_scope where owner_id = ${uid})
                and ${sql.raw(column)} in (${inList})
                ${libId ? sql`and library_id = ${libId}` : sql``}
           )
@@ -504,9 +505,9 @@ export async function registerPhotoMap(app: any, k: KernelApi): Promise<void> {
       const libId = typeof q.libraryId === 'string' ? q.libraryId : '';
       const uid = String(req.user?.sub || '');
 
-      let where = sql`in_trash = 0
+      let where = sql`${notTrashed('photo_items.id', uid)}
         and latitude is not null and longitude is not null
-        and library_id in (select id from photo_libraries where owner_id = ${uid})`;
+        and library_id in (select id from photo_library_scope where owner_id = ${uid})`;
       if (from != null) where = sql`${where} and taken_at >= ${from}`;
       if (to != null) where = sql`${where} and taken_at <= ${to}`;
       if (libId) where = sql`${where} and library_id = ${libId}`;
@@ -619,8 +620,8 @@ export async function registerPhotoMap(app: any, k: KernelApi): Promise<void> {
         sql`, `,
       );
       const uid = String(req.user?.sub || '');
-      const base = sql`in_trash = 0
-        and library_id in (select id from photo_libraries where owner_id = ${uid} or owner_id = '')
+      const base = sql`${notTrashed('photo_items.id', uid)}
+        and library_id in (select id from photo_library_scope where owner_id = ${uid} or owner_id = '')
         and ${sql.raw(column)} in (${inList})`;
 
       const totalRow = await sql<{ n: number }>`

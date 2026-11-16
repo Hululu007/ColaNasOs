@@ -100,13 +100,44 @@ function normalizePath(value: string): string {
   const raw = String(value ?? '')
     .trim()
     .replace(/\\/g, '/');
-  const withRoot = raw.startsWith('/') ? raw : `/${raw}`;
-  const trimmed = withRoot.length > 1 ? withRoot.replace(/\/+$/, '') : withRoot;
-  const parts = trimmed.split('/').filter((p) => p.length > 0 && p !== '.');
+  // UNC 的双斜杠是路径语义的一部分：`\\host\share` 归一后必须仍是 `//host/share`，
+  // 否则会被当成「文件根下的 host/share」——SMB 授权永远匹配不上。
+  const unc = raw.startsWith('//');
+  const parts = raw.split('/').filter((p) => p.length > 0 && p !== '.');
   if (parts.some((p) => p === '..')) {
     throw Object.assign(new Error('path escapes root'), { code: 'E_PATH_ESCAPE' });
   }
-  return parts.length === 0 ? '/' : `/${parts.join('/')}`;
+  if (parts.length === 0) return '/';
+  return unc ? `//${parts.join('/')}` : `/${parts.join('/')}`;
+}
+
+/**
+ * 规则路径 / 请求路径统一折算成**可比较的绝对路径**（小写、正斜杠、无尾斜杠）。
+ *
+ * 授权里存的和请求里传的至少有三种写法，直接字符串比一定漏：
+ * - 相对文件根：`/media`、`media`、`media\a`
+ * - 盘符绝对路径：`D:/Media`、`/D:/Media`、`D:\Media\`
+ * - UNC 共享：`\\host\share`、`//host/share`
+ *
+ * 比较前两边都过这里，Windows 的盘符大小写、反斜杠方向、UNC 前导双斜杠
+ * 都不会再让「明明授权了却 403」。`root` 是文件根（相对路径的展开基准）。
+ */
+export function accessPathOf(input: string, root: string): string {
+  const raw = String(input ?? '').trim().replace(/\\/g, '/');
+  const base = String(root ?? '')
+    .trim()
+    .replace(/\\/g, '/')
+    .replace(/\/+$/, '')
+    .toLowerCase();
+  if (!raw) return base;
+  if (raw.startsWith('//')) {
+    const parts = raw.split('/').filter((p) => p.length > 0 && p !== '.');
+    return parts.length > 0 ? `//${parts.join('/')}`.toLowerCase() : '//';
+  }
+  const bare = raw.replace(/^\/+/, '').replace(/\/+$/, '');
+  if (/^[a-zA-Z]:/.test(bare)) return bare.toLowerCase();
+  if (!bare) return base;
+  return `${base}/${bare}`.replace(/\/+$/, '').toLowerCase();
 }
 
 /** 规则归一 + 校验；非法路径直接抛错（不做静默降级） */
@@ -227,27 +258,59 @@ export function checkPathAccess(
   rules: PathRule[] | null | undefined,
   need: PathAction | 'read' | 'write',
   requestPath: string,
+  root = '',
 ): PathAccessDecision {
   if (!rules) return { ok: true, rule: null };
   if (rules.length === 0) return { ok: false, rule: null };
   const action: PathAction = need === 'read' ? 'view' : need === 'write' ? 'update' : need;
 
-  let target: string;
-  try {
-    target = normalizePath(requestPath);
-  } catch {
-    return { ok: false, rule: null };
-  }
+  const rawPath = String(requestPath ?? '').trim();
+  // 越界写法一律拒绝：`..` 折叠后可能跳到授权范围之外
+  if (rawPath.split(/[\\/]+/).some((seg) => seg === '..')) return { ok: false, rule: null };
+
+  // 虚拟根：文件页固定从 `/` 进入，而授权目录通常在别的盘（`D:/Media`）。
+  // 只读浏览放行，具体条目由 listHandler 用 dirVisible 裁剪 —— 否则子账号
+  // 一打开「文件」就是 403（用户 2026-11-14 反馈）。
+  const rootAnchor = rawPath === '' || rawPath === '/' || rawPath === '.' || rawPath === './';
+  if (action === 'view' && rootAnchor) return { ok: true, rule: null };
+
+  const target = accessPathOf(rawPath, root);
 
   let deepest: PathRule | null = null;
+  let deepestLen = -1;
+  let ancestor: PathRule | null = null;
   for (const rule of rules) {
-    const covers = rule.path === '/' || target === rule.path || target.startsWith(`${rule.path}/`);
-    if (!covers) continue;
-    if (!deepest || rule.path.length > deepest.path.length) deepest = rule;
+    // `/` 是历史写法，语义为「全部」；其余规则折算成绝对路径再比
+    const rulePath = rule.path === '/' ? '/' : accessPathOf(rule.path, root);
+    const covers =
+      rulePath === '/' ||
+      target === rulePath ||
+      (rulePath.length > 0 && target.startsWith(`${rulePath}/`));
+    if (covers) {
+      const len = rulePath === '/' ? 0 : rulePath.length;
+      if (len > deepestLen) {
+        deepest = rule;
+        deepestLen = len;
+      }
+      continue;
+    }
+    // 只读浏览允许「通往授权目录的祖先目录」（含盘符根），否则点不进去
+    if (
+      action === 'view' &&
+      actionsOfRule(rule).includes('view') &&
+      rulePath !== '/' &&
+      rulePath.startsWith(`${target}/`)
+    ) {
+      ancestor = rule;
+    }
   }
-  if (!deepest) return { ok: false, rule: null };
-  if (!actionsOfRule(deepest).includes(action)) return { ok: false, rule: deepest.path };
-  return { ok: true, rule: deepest.path };
+  if (deepest) {
+    return actionsOfRule(deepest).includes(action)
+      ? { ok: true, rule: deepest.path }
+      : { ok: false, rule: deepest.path };
+  }
+  if (ancestor) return { ok: true, rule: ancestor.path };
+  return { ok: false, rule: null };
 }
 /** 从请求里取路径参数（query.path 优先，其次 body.path）；取不到返回 null = 不做路径校验 */
 export function requestPathOf(req: { query?: unknown; body?: unknown }): string | null {

@@ -6,6 +6,7 @@ import { Err } from '../../../../kernel/errors';
 import { TAG, newId } from '../util';
 import { deletePhotosPermanently } from '../delete';
 import { recordDeletedFingerprints } from '../deleted-fp';
+import { trashItems } from '../state';
 import type { PhotoHelpers } from '../helpers';
 
 /**
@@ -44,23 +45,15 @@ export async function registerPhotoDelete(
       if (body.toTrash === true) {
         const ts = Math.floor(Date.now() / 1000);
         const batchId = newId();
-        const list = sql.join(
-          ids.map((id) => sql`${id}`),
-          sql`, `,
-        );
         // 一次删除 = 一个批次：回收站据此分组，用户可以整批还原或整批清空。
         // 批次只在真的改动了行之后落库，避免空操作留下一堆空批次。
         const count = await k.db.transaction().execute(async (trx: any) => {
-          const res = await sql`
-            update photo_items set in_trash = 1, deleted_at = ${ts}, delete_batch_id = ${batchId}
-             where id in (${list})
-               and library_id in (select id from photo_libraries where owner_id = ${owner})
-          `.execute(trx);
-          const n = Number(res.numAffectedRows || 0);
+          // 回收站是账号私有状态：写 photo_item_user_state，不碰共享的照片行。
+          const { count: n, visible } = await trashItems(trx, owner, ids, batchId);
           if (n > 0) {
             // 删过的照片留指纹：清空回收站会物理删行，到那时手机备份就再也
             // 查不到「这张传过」，会当成新照片重新堆上来。
-            await recordDeletedFingerprints(trx, owner, ids);
+            await recordDeletedFingerprints(trx, owner, visible);
             await sql`
               insert into photo_delete_batches (id, owner_id, kind, item_count, created_at)
               values (${batchId}, ${owner}, 'delete', ${n}, ${ts})

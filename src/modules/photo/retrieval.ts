@@ -3,6 +3,7 @@ import { Type } from '@sinclair/typebox';
 import { sql } from 'kysely';
 import { ftsPhrase } from '../files/fts';
 import { secured } from '../../../kernel/route';
+import { deletedAtOf, notTrashed, trashedOf, trashItems } from './state';
 import type { KernelApi } from '../../../kernel/types';
 import { Err } from '../../../kernel/errors';
 import type { FastifyRequest, FastifyReply } from 'fastify';
@@ -38,7 +39,11 @@ export interface SuggestItem {
  * 以前这段只藏在 suggest 里，客户端又从不用空 q 调，等于一条死分支；
  * 抽出来后两个接口共用同一份 SQL，不会出现「热搜和推荐结果不一致」。
  */
-export async function hotSuggestions(k: KernelApi, limit: number): Promise<SuggestItem[]> {
+export async function hotSuggestions(
+  k: KernelApi,
+  owner: string,
+  limit: number,
+): Promise<SuggestItem[]> {
   const items: SuggestItem[] = [];
   const persons = (
     await sql<{ name: string; size: number }>`
@@ -51,7 +56,9 @@ export async function hotSuggestions(k: KernelApi, limit: number): Promise<Sugge
   const scenes = (
     await sql<{ label: string; n: number }>`
       select s.label, count(*) as n from photo_scenes s
-        join photo_items i on i.id = s.photo_id and i.in_trash = 0
+        join photo_items i on i.id = s.photo_id
+       where ${notTrashed('i.id', owner)}
+         and i.library_id in (select id from photo_library_scope where owner_id = ${owner})
        group by s.label order by n desc limit ${limit}
     `.execute(k.db)
   ).rows;
@@ -60,7 +67,9 @@ export async function hotSuggestions(k: KernelApi, limit: number): Promise<Sugge
   const activities = (
     await sql<{ label: string; n: number }>`
       select a.label, count(*) as n from photo_activities a
-        join photo_items i on i.id = a.photo_id and i.in_trash = 0
+        join photo_items i on i.id = a.photo_id
+       where ${notTrashed('i.id', owner)}
+         and i.library_id in (select id from photo_library_scope where owner_id = ${owner})
        group by a.label order by n desc limit ${limit}
     `.execute(k.db)
   ).rows;
@@ -71,7 +80,9 @@ export async function hotSuggestions(k: KernelApi, limit: number): Promise<Sugge
   const years = (
     await sql<{ y: string; n: number }>`
       select strftime('%Y', taken_at, 'unixepoch') as y, count(*) as n from photo_items
-       where in_trash = 0 group by y order by y desc limit ${limit}
+       where ${notTrashed('photo_items.id', owner)}
+         and library_id in (select id from photo_library_scope where owner_id = ${owner})
+       group by y order by y desc limit ${limit}
     `.execute(k.db)
   ).rows;
   for (const y of years) items.push({ kind: 'year', value: y.y, count: Number(y.n) });
@@ -207,6 +218,7 @@ export async function registerPhotoRetrieval(app: any, k: KernelApi): Promise<vo
     }),
     async (req: FastifyRequest) => {
       const body = (req.body || {}) as { q?: string; limit?: string };
+      const owner = String(req.user?.sub || '');
       const raw = String(body.q || '').trim();
       const limit = Math.max(1, Math.min(Number(body.limit) || 5, 20));
       const like = `%${raw.replace(/[%_]/g, (m) => '\\' + m)}%`;
@@ -216,7 +228,7 @@ export async function registerPhotoRetrieval(app: any, k: KernelApi): Promise<vo
 
       if (!hasQuery) {
         // 无关键词：返回各类热门（给「随便看看」用）
-        return { items: await hotSuggestions(k, limit) };
+        return { items: await hotSuggestions(k, owner, limit) };
       }
 
       const persons = (
@@ -230,8 +242,10 @@ export async function registerPhotoRetrieval(app: any, k: KernelApi): Promise<vo
       const scenes = (
         await sql<{ label: string; n: number }>`
           select s.label, count(*) as n from photo_scenes s
-            join photo_items i on i.id = s.photo_id and i.in_trash = 0
+            join photo_items i on i.id = s.photo_id
            where s.label like ${like} escape '\\'
+             and ${notTrashed('i.id', owner)}
+             and i.library_id in (select id from photo_library_scope where owner_id = ${owner})
            group by s.label order by n desc limit ${limit}
         `.execute(k.db)
       ).rows;
@@ -240,8 +254,10 @@ export async function registerPhotoRetrieval(app: any, k: KernelApi): Promise<vo
       const activities = (
         await sql<{ label: string; n: number }>`
           select a.label, count(*) as n from photo_activities a
-            join photo_items i on i.id = a.photo_id and i.in_trash = 0
+            join photo_items i on i.id = a.photo_id
            where a.label like ${like} escape '\\'
+             and ${notTrashed('i.id', owner)}
+             and i.library_id in (select id from photo_library_scope where owner_id = ${owner})
            group by a.label order by n desc limit ${limit}
         `.execute(k.db)
       ).rows;
@@ -252,7 +268,9 @@ export async function registerPhotoRetrieval(app: any, k: KernelApi): Promise<vo
       const cameras = (
         await sql<{ camera: string; n: number }>`
           select camera, count(*) as n from photo_items
-           where in_trash = 0 and camera is not null and camera like ${like} escape '\\'
+           where ${notTrashed('photo_items.id', owner)}
+             and library_id in (select id from photo_library_scope where owner_id = ${owner})
+             and camera is not null and camera like ${like} escape '\\'
            group by camera order by n desc limit ${limit}
         `.execute(k.db)
       ).rows;
@@ -261,7 +279,9 @@ export async function registerPhotoRetrieval(app: any, k: KernelApi): Promise<vo
       const files = (
         await sql<{ p: string; n: number }>`
           select rel_path as p, count(*) as n from photo_items
-           where in_trash = 0 and rel_path like ${like} escape '\\'
+           where ${notTrashed('photo_items.id', owner)}
+             and library_id in (select id from photo_library_scope where owner_id = ${owner})
+             and rel_path like ${like} escape '\\'
            group by rel_path order by n desc limit ${limit}
         `.execute(k.db)
       ).rows;
@@ -286,7 +306,9 @@ export async function registerPhotoRetrieval(app: any, k: KernelApi): Promise<vo
       const years = (
         await sql<{ y: string; n: number }>`
           select strftime('%Y', taken_at, 'unixepoch') as y, count(*) as n from photo_items
-           where in_trash = 0 and strftime('%Y', taken_at, 'unixepoch') like ${like} escape '\\'
+           where ${notTrashed('photo_items.id', owner)}
+             and library_id in (select id from photo_library_scope where owner_id = ${owner})
+             and strftime('%Y', taken_at, 'unixepoch') like ${like} escape '\\'
            group by y order by y desc limit ${limit}
         `.execute(k.db)
       ).rows;
@@ -311,14 +333,17 @@ export async function registerPhotoRetrieval(app: any, k: KernelApi): Promise<vo
     async (req: FastifyRequest) => {
       const q = (req.query || {}) as { limit?: string };
       const limit = Math.max(1, Math.min(Number(q.limit) || 200, 1000));
+      const owner = String(req.user?.sub || '');
 
       const edges = (
         await sql<{ a: string; b: string; n: number }>`
           select fa.cluster_id as a, fb.cluster_id as b, count(distinct fa.photo_id) as n
             from photo_faces fa
             join photo_faces fb on fb.photo_id = fa.photo_id and fa.cluster_id < fb.cluster_id
-            join photo_items i on i.id = fa.photo_id and i.in_trash = 0
-           where fa.cluster_id is not null and fb.cluster_id is not null
+            join photo_items i on i.id = fa.photo_id
+           where ${notTrashed('i.id', owner)}
+             and i.library_id in (select id from photo_library_scope where owner_id = ${owner})
+             and fa.cluster_id is not null and fb.cluster_id is not null
            group by fa.cluster_id, fb.cluster_id
            order by n desc limit ${limit}
         `.execute(k.db)
@@ -370,14 +395,17 @@ export async function registerPhotoRetrieval(app: any, k: KernelApi): Promise<vo
       const body = (req.body || {}) as { ids?: string[] };
       const ids = body.ids ?? [];
       if (ids.length === 0) return { ids: [], count: 0, bytes: 0, missing: 0 };
+      const owner = String(req.user?.sub || '');
 
       const rows = (
         await sql<{ id: string; size: number }>`
           select id, size from photo_items
-           where in_trash = 0 and id in (${sql.join(
-             ids.map((x) => sql`${x}`),
-             sql`, `,
-           )})
+           where ${notTrashed('photo_items.id', owner)}
+             and library_id in (select id from photo_library_scope where owner_id = ${owner})
+             and id in (${sql.join(
+               ids.map((x) => sql`${x}`),
+               sql`, `,
+             )})
         `.execute(k.db)
       ).rows;
 
@@ -407,26 +435,26 @@ export async function registerPhotoRetrieval(app: any, k: KernelApi): Promise<vo
       if (ids.length === 0)
         return reply.code(400).send({ error: Err.badRequest, message: 'ids required' });
 
+      const owner = String(req.user?.sub || '');
       const rows = (
         await sql<{ id: string; in_trash: number; deleted_at: number | null }>`
-          select id, in_trash, deleted_at from photo_items
-           where id in (${sql.join(
-             ids.map((x) => sql`${x}`),
-             sql`, `,
-           )})
+          select id,
+                 ${trashedOf('photo_items.id', owner)} as in_trash,
+                 ${deletedAtOf('photo_items.id', owner)} as deleted_at
+            from photo_items
+           where library_id in (select id from photo_library_scope where owner_id = ${owner})
+             and id in (${sql.join(
+               ids.map((x) => sql`${x}`),
+               sql`, `,
+             )})
         `.execute(k.db)
       ).rows;
 
       const operationId = crypto.randomBytes(8).toString('base64url');
       const ts = now();
       await k.db.transaction().execute(async (trx: any) => {
-        await sql`
-          update photo_items set in_trash = 1, deleted_at = ${ts}
-           where id in (${sql.join(
-             rows.map((r) => sql`${r.id}`),
-             sql`, `,
-           )})
-        `.execute(trx);
+        // 回收站是账号私有状态：写 photo_item_user_state，不碰共享的照片行。
+        await trashItems(trx, owner, rows.map((r) => r.id), `op_${operationId}`);
         await sql`
           insert into photo_operation_log (id, uid, kind, item_ids, prev_json, created_at, undone_at)
           values (${operationId}, ${String(req.user?.sub || '')}, 'trash',
@@ -473,8 +501,11 @@ export async function registerPhotoRetrieval(app: any, k: KernelApi): Promise<vo
       await k.db.transaction().execute(async (trx: any) => {
         for (const p of prev) {
           await sql`
-            update photo_items set in_trash = ${Number(p.inTrash) || 0}, deleted_at = ${p.deletedAt ?? null}
-             where id = ${p.id}
+            update photo_item_user_state
+               set in_trash = ${Number(p.inTrash) || 0},
+                   deleted_at = ${p.deletedAt ?? null},
+                   updated_at = ${now()}
+             where owner_id = ${String(row.uid || '')} and item_id = ${p.id}
           `.execute(trx);
         }
         await sql`update photo_operation_log set undone_at = ${now()} where id = ${row.id}`.execute(

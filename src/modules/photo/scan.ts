@@ -27,6 +27,7 @@ export interface LibraryRow {
   id: string;
   name: string;
   root_path: string;
+  owner_id: string;
   created_at: number;
   last_scan_at: number | null;
   items: number;
@@ -325,6 +326,10 @@ async function pruneMissing(db: any, libraryId: string, relPaths: string[]): Pro
     await recordDeletedFingerprints(db, '', ids);
     await sql`
       delete from photo_album_items
+       where item_id in (select id from photo_items where library_id = ${libraryId} and rel_path in (${list}))
+    `.execute(db);
+    await sql`
+      delete from photo_item_user_state
        where item_id in (select id from photo_items where library_id = ${libraryId} and rel_path in (${list}))
     `.execute(db);
     const res = await sql`

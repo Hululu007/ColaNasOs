@@ -3,6 +3,7 @@ import { sql } from 'kysely';
 import type { KernelApi } from '../../../kernel/types';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { fromBuffer } from './ai/face';
+import { favoriteOf, notTrashed } from './state';
 
 /**
  * 最小只读 MCP 服务（JSON-RPC 2.0 over HTTP）。
@@ -97,7 +98,7 @@ function authorized(k: KernelApi, token: string): boolean {
 }
 
 function ownerFilter(uid: string) {
-  return sql`library_id in (select id from photo_libraries where owner_id = ${uid})`;
+  return sql`library_id in (select id from photo_library_scope where owner_id = ${uid})`;
 }
 
 export async function registerPhotoMcp(app: FastifyInstance, k: KernelApi): Promise<void> {
@@ -106,9 +107,10 @@ export async function registerPhotoMcp(app: FastifyInstance, k: KernelApi): Prom
     if (name === 'photo_search') {
       const rows = (
         await sql<Record<string, unknown>>`
-          select id, rel_path, taken_at, size, width, height, mime, favorite
+          select id, rel_path, taken_at, size, width, height, mime,
+                 ${favoriteOf('photo_items.id', uid)} as favorite
             from photo_items
-           where in_trash = 0 and ${ownerFilter(uid)}
+           where ${notTrashed('photo_items.id', uid)} and ${ownerFilter(uid)}
              ${args.q ? sql`and rel_path like ${`%${String(args.q).replace(/[\\%_]/g, (c) => `\\${c}`)}%`}` : sql``}
              ${args.from ? sql`and taken_at >= ${Number(args.from)}` : sql``}
              ${args.to ? sql`and taken_at <= ${Number(args.to)}` : sql``}
@@ -122,7 +124,7 @@ export async function registerPhotoMcp(app: FastifyInstance, k: KernelApi): Prom
         await sql<Record<string, unknown>>`
           select id, rel_path, taken_at, size, width, height, mime
             from photo_items
-           where in_trash = 0 and ${ownerFilter(uid)}
+           where ${notTrashed('photo_items.id', uid)} and ${ownerFilter(uid)}
            order by taken_at desc limit ${limit}
         `.execute(k.db)
       ).rows;
@@ -133,7 +135,7 @@ export async function registerPhotoMcp(app: FastifyInstance, k: KernelApi): Prom
         await sql<{ vec: Buffer }>`
           select e.vec from photo_embeddings e
             join photo_items i on i.id = e.photo_id
-           where e.photo_id = ${String(args.photoId || '')} and i.in_trash = 0
+           where e.photo_id = ${String(args.photoId || '')} and ${notTrashed('i.id', uid)}
              and ${ownerFilter(uid)}
         `.execute(k.db)
       ).rows[0];
@@ -143,7 +145,7 @@ export async function registerPhotoMcp(app: FastifyInstance, k: KernelApi): Prom
         await sql<{ photo_id: string; vec: Buffer }>`
           select e.photo_id, e.vec from photo_embeddings e
             join photo_items i on i.id = e.photo_id
-           where e.photo_id != ${String(args.photoId || '')} and i.in_trash = 0
+           where e.photo_id != ${String(args.photoId || '')} and ${notTrashed('i.id', uid)}
              and ${ownerFilter(uid)}
            limit ${scanLimit}
         `.execute(k.db)
@@ -190,7 +192,7 @@ export async function registerPhotoMcp(app: FastifyInstance, k: KernelApi): Prom
             select s.label, count(*) as count
               from photo_scenes s
               join photo_items i on i.id = s.photo_id
-             where i.in_trash = 0 and ${ownerFilter(uid)}
+             where ${notTrashed('i.id', uid)} and ${ownerFilter(uid)}
              group by s.label order by count desc limit 100
           `.execute(k.db)
         ).rows;
@@ -200,7 +202,7 @@ export async function registerPhotoMcp(app: FastifyInstance, k: KernelApi): Prom
         await sql<Record<string, unknown>>`
           select i.id, i.rel_path, i.taken_at
             from photo_scenes s join photo_items i on i.id = s.photo_id
-           where s.label = ${String(args.label)} and i.in_trash = 0 and ${ownerFilter(uid)}
+           where s.label = ${String(args.label)} and ${notTrashed('i.id', uid)} and ${ownerFilter(uid)}
            order by i.taken_at desc limit ${limit}
         `.execute(k.db)
       ).rows;
@@ -222,7 +224,7 @@ export async function registerPhotoMcp(app: FastifyInstance, k: KernelApi): Prom
         await sql<{ n: number; earliest: number | null; latest: number | null }>`
           select count(*) as n, min(taken_at) as earliest, max(taken_at) as latest
             from photo_items
-           where in_trash = 0 and ${ownerFilter(uid)}
+           where ${notTrashed('photo_items.id', uid)} and ${ownerFilter(uid)}
         `.execute(k.db)
       ).rows[0];
       const years = (
@@ -230,7 +232,7 @@ export async function registerPhotoMcp(app: FastifyInstance, k: KernelApi): Prom
           select cast(strftime('%Y', taken_at, 'unixepoch', 'localtime') as integer) as year,
                  count(*) as count
             from photo_items
-           where in_trash = 0 and ${ownerFilter(uid)}
+           where ${notTrashed('photo_items.id', uid)} and ${ownerFilter(uid)}
            group by year order by year desc
         `.execute(k.db)
       ).rows;

@@ -6,6 +6,7 @@ import type { KernelApi } from '../../../kernel/types';
 import type { FastifyRequest } from 'fastify';
 import { preserveOriginalFingerprint, type FingerprintRow } from './content-md5';
 import { findDeletedMatches } from './deleted-fp';
+import { notTrashed } from './state';
 
 /**
  * 手机相册备份。
@@ -191,8 +192,8 @@ async function findExistingContent(k: KernelApi, uid: string, raw: ContentItem[]
     const rows = (
       await sql<{ size: number; orig_size: number }>`
         select p.size, p.orig_size from photo_items p
-         where p.in_trash = 0
-           and p.library_id in (select id from photo_libraries where owner_id = ${uid})
+         where ${notTrashed('p.id', uid)}
+           and p.library_id in (select id from photo_library_scope where owner_id = ${uid})
            and (p.size in (${sizeList(slice)}) or p.orig_size in (${sizeList(slice)}))
          limit 20000
       `.execute(k.db)
@@ -221,7 +222,8 @@ async function findExistingContent(k: KernelApi, uid: string, raw: ContentItem[]
       await sql<ContentRow>`
         select p.id, p.rel_path, p.size, p.orig_size, p.content_md5, l.root_path
           from photo_items p join photo_libraries l on l.id = p.library_id
-         where p.in_trash = 0 and l.owner_id = ${uid}
+         where ${notTrashed('p.id', uid)}
+           and p.library_id in (select id from photo_library_scope where owner_id = ${uid})
            and (p.size in (${sizeList(slice)}) or p.orig_size in (${sizeList(slice)}))
          limit 2000
       `.execute(k.db)
@@ -288,7 +290,7 @@ export async function registerPhotoBackup(app: any, k: KernelApi): Promise<void>
                chunk.map((m) => sql`${m}`),
                sql`, `,
              )})
-               and library_id in (select id from photo_libraries where owner_id = ${uid})
+               and library_id in (select id from photo_library_scope where owner_id = ${uid})
           `.execute(k.db)
         ).rows;
         for (const r of rows) md5Set.add(String(r.content_md5));
@@ -307,8 +309,8 @@ export async function registerPhotoBackup(app: any, k: KernelApi): Promise<void>
         const rows = (
           await sql<{ rel_path: string; size: number; orig_size: number }>`
             select rel_path, size, orig_size from photo_items
-             where in_trash = 0
-               and library_id in (select id from photo_libraries where owner_id = ${uid})
+             where ${notTrashed('photo_items.id', uid)}
+               and library_id in (select id from photo_library_scope where owner_id = ${uid})
                and (size in (${sizeArgs}) or orig_size in (${sizeArgs}))
           `.execute(k.db)
         ).rows;

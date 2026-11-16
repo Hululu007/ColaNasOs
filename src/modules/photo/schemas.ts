@@ -13,6 +13,8 @@ export const LibraryItem = Type.Object(
     items: Type.Integer({ description: '已索引媒体数（图片 + 视频）' }),
     createdAt: Type.Integer(),
     lastScanAt: Type.Union([Type.Integer(), Type.Null()]),
+    /** true = 别人已经加过同一物理目录，当前账号复用了它的索引与 AI 派生数据 */
+    shared: Type.Boolean({ description: '是否复用其他账号已建立的同源目录' }),
   },
   { $id: 'PhotoLibraryItem' },
 );

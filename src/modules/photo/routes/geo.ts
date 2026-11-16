@@ -3,6 +3,7 @@ import { sql } from 'kysely';
 import { secured } from '../../../../kernel/route';
 import { Err } from '../../../../kernel/errors';
 import { TAG, PhotoItemRow, toItem } from '../util';
+import { favoriteOf, notTrashed } from '../state';
 import { encode as geohashEncode } from '../geo/geohash';
 import { nearestPlaceName } from '../geo/places';
 import type { FastifyInstance } from 'fastify';
@@ -38,10 +39,11 @@ export async function registerPhotoGeo(
       const offset = Math.max(0, Number(q.cursor) || 0);
       const rows = (
         await sql<PhotoItemRow>`
-          select * from photo_items
-           where in_trash = 0
+          select *, ${favoriteOf('photo_items.id', uidOf(req as any))} as favorite
+            from photo_items
+           where ${notTrashed('photo_items.id', uidOf(req as any))}
              and (latitude is null or longitude is null)
-             and library_id in (select id from photo_libraries where owner_id = ${uidOf(req as any)})
+             and library_id in (select id from photo_library_scope where owner_id = ${uidOf(req as any)})
            order by taken_at desc, id
            limit ${limit + 1} offset ${offset}
         `.execute(k.db)
@@ -84,7 +86,7 @@ export async function registerPhotoGeo(
            ids.map((id) => sql`${id}`),
            sql`, `,
          )})
-           and library_id in (select id from photo_libraries where owner_id = ${uidOf(req as any)})
+           and library_id in (select id from photo_library_scope where owner_id = ${uidOf(req as any)})
       `.execute(k.db);
       return { updated: Number(res.numAffectedRows || 0) };
     },
@@ -117,8 +119,9 @@ export async function registerPhotoGeo(
         }>`
           select id, rel_path, taken_at, latitude, longitude, geohash5
             from photo_items
-           where in_trash = 0 and latitude is not null and longitude is not null
-             and library_id in (select id from photo_libraries where owner_id = ${uidOf(req as any)})
+           where ${notTrashed('photo_items.id', uidOf(req as any))}
+             and latitude is not null and longitude is not null
+             and library_id in (select id from photo_library_scope where owner_id = ${uidOf(req as any)})
            order by taken_at desc limit ${limit}
         `.execute(k.db)
       ).rows;
@@ -279,7 +282,7 @@ export async function registerPhotoGeo(
                geohash = ${gh(8)}, geohash2 = ${gh(2)}, geohash3 = ${gh(3)},
                geohash4 = ${gh(4)}, geohash5 = ${gh(5)}, geohash6 = ${gh(6)}, geohash7 = ${gh(7)}
          where id = ${row.photo_id}
-           and library_id in (select id from photo_libraries where owner_id = ${uid})
+           and library_id in (select id from photo_library_scope where owner_id = ${uid})
       `.execute(k.db);
       await sql`
         update photo_gps_candidates set status = 'accepted', latitude = ${lat}, longitude = ${lng}
@@ -325,9 +328,9 @@ async function runVisionCandidates(k: KernelApi, uid: string): Promise<void> {
       await sql<{ id: string; vec: Buffer }>`
         select i.id, e.vec
           from photo_items i join photo_embeddings e on e.photo_id = i.id
-         where i.in_trash = 0 and e.dim = 512
+         where ${notTrashed('i.id', uid)} and e.dim = 512
            and (i.latitude is null or i.longitude is null)
-           and i.library_id in (select id from photo_libraries where owner_id = ${uid})
+           and i.library_id in (select id from photo_library_scope where owner_id = ${uid})
          order by i.taken_at desc limit 400
       `.execute(k.db)
     ).rows;
@@ -341,9 +344,9 @@ async function runVisionCandidates(k: KernelApi, uid: string): Promise<void> {
       await sql<{ id: string; vec: Buffer; latitude: number; longitude: number }>`
         select i.id, e.vec, i.latitude, i.longitude
           from photo_items i join photo_embeddings e on e.photo_id = i.id
-         where i.in_trash = 0 and e.dim = 512
+         where ${notTrashed('i.id', uid)} and e.dim = 512
            and i.latitude is not null and i.longitude is not null
-           and i.library_id in (select id from photo_libraries where owner_id = ${uid})
+           and i.library_id in (select id from photo_library_scope where owner_id = ${uid})
          order by i.taken_at desc limit 3000
       `.execute(k.db)
     ).rows;

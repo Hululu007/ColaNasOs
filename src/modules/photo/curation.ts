@@ -4,8 +4,9 @@ import { sql } from 'kysely';
 import { secured } from '../../../kernel/route';
 import type { KernelApi } from '../../../kernel/types';
 import { Err } from '../../../kernel/errors';
-import { TRASH_RETENTION_DAYS } from './delete';
+import { TRASH_RETENTION_DAYS, deletePhotosPermanently } from './delete';
 import { recordDeletedFingerprints } from './deleted-fp';
+import { notTrashed } from './state';
 import type { FastifyRequest, FastifyReply } from 'fastify';
 
 /**
@@ -212,14 +213,15 @@ async function contentGroups(db: any, limit: number, uid: string) {
     await sql<ItemRow>`
       select id, rel_path, taken_at, size, content_md5
         from photo_items
-       where in_trash = 0
+       where ${notTrashed('photo_items.id', uid)}
          and content_md5 is not null
          and content_md5 <> ''
-         and library_id in (select id from photo_libraries where owner_id = ${uid})
+         and library_id in (select id from photo_library_scope where owner_id = ${uid})
          and content_md5 in (
            select content_md5 from photo_items
-            where in_trash = 0 and content_md5 is not null and content_md5 <> ''
-              and library_id in (select id from photo_libraries where owner_id = ${uid})
+            where ${notTrashed('photo_items.id', uid)}
+              and content_md5 is not null and content_md5 <> ''
+              and library_id in (select id from photo_library_scope where owner_id = ${uid})
             group by content_md5 having count(*) >= 2
          )
        order by size desc, taken_at asc
@@ -268,12 +270,12 @@ async function nameGroups(db: any, limit: number, uid: string) {
     await sql<ItemRow>`
       select p.id, p.rel_path, p.taken_at, p.size, p.content_md5
         from photo_items p
-       where p.in_trash = 0
-         and p.library_id in (select id from photo_libraries where owner_id = ${uid})
+       where ${notTrashed('p.id', uid)}
+         and p.library_id in (select id from photo_library_scope where owner_id = ${uid})
          and p.size in (
            select size from photo_items
-            where in_trash = 0
-              and library_id in (select id from photo_libraries where owner_id = ${uid})
+            where ${notTrashed('photo_items.id', uid)}
+              and library_id in (select id from photo_library_scope where owner_id = ${uid})
             group by size having count(*) >= 2
          )
        order by p.size desc
@@ -321,8 +323,8 @@ async function similarGroups(db: any, limit: number, threshold: number, uid: str
       select e.photo_id, e.vec
         from photo_embeddings e
         join photo_items i on i.id = e.photo_id
-       where i.in_trash = 0
-         and i.library_id in (select id from photo_libraries where owner_id = ${uid})
+       where ${notTrashed('i.id', uid)}
+         and i.library_id in (select id from photo_library_scope where owner_id = ${uid})
        limit 3000
     `.execute(db)
   ).rows;
@@ -453,7 +455,7 @@ async function phashGroups(db: any, limit: number, threshold: number, uid: strin
     const rows = (
       await sql<ItemRow>`
         select id, rel_path, taken_at, size, content_md5 from photo_items
-         where in_trash = 0 and id in (${sql.join(
+         where ${notTrashed('photo_items.id', uid)} and id in (${sql.join(
            chunk.map((id) => sql`${id}`),
            sql`, `,
          )})
@@ -523,20 +525,20 @@ export async function registerPhotoCleanup(app: any, k: KernelApi): Promise<void
       const missRow = (
         await sql<{ n: number }>`
           select count(*) as n from photo_items
-           where in_trash = 0 and (content_md5 is null or content_md5 = '')
-             and library_id in (select id from photo_libraries where owner_id = ${uid})
+           where ${notTrashed('photo_items.id', uid)} and (content_md5 is null or content_md5 = '')
+             and library_id in (select id from photo_library_scope where owner_id = ${uid})
         `.execute(k.db)
       ).rows[0];
       const candRow = (
         await sql<{ n: number }>`
           select count(*) as n from photo_items p
-           where p.in_trash = 0
+           where ${notTrashed('p.id', uid)}
              and (p.content_md5 is null or p.content_md5 = '')
-             and p.library_id in (select id from photo_libraries where owner_id = ${uid})
+             and p.library_id in (select id from photo_library_scope where owner_id = ${uid})
              and p.size in (
                select size from photo_items
-                where in_trash = 0
-                  and library_id in (select id from photo_libraries where owner_id = ${uid})
+                where ${notTrashed('photo_items.id', uid)}
+                  and library_id in (select id from photo_library_scope where owner_id = ${uid})
                 group by size having count(*) >= 2
              )
         `.execute(k.db)
@@ -591,25 +593,34 @@ export async function registerPhotoCleanup(app: any, k: KernelApi): Promise<void
           const removeIds = (group.removeIds || []).filter((id) => id && id !== keepId).slice(0, 500);
           if (!keepId || removeIds.length === 0) continue;
 
-          // 记账：撤销时按 prev_trash / prev_deleted_at 精确还原
+          // 记账：撤销时按 prev_trash / prev_deleted_at 精确还原（个人状态在 photo_item_user_state）
           for (const id of removeIds) {
-            const prev = (
-              await sql<{ in_trash: number; deleted_at: number | null }>`
-                select in_trash, deleted_at from photo_items
+            const owned = (
+              await sql<{ id: string }>`
+                select id from photo_items
                  where id = ${id}
-                   and library_id in (select id from photo_libraries where owner_id = ${owner})
+                   and library_id in (select id from photo_library_scope where owner_id = ${owner})
               `.execute(trx)
             ).rows[0];
-            if (!prev) continue;
+            if (!owned) continue;
+            const prev = (
+              await sql<{ in_trash: number; deleted_at: number | null }>`
+                select in_trash, deleted_at from photo_item_user_state
+                 where owner_id = ${owner} and item_id = ${id}
+              `.execute(trx)
+            ).rows[0];
             await sql`
               insert or replace into photo_cleanup_items
                 (batch_id, item_id, action, keep_id, prev_trash, prev_deleted_at)
-              values (${batchId}, ${id}, 'trash', ${keepId}, ${Number(prev.in_trash) || 0}, ${prev.deleted_at})
+              values (${batchId}, ${id}, 'trash', ${keepId}, ${Number(prev?.in_trash) || 0}, ${prev?.deleted_at ?? null})
             `.execute(trx);
             await sql`
-              update photo_items set in_trash = 1, deleted_at = ${ts}
-               where id = ${id}
-                 and library_id in (select id from photo_libraries where owner_id = ${owner})
+              insert into photo_item_user_state
+                (owner_id, item_id, in_trash, deleted_at, removed, updated_at)
+              values (${owner}, ${id}, 1, ${ts}, 0, ${ts})
+              on conflict(owner_id, item_id) do update set
+                in_trash = 1, deleted_at = excluded.deleted_at, removed = 0,
+                updated_at = excluded.updated_at
             `.execute(trx);
             trashed += 1;
           }
@@ -621,24 +632,30 @@ export async function registerPhotoCleanup(app: any, k: KernelApi): Promise<void
           // 只在「恰好留一张」时合并从属关系
           if (removeIds.length >= 1) {
             const keep = (
-              await sql<{ favorite: number; latitude: number | null; longitude: number | null }>`
-                select favorite, latitude, longitude from photo_items
+              await sql<{ latitude: number | null; longitude: number | null }>`
+                select latitude, longitude from photo_items
                  where id = ${keepId}
-                   and library_id in (select id from photo_libraries where owner_id = ${owner})
+                   and library_id in (select id from photo_library_scope where owner_id = ${owner})
               `.execute(trx)
             ).rows[0];
 
+            // 收藏是账号私有状态：被清理那几张里只要这个账号收藏过，保留的那张也标上。
             const favRow = (
               await sql<{ favorite: number }>`
-                select max(favorite) as favorite from photo_items
-                 where id in (${sql.join(
-                   [keepId, ...removeIds].map((id) => sql`${id}`),
-                   sql`, `,
-                 )})
+                select max(favorite) as favorite from photo_item_user_state
+                 where owner_id = ${owner}
+                   and item_id in (${sql.join(
+                     [keepId, ...removeIds].map((id) => sql`${id}`),
+                     sql`, `,
+                   )})
               `.execute(trx)
             ).rows[0];
             if (Number(favRow?.favorite) === 1) {
-              await sql`update photo_items set favorite = 1 where id = ${keepId}`.execute(trx);
+              await sql`
+                insert into photo_item_user_state (owner_id, item_id, favorite, updated_at)
+                values (${owner}, ${keepId}, 1, ${ts})
+                on conflict(owner_id, item_id) do update set favorite = 1, updated_at = excluded.updated_at
+              `.execute(trx);
             }
 
             // 位置：保留的这张没坐标时，借用被清理那张的
@@ -754,9 +771,11 @@ export async function registerPhotoCleanup(app: any, k: KernelApi): Promise<void
         ).rows;
         for (const item of items) {
           await sql`
-            update photo_items set in_trash = ${Number(item.prev_trash) || 0},
-              deleted_at = ${item.prev_deleted_at}
-            where id = ${item.item_id}
+            update photo_item_user_state
+               set in_trash = ${Number(item.prev_trash) || 0},
+                   deleted_at = ${item.prev_deleted_at},
+                   updated_at = ${now()}
+             where item_id = ${item.item_id}
           `.execute(trx);
           restored += 1;
         }
@@ -820,15 +839,20 @@ export async function registerPhotoCleanup(app: any, k: KernelApi): Promise<void
     async (req: FastifyRequest) => {
       const body = (req.body || {}) as { limit?: number };
       const limit = Math.max(1, Math.min(Number(body.limit) || 500, 5000));
+      const uid = String((req as any).user?.sub || '');
 
       const candidates = (
         await sql<{ id: string; rel_path: string; root_path: string }>`
           select p.id, p.rel_path, l.root_path from photo_items p
            join photo_libraries l on l.id = p.library_id
-           where p.in_trash = 0
+           where ${notTrashed('p.id', uid)}
              and (p.content_md5 is null or p.content_md5 = '')
+             and p.library_id in (select id from photo_library_scope where owner_id = ${uid})
              and p.size in (
-               select size from photo_items where in_trash = 0 group by size having count(*) >= 2
+               select size from photo_items
+                where ${notTrashed('photo_items.id', uid)}
+                  and library_id in (select id from photo_library_scope where owner_id = ${uid})
+                group by size having count(*) >= 2
              )
            limit ${limit}
         `.execute(k.db)
@@ -872,10 +896,14 @@ export async function registerPhotoCleanup(app: any, k: KernelApi): Promise<void
       const remaining = (
         await sql<{ n: number }>`
           select count(*) as n from photo_items p
-           where p.in_trash = 0
+           where ${notTrashed('p.id', uid)}
              and (p.content_md5 is null or p.content_md5 = '')
+             and p.library_id in (select id from photo_library_scope where owner_id = ${uid})
              and p.size in (
-               select size from photo_items where in_trash = 0 group by size having count(*) >= 2
+               select size from photo_items
+                where ${notTrashed('photo_items.id', uid)}
+                  and library_id in (select id from photo_library_scope where owner_id = ${uid})
+                group by size having count(*) >= 2
              )
         `.execute(k.db)
       ).rows[0];
@@ -939,13 +967,15 @@ export async function registerPhotoCleanup(app: any, k: KernelApi): Promise<void
       const uid = String((req as any).user?.sub || '');
       const batchFilter = q.batchId
         ? q.batchId === 'none'
-          ? sql`and delete_batch_id is null`
-          : sql`and delete_batch_id = ${q.batchId}`
+          ? sql`and s.delete_batch_id is null`
+          : sql`and s.delete_batch_id = ${q.batchId}`
         : sql``;
+      // 回收站是账号私有状态：只看自己在 photo_item_user_state 里标了 in_trash 的照片。
       const total = (
-        await sql<{ n: number }>`select count(*) as n from photo_items
-           where in_trash = 1
-             and library_id in (select id from photo_libraries where owner_id = ${uid})
+        await sql<{ n: number }>`select count(*) as n
+           from photo_item_user_state s join photo_items i on i.id = s.item_id
+           where s.owner_id = ${uid} and s.in_trash = 1 and s.removed = 0
+             and i.library_id in (select id from photo_library_scope where owner_id = ${uid})
              ${batchFilter}`.execute(k.db)
       ).rows[0];
       const offset = Math.max(0, Number(q.cursor) || 0);
@@ -957,11 +987,12 @@ export async function registerPhotoCleanup(app: any, k: KernelApi): Promise<void
           deleted_at: number | null;
           delete_batch_id: string | null;
         }>`
-          select id, rel_path, taken_at, deleted_at, delete_batch_id from photo_items
-           where in_trash = 1
-             and library_id in (select id from photo_libraries where owner_id = ${uid})
+          select i.id, i.rel_path, i.taken_at, s.deleted_at, s.delete_batch_id
+            from photo_item_user_state s join photo_items i on i.id = s.item_id
+           where s.owner_id = ${uid} and s.in_trash = 1 and s.removed = 0
+             and i.library_id in (select id from photo_library_scope where owner_id = ${uid})
              ${batchFilter}
-           order by deleted_at desc, id asc
+           order by s.deleted_at desc, i.id asc
            limit ${limit} offset ${offset}
         `.execute(k.db)
       ).rows;
@@ -1023,11 +1054,12 @@ export async function registerPhotoCleanup(app: any, k: KernelApi): Promise<void
           cover: string | null;
         }>`
           select b.id, b.created_at,
-                 (select count(*) from photo_items i
-                   where i.delete_batch_id = b.id and i.in_trash = 1) as n,
-                 (select i.rel_path from photo_items i
-                   where i.delete_batch_id = b.id and i.in_trash = 1
-                   order by i.deleted_at desc, i.id asc limit 1) as cover
+                 (select count(*) from photo_item_user_state s
+                   where s.owner_id = b.owner_id and s.delete_batch_id = b.id and s.in_trash = 1) as n,
+                 (select i.rel_path from photo_item_user_state s
+                   join photo_items i on i.id = s.item_id
+                   where s.owner_id = b.owner_id and s.delete_batch_id = b.id and s.in_trash = 1
+                   order by s.deleted_at desc, i.id asc limit 1) as cover
             from photo_delete_batches b
            where b.owner_id = ${uid}
            order by b.created_at desc
@@ -1037,14 +1069,15 @@ export async function registerPhotoCleanup(app: any, k: KernelApi): Promise<void
       // 没有批次号的：迁移前的历史回收站数据 + 清理链路（cleanup）直接改 in_trash 的行
       const legacy = (
         await sql<{ n: number; oldest: number | null; cover: string | null }>`
-          select count(*) as n, min(deleted_at) as oldest,
-                 (select i.rel_path from photo_items i
-                   where i.in_trash = 1 and i.delete_batch_id is null
-                     and i.library_id in (select id from photo_libraries where owner_id = ${uid})
-                   order by i.deleted_at desc, i.id asc limit 1) as cover
-            from photo_items
-           where in_trash = 1 and delete_batch_id is null
-             and library_id in (select id from photo_libraries where owner_id = ${uid})
+          select count(*) as n, min(s.deleted_at) as oldest,
+                 (select i.rel_path from photo_item_user_state s
+                   join photo_items i on i.id = s.item_id
+                   where s.owner_id = ${uid} and s.in_trash = 1 and s.delete_batch_id is null
+                     and i.library_id in (select id from photo_library_scope where owner_id = ${uid})
+                   order by s.deleted_at desc, i.id asc limit 1) as cover
+            from photo_item_user_state s join photo_items i on i.id = s.item_id
+           where s.owner_id = ${uid} and s.in_trash = 1 and s.delete_batch_id is null
+             and i.library_id in (select id from photo_library_scope where owner_id = ${uid})
         `.execute(k.db)
       ).rows[0];
       const nowSec = Math.floor(Date.now() / 1000);
@@ -1108,15 +1141,16 @@ export async function registerPhotoCleanup(app: any, k: KernelApi): Promise<void
     async (req: FastifyRequest, reply: FastifyReply) => {
       const body = (req.body || {}) as { ids?: string[]; batchId?: string };
       const owner = String((req as any).user?.sub || '');
-      const scoped = sql`library_id in (select id from photo_libraries where owner_id = ${owner})`;
 
       if (body.batchId) {
         const scope = body.batchId === 'none'
-          ? sql`delete_batch_id is null`
-          : sql`delete_batch_id = ${body.batchId}`;
+          ? sql`s.delete_batch_id is null`
+          : sql`s.delete_batch_id = ${body.batchId}`;
         const res = await sql`
-          update photo_items set in_trash = 0, deleted_at = null, delete_batch_id = null
-           where ${scope} and in_trash = 1 and ${scoped}
+          update photo_item_user_state as s
+             set in_trash = 0, deleted_at = null, delete_batch_id = null,
+                 updated_at = ${Math.floor(Date.now() / 1000)}
+           where ${scope} and s.in_trash = 1 and s.removed = 0 and s.owner_id = ${owner}
         `.execute(k.db);
         if (body.batchId !== 'none') {
           await sql`
@@ -1132,12 +1166,14 @@ export async function registerPhotoCleanup(app: any, k: KernelApi): Promise<void
         return reply.code(400).send({ error: Err.badRequest, message: 'ids or batchId required' });
       }
       const res = await sql`
-        update photo_items set in_trash = 0, deleted_at = null, delete_batch_id = null
-         where id in (${sql.join(
-           ids.map((id) => sql`${id}`),
-           sql`, `,
-         )})
-           and ${scoped}
+        update photo_item_user_state
+           set in_trash = 0, deleted_at = null, delete_batch_id = null,
+               updated_at = ${Math.floor(Date.now() / 1000)}
+         where owner_id = ${owner} and in_trash = 1 and removed = 0
+           and item_id in (${sql.join(
+             ids.map((id) => sql`${id}`),
+             sql`, `,
+           )})
       `.execute(k.db);
       return { restored: Number(res.numAffectedRows || 0), batchId: '' };
     },
@@ -1162,24 +1198,24 @@ export async function registerPhotoCleanup(app: any, k: KernelApi): Promise<void
     async (req: FastifyRequest) => {
       const uid = String((req as any).user?.sub || '');
       const body = (req.body || {}) as { batchId?: string };
-      const scoped = sql`library_id in (select id from photo_libraries where owner_id = ${uid})`;
       const batchCond = !body.batchId
         ? sql``
         : body.batchId === 'none'
-          ? sql`and delete_batch_id is null`
-          : sql`and delete_batch_id = ${body.batchId}`;
-      // 清空回收站是物理删行：先留指纹。正常流程在「删到回收站」时已写过，
-      // 这里补的是旧版本遗留 / 其它入口写进来的行 —— 不补的话手机下次备份
-      // 会把这些已删照片当成新照片再传一遍。
+          ? sql`and s.delete_batch_id is null`
+          : sql`and s.delete_batch_id = ${body.batchId}`;
+      // 清空回收站：非共享来源物理删行；共享来源只对当前账号标记 removed，
+      // 照片行与识别结果留给其他账号继续用（deletePhotosPermanently 内部区分）。
       const ids = (
         await sql<{ id: string }>`
-          select id from photo_items where in_trash = 1 and ${scoped} ${batchCond}
+          select s.item_id as id
+            from photo_item_user_state s join photo_items i on i.id = s.item_id
+           where s.owner_id = ${uid} and s.in_trash = 1 and s.removed = 0
+             and i.library_id in (select id from photo_library_scope where owner_id = ${uid})
+             ${batchCond}
         `.execute(k.db)
       ).rows.map((r) => r.id);
-      await recordDeletedFingerprints(k.db, uid, ids);
+      if (ids.length > 0) await deletePhotosPermanently(k, uid, ids);
       if (body.batchId) {
-        await sql`delete from photo_items
-           where in_trash = 1 and ${scoped} ${batchCond}`.execute(k.db);
         if (body.batchId !== 'none') {
           await sql`
             delete from photo_delete_batches where id = ${body.batchId} and owner_id = ${uid}
@@ -1187,7 +1223,6 @@ export async function registerPhotoCleanup(app: any, k: KernelApi): Promise<void
         }
         return { ok: true };
       }
-      await sql`delete from photo_items where in_trash = 1 and ${scoped}`.execute(k.db);
       await sql`delete from photo_delete_batches where owner_id = ${uid}`.execute(k.db);
       return { ok: true };
     },

@@ -11,6 +11,7 @@ import type { KernelApi } from '../../../../kernel/types';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { ref } from './schemas';
 import { hotSuggestions } from '../retrieval';
+import { notTrashed } from '../state';
 
 /**
  * 相册 AI 助手 + 模型 API：单轮问答与掩码配置项。
@@ -61,8 +62,8 @@ async function stats(k: KernelApi, uid: string, table: 'photo_scenes' | 'photo_a
       select s.label as label, count(*) as n
         from ${sql.raw(table)} s
         join photo_items i on i.id = s.photo_id
-         and i.in_trash = 0
-         and i.library_id in (select id from photo_libraries where owner_id = ${uid})
+         and ${notTrashed('i.id', uid)}
+         and i.library_id in (select id from photo_library_scope where owner_id = ${uid})
        group by s.label order by n desc limit 8
     `.execute(k.db)
   ).rows;
@@ -71,7 +72,7 @@ async function stats(k: KernelApi, uid: string, table: 'photo_scenes' | 'photo_a
 
 /** 只读库统计：问答的唯一事实来源，模型不许越过它编数字 */
 async function askContext(k: KernelApi, uid: string): Promise<AskContext> {
-  const owner = sql`i.in_trash = 0 and i.library_id in (select id from photo_libraries where owner_id = ${uid})`;
+  const owner = sql`${notTrashed('i.id', uid)} and i.library_id in (select id from photo_library_scope where owner_id = ${uid})`;
   const base = (
     await sql<{ total: number; active_days: number; first_at: number | null; last_at: number | null; gps: number }>`
       select count(*) as total,
@@ -378,7 +379,7 @@ export async function registerPhotoAssistant(
     async (req: FastifyRequest) => {
       const body = (req.body || {}) as { limit?: number };
       const limit = Math.max(1, Math.min(num(body.limit) || 6, 20));
-      return { items: await hotSuggestions(k, limit) };
+      return { items: await hotSuggestions(k, String(req.user?.sub || ''), limit) };
     },
   );
 }

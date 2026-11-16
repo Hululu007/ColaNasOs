@@ -143,10 +143,62 @@ export async function registerPhotoLibrary(app: FastifyInstance, k: KernelApi, h
           return reply.code(400).send({ error: Err.badRequest, message: 'path is not a directory' });
         }
 
-        const existing = await sql<{ id: string }>`
-          select id from photo_libraries where root_path = ${rel}
+        const owner = String((req as any).user?.sub || '');
+        const existing = await sql<LibraryRow & { shared: number }>`
+          select * from photo_library_scope where root_path = ${rel} order by shared limit 1
         `.execute(k.db);
-        if (existing.rows.length > 0) {
+        const found = existing.rows[0];
+        if (found) {
+          // 同源目录复用：别的账号已经加过这个物理目录，直接共享它的索引与派生数据，
+          // 不重复扫描、不复制照片行、也不重新跑人脸 / 场景 / 活动识别。
+          if (String(found.owner_id || '') !== owner) {
+            await sql`
+              insert or ignore into photo_library_shares (library_id, owner_id, created_at)
+              values (${found.id}, ${owner}, ${Math.floor(Date.now() / 1000)})
+            `.execute(k.db);
+            void h.libWatch.refresh();
+            return {
+              id: found.id,
+              name: found.name,
+              path: found.root_path,
+              items: Number(found.items) || 0,
+              createdAt: found.created_at,
+              lastScanAt: found.last_scan_at,
+              shared: true,
+            };
+          }
+          return reply.code(409).send({ error: Err.conflict, message: 'library already exists' });
+        }
+
+        // 同源目录换一种写法（绝对 / 相对）也要认出来：按物理绝对路径再比一次。
+        const all = (await sql<LibraryRow>`select * from photo_libraries`.execute(k.db)).rows;
+        const samePhysical = all.find((l) => {
+          try {
+            const other = isAbsoluteInput(l.root_path)
+              ? path.resolve(absoluteInput(l.root_path))
+              : resolveInRoot(filesRoot(), l.root_path);
+            return other === abs;
+          } catch {
+            return false;
+          }
+        });
+        if (samePhysical) {
+          if (String(samePhysical.owner_id || '') !== owner) {
+            await sql`
+              insert or ignore into photo_library_shares (library_id, owner_id, created_at)
+              values (${samePhysical.id}, ${owner}, ${Math.floor(Date.now() / 1000)})
+            `.execute(k.db);
+            void h.libWatch.refresh();
+            return {
+              id: samePhysical.id,
+              name: samePhysical.name,
+              path: samePhysical.root_path,
+              items: Number(samePhysical.items) || 0,
+              createdAt: samePhysical.created_at,
+              lastScanAt: samePhysical.last_scan_at,
+              shared: true,
+            };
+          }
           return reply.code(409).send({ error: Err.conflict, message: 'library already exists' });
         }
 
@@ -154,11 +206,11 @@ export async function registerPhotoLibrary(app: FastifyInstance, k: KernelApi, h
         const now = Math.floor(Date.now() / 1000);
         await sql`
           insert into photo_libraries (id, name, root_path, owner_id, created_at, last_scan_at, items)
-          values (${id}, ${name}, ${rel}, ${String((req as any).user?.sub || '')}, ${now}, null, 0)
+          values (${id}, ${name}, ${rel}, ${owner}, ${now}, null, 0)
         `.execute(k.db);
 
         void h.libWatch.refresh();
-        return { id, name, path: rel, items: 0, createdAt: now, lastScanAt: null };
+        return { id, name, path: rel, items: 0, createdAt: now, lastScanAt: null, shared: false };
       },
     );
 
@@ -225,6 +277,7 @@ export async function registerPhotoLibrary(app: FastifyInstance, k: KernelApi, h
           items: Number(lib.items) || 0,
           createdAt: lib.created_at,
           lastScanAt: lib.last_scan_at,
+          shared: false,
         };
       },
     );
@@ -246,9 +299,14 @@ export async function registerPhotoLibrary(app: FastifyInstance, k: KernelApi, h
         // 之后不再有「公共库」概念，也不再要求用户自己创建库。
         if (owner) {
           await sql`update photo_libraries set owner_id = ${owner} where owner_id = ''`.execute(k.db);
+          // 历史公共库的个人状态（收藏 / 回收站）也跟着认领，否则用户会「少了几张收藏」。
+          await sql`update or ignore photo_item_user_state set owner_id = ${owner} where owner_id = ''`.execute(
+            k.db,
+          );
         }
-        const res = await sql<LibraryRow>`
-          select * from photo_libraries where owner_id = ${owner} order by created_at, name limit 500
+        const res = await sql<LibraryRow & { shared: number }>`
+          select * from photo_library_scope where owner_id = ${owner}
+           order by created_at, name limit 500
         `.execute(k.db);
         for (const row of res.rows) {
           if (isAbsoluteInput(row.root_path)) registerExtraRoot(row.root_path);
@@ -264,6 +322,7 @@ export async function registerPhotoLibrary(app: FastifyInstance, k: KernelApi, h
               items: Number(r.items) || 0,
               createdAt: r.created_at,
               lastScanAt: r.last_scan_at,
+              shared: Number(r.shared) === 1,
             })),
         };
       },
@@ -282,15 +341,30 @@ export async function registerPhotoLibrary(app: FastifyInstance, k: KernelApi, h
       }),
       async (req, reply) => {
         const body = (req.body || {}) as { id?: string };
+        const owner = String((req as any).user?.sub || '');
         const lib = body.id ? await h.loadLibrary(body.id) : null;
         if (!lib) return reply.code(404).send({ error: Err.notFound, message: 'library not found' });
+
+        if (String(lib.owner_id || '') !== owner) {
+          // 共享来源：只解除「我能看」，不动物理来源与照片行（否则会把别人的相册一起删掉）。
+          await sql`
+            delete from photo_library_shares where library_id = ${lib.id} and owner_id = ${owner}
+          `.execute(k.db);
+          void h.libWatch.refresh();
+          return { ok: true };
+        }
 
         await k.db.transaction().execute(async (trx: any) => {
           await sql`
             delete from photo_album_items
              where item_id in (select id from photo_items where library_id = ${lib.id})
           `.execute(trx);
+          await sql`
+            delete from photo_item_user_state
+             where item_id in (select id from photo_items where library_id = ${lib.id})
+          `.execute(trx);
           await sql`delete from photo_items where library_id = ${lib.id}`.execute(trx);
+          await sql`delete from photo_library_shares where library_id = ${lib.id}`.execute(trx);
           await sql`delete from photo_libraries where id = ${lib.id}`.execute(trx);
         });
 

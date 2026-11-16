@@ -4,6 +4,8 @@ import { sql } from 'kysely';
 import { secured } from '../../../../kernel/route';
 import { Err } from '../../../../kernel/errors';
 import { filesRoot, resolveAnyPath } from '../../files/fs-root';
+import { pathVisible, visibilityOf } from '../../files/visibility';
+import { effectiveSources } from '../sources';
 import { isVideoFile } from '../ffmpeg';
 import { isImageFile } from '../../photo/exif';
 import { uncPathOf, ONLINE_NO } from '../smb';
@@ -60,6 +62,17 @@ export async function registerVideoBrowse(
       const lib = q.libraryId ? await h.loadLibrary(String(q.libraryId)) : null;
       if (!lib) return reply.code(404).send({ error: Err.notFound, message: 'library not found' });
 
+      // 库列表已经按授权过滤，按 id 直接浏览同样要拦：否则小号拿着库 id
+      // 就能翻到没授权的库（用户 2026-11-14 反馈「只给了一个影视文件夹」）。
+      const vis = visibilityOf(k.config, req.user);
+      if (!vis.unrestricted) {
+        const sources = await effectiveSources(k.db, lib);
+        const baseVisible = sources.some((s) => pathVisible(vis, s.root_path));
+        if (!baseVisible) {
+          return reply.code(404).send({ error: Err.notFound, message: 'library not found' });
+        }
+      }
+
       let rel: string;
       try {
         rel = normalizeBrowsePath(q.path);
@@ -81,6 +94,12 @@ export async function registerVideoBrowse(
           : resolveAnyPath(filesRoot(), rel ? `${lib.root_path}/${rel}` : lib.root_path);
       } catch {
         return reply.code(400).send({ error: Err.badRequest, message: 'path escapes library' });
+      }
+
+      // 多来源库里可能只有部分来源被授权（如只授权了 UNC 共享），
+      // 真正要读的绝对目录也必须落在授权范围内，不能借「库可见」翻别的来源。
+      if (!vis.unrestricted && !pathVisible(vis, absDir)) {
+        return reply.code(404).send({ error: Err.notFound, message: 'path not found' });
       }
 
       let entries;

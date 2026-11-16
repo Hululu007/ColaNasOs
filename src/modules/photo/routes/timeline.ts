@@ -7,6 +7,7 @@ import { Err } from '../../../../kernel/errors';
 import { filesRoot, resolveAnyPath } from '../../files/fs-root';
 import { readImageMeta } from '../exif';
 import { TAG, PhotoItemRow, toItem, encodeCursor, decodeCursor, likePattern } from '../util';
+import { favoriteOf, notTrashed, onlyFavorite, setFavorite } from '../state';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { KernelApi } from '../../../../kernel/types';
 import type { PhotoHelpers } from '../helpers';
@@ -43,9 +44,11 @@ export async function registerPhotoTimeline(app: FastifyInstance, k: KernelApi, 
         const limit = h.limitOf(q.limit, 60, 200);
         const asc = q.order === 'asc';
 
-        let where = sql`in_trash = 0 and library_id in (select id from photo_libraries where owner_id = ${String((req as any).user?.sub || '')})`;
+        const uid = String((req as any).user?.sub || '');
+        // 同源目录的照片行是两个账号共用的一份，收藏 / 回收站必须按当前账号读。
+        let where = sql`${notTrashed('photo_items.id', uid)} and library_id in (select id from photo_library_scope where owner_id = ${uid})`;
         if (q.libraryId) where = sql`${where} and library_id = ${q.libraryId}`;
-        if (q.favorite === true) where = sql`${where} and favorite = 1`;
+        if (q.favorite === true) where = sql`${where} and ${onlyFavorite('photo_items.id', uid)}`;
         if (q.folder) {
           const prefix = `${q.folder.replace(/^\/+|\/+$/g, '')}/`;
           where = sql`${where} and rel_path like ${prefix + '%'}`;
@@ -60,7 +63,7 @@ export async function registerPhotoTimeline(app: FastifyInstance, k: KernelApi, 
         }
 
         const res = await sql<PhotoItemRow>`
-          select * from photo_items
+          select *, ${favoriteOf('photo_items.id', uid)} as favorite from photo_items
            where ${where}
            order by taken_at ${sql.raw(asc ? 'asc' : 'desc')}, id asc
            limit ${limit + 1}
@@ -92,16 +95,9 @@ export async function registerPhotoTimeline(app: FastifyInstance, k: KernelApi, 
         const body = (req.body || {}) as { ids?: string[]; favorite?: boolean };
         const ids = (body.ids || []).slice(0, 500);
         if (ids.length === 0) return { updated: 0 };
-        const favorite = body.favorite === true ? 1 : 0;
-        const res = await sql`
-          update photo_items set favorite = ${favorite}
-           where id in (${sql.join(
-             ids.map((id) => sql`${id}`),
-             sql`, `,
-           )})
-             and library_id in (select id from photo_libraries where owner_id = ${uid})
-        `.execute(k.db);
-        return { updated: Number(res.numAffectedRows || 0) };
+        // 收藏是账号私有状态：写 photo_item_user_state，不动共享的照片行。
+        const updated = await setFavorite(k.db, uid, ids, body.favorite === true);
+        return { updated };
       },
     );
 
@@ -122,9 +118,9 @@ export async function registerPhotoTimeline(app: FastifyInstance, k: KernelApi, 
         // 必须带所属库归属：此前只按 id 查，任意登录用户拿到 id 就能读别人照片的元数据。
         // 同文件其它接口（收藏 / 时间轴）都带这段 owner 条件，这里补齐。
         const res = await sql<PhotoItemRow>`
-          select * from photo_items
+          select *, ${favoriteOf('photo_items.id', uid)} as favorite from photo_items
            where id = ${q.id || ''}
-             and library_id in (select id from photo_libraries where owner_id = ${uid})
+             and library_id in (select id from photo_library_scope where owner_id = ${uid})
         `.execute(k.db);
         const row = res.rows[0];
         if (!row) return reply.code(404).send({ error: Err.notFound, message: 'photo not found' });
@@ -172,7 +168,7 @@ export async function registerPhotoTimeline(app: FastifyInstance, k: KernelApi, 
         const res = await sql<PhotoItemRow & { mtime?: number }>`
           select * from photo_items
            where id = ${q.id || ''}
-             and library_id in (select id from photo_libraries where owner_id = ${uid})
+             and library_id in (select id from photo_library_scope where owner_id = ${uid})
         `.execute(k.db);
         const row = res.rows[0];
         if (!row) return reply.code(404).send({ error: Err.notFound, message: 'photo not found' });
@@ -241,7 +237,8 @@ export async function registerPhotoTimeline(app: FastifyInstance, k: KernelApi, 
         }
         const limit = h.limitOf(q.limit, 60, 200);
 
-        let where = sql`in_trash = 0 and library_id in (select id from photo_libraries where owner_id = ${String((req as any).user?.sub || '')})`;
+        const uid = String((req as any).user?.sub || '');
+        let where = sql`${notTrashed('photo_items.id', uid)} and library_id in (select id from photo_library_scope where owner_id = ${uid})`;
         if (q.q && q.q.trim()) {
           where = sql`${where} and rel_path like ${likePattern(q.q.trim())} escape '\\'`;
         }
@@ -263,7 +260,7 @@ export async function registerPhotoTimeline(app: FastifyInstance, k: KernelApi, 
         }
 
         const res = await sql<PhotoItemRow>`
-          select * from photo_items
+          select *, ${favoriteOf('photo_items.id', uid)} as favorite from photo_items
            where ${where}
            order by taken_at ${sql.raw(asc ? 'asc' : 'desc')}, id asc
            limit ${limit + 1}
@@ -322,10 +319,10 @@ export async function registerPhotoTimeline(app: FastifyInstance, k: KernelApi, 
 
         const rows = (
           await sql<PhotoItemRow>`
-            select * from photo_items
+            select *, ${favoriteOf('photo_items.id', uid)} as favorite from photo_items
              where id in (${sql.join(pageIds.map((id) => sql`${id}`), sql`, `)})
-               and in_trash = 0
-               and library_id in (select id from photo_libraries where owner_id = ${uid})
+               and ${notTrashed('photo_items.id', uid)}
+               and library_id in (select id from photo_library_scope where owner_id = ${uid})
           `.execute(k.db)
         ).rows;
         // 保持相关度顺序（SQL 的 in 不保证顺序）
@@ -361,7 +358,7 @@ export async function registerPhotoTimeline(app: FastifyInstance, k: KernelApi, 
       async (req: FastifyRequest) => {
         const uid = String((req as any).user?.sub || '');
         const libs = await sql<{ n: number }>`
-          select count(*) as n from photo_libraries where owner_id = ${uid}
+          select count(*) as n from photo_library_scope where owner_id = ${uid}
         `.execute(k.db);
         const agg = await sql<{
           n: number;
@@ -374,36 +371,36 @@ export async function registerPhotoTimeline(app: FastifyInstance, k: KernelApi, 
                  sum(size) as bytes,
                  sum(case when mime like 'video/%' then 1 else 0 end) as videos
             from photo_items
-           where in_trash = 0
-             and library_id in (select id from photo_libraries where owner_id = ${uid})
+           where ${notTrashed('photo_items.id', uid)}
+             and library_id in (select id from photo_library_scope where owner_id = ${uid})
         `.execute(k.db);
         const years = await sql<{ year: number; count: number }>`
           select cast(strftime('%Y', taken_at, 'unixepoch', 'localtime') as integer) as year,
                  count(*) as count
             from photo_items
-           where in_trash = 0
-             and library_id in (select id from photo_libraries where owner_id = ${uid})
+           where ${notTrashed('photo_items.id', uid)}
+             and library_id in (select id from photo_library_scope where owner_id = ${uid})
            group by year
            order by year desc
         `.execute(k.db);
         const todayStart = Math.floor(new Date().setHours(0, 0, 0, 0) / 1000);
         const today = await sql<{ n: number }>`
           select count(*) as n from photo_items
-           where in_trash = 0 and created_at >= ${todayStart}
-             and library_id in (select id from photo_libraries where owner_id = ${uid})
+           where ${notTrashed('photo_items.id', uid)} and created_at >= ${todayStart}
+             and library_id in (select id from photo_library_scope where owner_id = ${uid})
         `.execute(k.db);
         const active = await sql<{ n: number }>`
           select count(distinct date(taken_at, 'unixepoch', 'localtime')) as n
             from photo_items
-           where in_trash = 0
-             and library_id in (select id from photo_libraries where owner_id = ${uid})
+           where ${notTrashed('photo_items.id', uid)}
+             and library_id in (select id from photo_library_scope where owner_id = ${uid})
         `.execute(k.db);
         const since = Math.floor(Date.now() / 1000) - 365 * 86400;
         const days = await sql<{ date: string; count: number }>`
           select date(taken_at, 'unixepoch', 'localtime') as date, count(*) as count
             from photo_items
-           where in_trash = 0 and taken_at >= ${since}
-             and library_id in (select id from photo_libraries where owner_id = ${uid})
+           where ${notTrashed('photo_items.id', uid)} and taken_at >= ${since}
+             and library_id in (select id from photo_library_scope where owner_id = ${uid})
            group by date
            order by date asc
         `.execute(k.db);
@@ -455,9 +452,9 @@ export async function registerPhotoTimeline(app: FastifyInstance, k: KernelApi, 
                      order by taken_at desc, id desc
                    ) as rn
               from photo_items
-             where in_trash = 0
+             where ${notTrashed('photo_items.id', owner)}
                and cast(strftime('%Y', taken_at, 'unixepoch', 'localtime') as integer) = ${year}
-               and library_id in (select id from photo_libraries where owner_id = ${owner})
+               and library_id in (select id from photo_library_scope where owner_id = ${owner})
           )
           where rn = 1
           order by m
@@ -499,13 +496,14 @@ export async function registerPhotoTimeline(app: FastifyInstance, k: KernelApi, 
       }),
       async (req: FastifyRequest) => {
         const uid = String((req as any).user?.sub || '');
-        const own = sql`library_id in (select id from photo_libraries where owner_id = ${uid})`;
+        const own = sql`${notTrashed('photo_items.id', uid)}
+          and library_id in (select id from photo_library_scope where owner_id = ${uid})`;
 
         const years = await sql<{ year: number; count: number }>`
           select cast(strftime('%Y', taken_at, 'unixepoch', 'localtime') as integer) as year,
                  count(*) as count
             from photo_items
-           where in_trash = 0 and ${own}
+           where ${own}
            group by year
            order by year desc
         `.execute(k.db);
@@ -533,8 +531,8 @@ export async function registerPhotoTimeline(app: FastifyInstance, k: KernelApi, 
                        count(*) as cnt, ${faceArea} as area
                   from photo_items ph
                   join photo_faces f on f.photo_id = ph.id
-                 where ph.in_trash = 0
-                   and ph.library_id in (select id from photo_libraries where owner_id = ${uid})
+                 where ${notTrashed('ph.id', uid)}
+                   and ph.library_id in (select id from photo_library_scope where owner_id = ${uid})
                    and lower(ph.rel_path) not like '%screenshot%'
                    and f.cluster_id in (
                      select id from photo_face_clusters where size > 0 order by size desc limit 5
@@ -559,8 +557,8 @@ export async function registerPhotoTimeline(app: FastifyInstance, k: KernelApi, 
                        count(*) as cnt, ${faceArea} as area
                   from photo_items ph
                   join photo_faces f on f.photo_id = ph.id
-                 where ph.in_trash = 0
-                   and ph.library_id in (select id from photo_libraries where owner_id = ${uid})
+                 where ${notTrashed('ph.id', uid)}
+                   and ph.library_id in (select id from photo_library_scope where owner_id = ${uid})
                    and lower(ph.rel_path) not like '%screenshot%'
                    and f.cluster_id is not null
                    and (f.img_width is null or f.img_width = 0
@@ -579,7 +577,7 @@ export async function registerPhotoTimeline(app: FastifyInstance, k: KernelApi, 
                      order by taken_at desc, id desc
                    ) as rn
               from photo_items
-             where in_trash = 0 and ${own}
+             where ${own}
                and lower(rel_path) not like '%screenshot%'
           ) where rn = 1
         `.execute(k.db);
@@ -621,8 +619,8 @@ export async function registerPhotoTimeline(app: FastifyInstance, k: KernelApi, 
       // 原实现是 `select * ... limit 20000` 再在 JS 里切路径分组：进一个大目录就要
       // 把整棵子树（含 30 多列）读进内存，十万张的库上是几十 MB 的分配 + 全量 GC 压力。
       // 现在三条聚合查询搞定，且只读 rel_path / taken_at 两列。
-      const ownerPart = sql`i.in_trash = 0
-        and i.library_id in (select id from photo_libraries where owner_id = ${uid})
+      const ownerPart = sql`${notTrashed('i.id', uid)}
+        and i.library_id in (select id from photo_library_scope where owner_id = ${uid})
         and i.rel_path like ${prefix + '%'}`;
 
       // 子目录：名字 + 张数 + 封面（该目录最新一张）
@@ -700,11 +698,11 @@ export async function registerPhotoTimeline(app: FastifyInstance, k: KernelApi, 
         }>`
           select l.id, l.name, l.root_path,
                  (select count(*) from photo_items i
-                   where i.library_id = l.id and i.in_trash = 0) as items,
+                   where i.library_id = l.id and ${notTrashed('i.id', uid)}) as items,
                  (select i.rel_path from photo_items i
-                   where i.library_id = l.id and i.in_trash = 0
+                   where i.library_id = l.id and ${notTrashed('i.id', uid)}
                    order by i.taken_at desc, i.id asc limit 1) as cover_path
-            from photo_libraries l
+            from photo_library_scope l
            where l.owner_id = ${uid}
            order by l.created_at asc
         `.execute(k.db)

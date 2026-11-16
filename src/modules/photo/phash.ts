@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { sql } from 'kysely';
+import { notTrashed } from './state';
 import { secured } from '../../../kernel/route';
 import type { KernelApi } from '../../../kernel/types';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
@@ -75,7 +76,7 @@ function hamming(a: bigint, b: bigint): number {
 }
 
 function ownerFilter(uid: string) {
-  return sql`library_id in (select id from photo_libraries where owner_id = ${uid})`;
+  return sql`library_id in (select id from photo_library_scope where owner_id = ${uid})`;
 }
 
 async function runPhash(k: KernelApi, uid: string): Promise<void> {
@@ -89,7 +90,7 @@ async function runPhash(k: KernelApi, uid: string): Promise<void> {
   try {
     const pending = await sql<{ n: number }>`
       select count(*) as n from photo_items
-       where in_trash = 0 and phash_state = 0 and media_kind = 'image'
+       where ${notTrashed('photo_items.id', uid)} and phash_state = 0 and media_kind = 'image'
          and ${ownerFilter(uid)}
     `.execute(k.db);
     state.total = Number(pending.rows[0]?.n) || 0;
@@ -101,7 +102,7 @@ async function runPhash(k: KernelApi, uid: string): Promise<void> {
       const rows = (
         await sql<{ id: string; rel_path: string }>`
           select id, rel_path from photo_items
-           where in_trash = 0 and phash_state = 0 and media_kind = 'image'
+           where ${notTrashed('photo_items.id', uid)} and phash_state = 0 and media_kind = 'image'
              and ${ownerFilter(uid)}
            order by taken_at desc limit ${SCAN_BATCH}
         `.execute(k.db)
@@ -149,7 +150,7 @@ async function runPhash(k: KernelApi, uid: string): Promise<void> {
         rel_path: string;
       }>`
         select id, phash, size, taken_at, rel_path from photo_items
-         where in_trash = 0 and phash is not null and phash <> ''
+         where ${notTrashed('photo_items.id', uid)} and phash is not null and phash <> ''
            and media_kind = 'image' and ${ownerFilter(uid)}
          order by taken_at asc, id asc
          limit 40000

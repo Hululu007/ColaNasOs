@@ -1,7 +1,8 @@
-import path from 'node:path';
 import { sql } from 'kysely';
 import {
+  accessPathOf,
   isFullAccess,
+  POLICY_KEY_PREFIX,
   readPolicy,
   type PathRule,
 } from '../../../kernel/access-policy';
@@ -13,14 +14,17 @@ import { filesRoot } from './fs-root';
  *
  * 目录授权里存的路径有两种形态：文件根内的相对路径（`/media`）和目录选择器
  * 选出来的绝对路径（`D:/Media` → 归一后 `/D:/Media`）。而库 / 条目里的路径
- * 同样两者都有，直接字符串比会永远对不上。这里把两侧统一折成
- * **绝对 POSIX 小写路径**再比，规则与候选就落在同一个坐标系里。
+ * 同样两者都有，直接字符串比会永远对不上。这里统一走 [accessPathOf]，
+ * 折成**小写、正斜杠的绝对路径**再比（盘符大小写 / 反斜杠 / UNC 都兼容）。
  *
- * 语义：
+ * 语义（与 preHandler 的 `effectivePathRules` 保持一致）：
  * - 全权账号（`*` / 访问令牌的 ownerAdmin）→ `unrestricted`，任何过滤都不生效；
- * - 管理员没给这个账号配目录规则 → `unrestricted`（没做限制，列表按全量，
- *   真实读写仍由 preHandler 的「没配规则 = 全拒 403」兜底）；
- * - 配了目录规则的普通账号 → 只放行规则覆盖到的路径。
+ * - 普通账号**显式保存过空规则 → 什么都不能看**（用户 2026-11-11：必须显式授权）；
+ * - 普通账号从没配过规则 → 视为未做目录限制（兼容 scope-only 账号与旧数据）；
+ * - 配了目录规则 → 只放行规则覆盖到的路径（规则 `/` 表示全部）。
+ *
+ * 以前「显式空规则 = 列表按全量」是错的：文件读写会被 403 拦住，但影视库、
+ * 首页聚合、最近添加却把全部内容都吐出来（用户 2026-11-14 用小号复现）。
  */
 export interface Visibility {
   unrestricted: boolean;
@@ -35,15 +39,7 @@ function posix(input: string): string {
 
 /** 规则路径 / 库源路径 / 条目路径统一成绝对形式 */
 export function absolutePathOf(input: string): string {
-  const s = posix(input);
-  if (!s) return posix(filesRoot()).toLowerCase().replace(/\/+$/, '');
-  // 规则经 normalizePathRule 后带前导斜杠：`/D:/Media` 其实是绝对路径。
-  const bare = s.replace(/^\/+/, '');
-  if (/^[A-Za-z]:/.test(bare) || bare.startsWith('//')) {
-    return path.posix.normalize(bare).toLowerCase().replace(/\/+$/, '');
-  }
-  const root = posix(filesRoot()).replace(/\/+$/, '');
-  return (root + '/' + bare).toLowerCase().replace(/\/+$/, '');
+  return accessPathOf(input, filesRoot());
 }
 
 export function visibilityOf(config: ConfigStore, user: unknown): Visibility {
@@ -53,11 +49,19 @@ export function visibilityOf(config: ConfigStore, user: unknown): Visibility {
   const uid = String((user as { sub?: string } | null)?.sub ?? '');
   const policy = readPolicy(config, uid);
   const rules = policy.paths ?? [];
-  // 没配目录授权 = 管理员没有做目录限制，列表按全量显示。真正的文件 / 下载
-  // 访问仍由 preHandler 的 effectivePathRules 兜底（没配规则 = 全拒 403），
-  // 所以放行「库 / 来源这些元数据」不会放大读写权限。
+  // 规则 `/` 的语义是「全部」，等价于不限制（历史上 ACL 也是这么判的）
+  if (rules.some((r) => r.path === '/')) {
+    return { unrestricted: true, rules, prefixes: [] };
+  }
   if (rules.length === 0) {
-    return { unrestricted: true, rules: [], prefixes: [] };
+    // 区分「从没配过规则」和「显式保存了一份空规则」：
+    // - 从没配过：scope-only 的账号 / 旧数据，列表仍按全量（兼容既有行为）；
+    // - 显式保存为空：管理员在账号页点过保存但一个目录都没授权，
+    //   此时必须和文件 ACL 一样「一个目录都不给看」，否则就是小号
+    //   文件 403、影视库却全量泄露（用户 2026-11-14 复现）。
+    const explicit = config.get(`${POLICY_KEY_PREFIX}${uid}`);
+    if (explicit === undefined) return { unrestricted: true, rules: [], prefixes: [] };
+    return { unrestricted: false, rules: [], prefixes: [] };
   }
   return {
     unrestricted: false,
@@ -97,7 +101,11 @@ export function likePrefixes(v: Visibility): string[] {
   const out = new Set<string>();
   const root = posix(filesRoot()).replace(/\/+$/, '').toLowerCase();
   for (const r of v.rules) {
-    const bare = posix(r.path).replace(/^\/+/, '');
+    // UNC 规则（`//host/share`）要带上双斜杠原样参与 LIKE：
+    // SMB 条目的 rel_path 也是 `//host/share/...`，剥掉前导斜杠会永远匹配不上。
+    const raw = posix(r.path);
+    if (raw && raw !== '/') out.add(raw);
+    const bare = raw.replace(/^\/+/, '');
     if (bare) out.add(bare);
     const abs = absolutePathOf(r.path).replace(/^\/+/, '');
     if (abs) out.add(abs);

@@ -67,9 +67,11 @@ export function isAbsoluteInput(input?: string): boolean {
   if (/^\\\\[^\\]/.test(t)) return true;
   // POSIX 化后的 UNC（`list` 返回 `//host/share`，前端再传回来）
   if (/^\/\/[^/]/.test(t)) return true;
-  // 前端 URL 会把 `D:/x` 编码成 `/D:/x`，先剥掉前导斜杠再判断
+  // 前端 URL 会把 `D:/x` 编码成 `/D:/x`，先剥掉前导斜杠再判断。
+  // `D:`（盘符根、不带斜杠）也要认：文件页在根目录点进「D:」后拼出来的
+  // 就是 `/D:`，不认就会落回文件根变成 404。
   const v = t.replace(/^[/\\]+/, '');
-  return /^[a-zA-Z]:[\\/]/.test(v);
+  return /^[a-zA-Z]:([\\/]|$)/.test(v);
 }
 
 /** 把请求里的绝对路径还原成系统路径；相对路径原样返回 */
@@ -80,6 +82,8 @@ export function absoluteInput(input: string): string {
   // POSIX 风格的 UNC 换回反斜杠：`//host/share/x` → `\\host\share\x`
   if (/^\/\/[^/]/.test(t)) return t.replace(/\//g, '\\');
   const v = t.replace(/^[/\\]+/, '');
+  // 只有盘符（`D:` / `/D:`）：补成盘符根，path.resolve('D:') 会按当前工作目录解析
+  if (/^[a-zA-Z]:$/.test(v)) return `${v}\\`;
   return /^[a-zA-Z]:[\\/]/.test(v) ? v : input;
 }
 

@@ -5,6 +5,7 @@ import type { KernelApi } from '../../../../kernel/types';
 import { aiAvailable, ensureSidecar } from './sidecar';
 import { aiConfig } from './config';
 import { scorePhotoVector } from './photo-vector';
+import { notTrashed } from '../state';
 import { ref } from './schemas';
 import type { FastifyRequest } from 'fastify';
 
@@ -110,7 +111,7 @@ export async function scoreSemantic(
     .filter((t) => t.label);
   const tags = tagsDetail.map((t) => t.label);
 
-  const owner = sql`i.library_id in (select id from photo_libraries where owner_id = ${opts.uid})`;
+  const owner = sql`i.library_id in (select id from photo_library_scope where owner_id = ${opts.uid})`;
 
   // 每个标签的照片集合（场景 + 活动合并）
   const sets: Array<{ tag: string; ids: Set<string> }> = [];
@@ -120,7 +121,7 @@ export async function scoreSemantic(
       await sql<{ id: string }>`
         select s.photo_id as id from photo_scenes s
           join photo_items i on i.id = s.photo_id
-         where s.label = ${tag} and i.in_trash = 0 and ${owner} limit 5000
+         where s.label = ${tag} and ${notTrashed('i.id', opts.uid)} and ${owner} limit 5000
       `.execute(k.db)
     ).rows;
     for (const r of sceneRows) ids.add(r.id);
@@ -128,7 +129,7 @@ export async function scoreSemantic(
       await sql<{ id: string }>`
         select a.photo_id as id from photo_activities a
           join photo_items i on i.id = a.photo_id
-         where a.label = ${tag} and a.score >= 0.078 and i.in_trash = 0 and ${owner} limit 5000
+         where a.label = ${tag} and a.score >= 0.078 and ${notTrashed('i.id', opts.uid)} and ${owner} limit 5000
       `.execute(k.db)
     ).rows;
     for (const r of actRows) ids.add(r.id);
@@ -160,14 +161,14 @@ export async function scoreSemantic(
        where ${fts
          ? sql`o.rowid in (select rowid from photo_ocr_fts where photo_ocr_fts match ${fts})`
          : sql`o.text like ${like} escape '\\'`}
-         and i.in_trash = 0 and ${owner}
+         and ${notTrashed('i.id', opts.uid)} and ${owner}
        limit 3000
     `.execute(k.db)
   ).rows;
   const pathRows = (
     await sql<{ id: string }>`
       select i.id from photo_items i
-       where i.in_trash = 0 and ${owner} and i.rel_path like ${like} escape '\\'
+       where ${notTrashed('i.id', opts.uid)} and ${owner} and i.rel_path like ${like} escape '\\'
        limit 3000
     `.execute(k.db)
   ).rows;
@@ -312,7 +313,7 @@ export async function registerPhotoSemantic(app: any, k: KernelApi): Promise<voi
            where id in (${sql.join(
              ids.map((id) => sql`${id}`),
              sql`, `,
-           )}) and in_trash = 0
+           )}) and ${notTrashed('photo_items.id', uid)}
         `.execute(k.db)
       ).rows;
       const byId = new Map(photos.map((p) => [p.id, p]));

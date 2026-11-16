@@ -212,6 +212,8 @@ export const MIGRATION_ORDER: readonly string[] = Object.freeze([
   '175_scope_domain_merge',
   // 成长轨迹：阶段预计算表 + 封面候选池 + 增量凭据
   '176_photo_growth',
+  // 相册同源目录复用：来源共享关系 + 账号作用域视图 + 按账号的收藏/回收站状态
+  '177_photo_shared_source',
 ]);
 
 export interface OrderCheck {

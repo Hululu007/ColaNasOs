@@ -49,9 +49,9 @@ export async function recordDeletedFingerprints(
   const res = uid
     ? await sql`
         insert or ignore into photo_deleted_fp (owner_id, size, orig_size, content_md5, created_at)
-        select l.owner_id, p.size, p.orig_size, coalesce(p.content_md5, ''), ${now}
-          from photo_items p join photo_libraries l on l.id = p.library_id
-         where l.owner_id = ${uid} and p.id in (${list})
+        select ${uid}, p.size, p.orig_size, coalesce(p.content_md5, ''), ${now}
+          from photo_items p
+         where p.id in (${list})
       `.execute(db)
     : await sql`
         insert or ignore into photo_deleted_fp (owner_id, size, orig_size, content_md5, created_at)

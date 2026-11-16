@@ -4,6 +4,7 @@ import { sql } from 'kysely';
 import { secured } from '../../../../kernel/route';
 import { Err } from '../../../../kernel/errors';
 import { filesRoot, resolveAnyPath } from '../../files/fs-root';
+import { pathVisible, visibilityOf } from '../../files/visibility';
 import { TRASH_DIR, movePath } from '../../files/ops';
 import { effectiveSources, offlineCond, offlineSmbPrefixes } from '../sources';
 import { libTypeOf } from '../media-type';
@@ -65,7 +66,9 @@ export function registerVideoImageFolders(
         return reply.code(400).send({ error: Err.badRequest, message: 'invalid folder path' });
       }
       const sources = await effectiveSources(k.db, lib);
-      const roots = rootsOf(sources);
+      // 目录授权：只保留落在授权范围内的来源根；越界的子目录 requireRoot 也会拒绝。
+      const vis = visibilityOf(k.config, req.user);
+      const roots = rootsOf(sources).filter((r) => pathVisible(vis, r));
       if (currentPath) {
         try {
           requireRoot(currentPath, roots);
@@ -266,7 +269,9 @@ export function registerVideoImageFolders(
       const lib = body.libraryId ? await h.loadLibrary(String(body.libraryId)) : null;
       if (!lib) return reply.code(404).send({ error: Err.notFound, message: 'library not found' });
       const sources = await effectiveSources(k.db, lib);
-      const roots = rootsOf(sources);
+      // 目录授权：只保留落在授权范围内的来源根；越界的子目录 requireRoot 也会拒绝。
+      const vis = visibilityOf(k.config, req.user);
+      const roots = rootsOf(sources).filter((r) => pathVisible(vis, r));
       let target: string;
       let root: string | null;
       try {

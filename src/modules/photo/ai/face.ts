@@ -6,6 +6,7 @@ import { sql } from 'kysely';
 import { secured } from '../../../../kernel/route';
 import type { KernelApi } from '../../../../kernel/types';
 import { EMB_DIM, now, ref } from './schemas';
+import { notTrashed } from '../state';
 import {
   aiConfig,
   faceTuning,
@@ -1102,14 +1103,54 @@ export async function registerPhotoFaces(app: any, k: KernelApi): Promise<void> 
       // 但翻页必须能翻到底（客户端自己循环拉全量）。
       const limit = Math.max(1, Math.min(Number(q.limit) || FACES_PAGE_DEFAULT, FACES_PAGE_MAX));
       const offset = Math.max(0, Number(q.cursor) || 0);
+      const uid = String((req as any).user?.sub || '');
+      // 同源目录共享后，人脸簇本身是全局的，但「这个账号能看到几张 / 头像用哪张」
+      // 必须按当前账号的可见照片重算，否则共享来源之外的照片会从簇头像里漏出去。
+      //
+      // 关键是**一次算完再聚合**：老写法在 size / cover_photo / cover_face 三个相关
+      // 子查询里各写一遍 `f.photo_id in (可见照片)`，SQLite 只能按「簇 × 可见照片」
+      // 逐条探测（5000 张照片 × 2000 个簇 ≈ 3000 万次索引查找，实测 7.3s）。
+      // 现在先从库范围 + 未删除直接扫出可见人脸（走 idx_photo_items_library →
+      // idx_photo_faces_photo），再用窗口函数一次挑出封面、一次分组统计。
+      const inner = sql`
+        with visible_face as (
+          select f.id as face_id, f.cluster_id, f.photo_id, f.score, f.created_at,
+                 coalesce(f.box_width * f.box_height, 0) as area
+            from photo_faces f
+            join photo_items i on i.id = f.photo_id
+           where f.cluster_id is not null
+             and i.library_id in (select id from photo_library_scope where owner_id = ${uid})
+             and ${notTrashed('i.id', uid)}
+        ),
+        ranked as (
+          select cluster_id, face_id, photo_id,
+                 row_number() over (
+                   partition by cluster_id
+                   order by coalesce(score, 0) desc, created_at asc
+                 ) as rn_cover,
+                 row_number() over (
+                   partition by cluster_id
+                   order by area desc, created_at asc
+                 ) as rn_face
+            from visible_face
+        ),
+        agg as (
+          select cluster_id,
+                 count(distinct photo_id) as size,
+                 max(case when rn_cover = 1 then photo_id end) as cover_photo_id,
+                 max(case when rn_face = 1 then face_id end) as cover_face_id
+            from ranked
+           group by cluster_id
+        )
+        select c.id, c.name,
+               coalesce(a.size, 0) as size,
+               a.cover_photo_id, a.cover_face_id
+          from photo_face_clusters c
+          left join agg a on a.cluster_id = c.id`;
       const where = sql`where size >= ${minCount} or (name is not null and name <> '')`;
 
-      const totalRow = (
-        await sql<{ n: number }>`select count(*) as n from photo_face_clusters ${where}`.execute(k.db)
-      ).rows[0];
-
-      // 头像兜底放在 SQL 里挑（相关子查询），不再逐行发一条 —— 老写法是 N+1，
-      // 500 行就要 500 次往返，翻页后更糟。
+      // total 用窗口计数跟分页同一次查出来，省掉重复跑一遍同样的聚合
+      // （40k 张照片 / 160k 张人脸时约省 45% 时间）。翻页越界拿不到行时才补一次。
       const rows = (
         await sql<{
           id: string;
@@ -1117,20 +1158,23 @@ export async function registerPhotoFaces(app: any, k: KernelApi): Promise<void> 
           size: number;
           cover_photo_id: string | null;
           cover_face_id: string | null;
+          total: number;
         }>`
-          select id, name, size, cover_photo_id,
-                 coalesce(cover_face_id, (
-                   select f.id from photo_faces f
-                    where f.cluster_id = photo_face_clusters.id
-                    order by coalesce(f.box_width * f.box_height, 0) desc, f.created_at asc
-                    limit 1
-                 )) as cover_face_id
-            from photo_face_clusters
+          select id, name, size, cover_photo_id, cover_face_id,
+                 count(*) over () as total
+            from (${inner})
             ${where}
            order by size desc, id asc
            limit ${limit} offset ${offset}
         `.execute(k.db)
       ).rows;
+      const total = rows.length > 0
+        ? Number(rows[0].total) || 0
+        : Number(
+            (
+              await sql<{ n: number }>`select count(*) as n from (${inner}) ${where}`.execute(k.db)
+            ).rows[0]?.n,
+          ) || 0;
 
       const items = rows.map((r) => ({
         id: r.id,
@@ -1140,7 +1184,7 @@ export async function registerPhotoFaces(app: any, k: KernelApi): Promise<void> 
         coverFaceId: r.cover_face_id,
       }));
       return {
-        total: Number(totalRow?.n) || 0,
+        total,
         items,
         nextCursor: items.length === limit ? String(offset + limit) : null,
       };
@@ -1165,11 +1209,13 @@ export async function registerPhotoFaces(app: any, k: KernelApi): Promise<void> 
       const offset = Math.max(0, Number(q.cursor) || 0);
       // 老写法 `limit 500` 直接把一千张的簇截成 500 张，用户看到的就是「照片少了」。
       // 改成真分页：total 给客户端算进度，nextCursor 翻到底。
+      const uid = String((req as any).user?.sub || '');
       const totalRow = (
         await sql<{ n: number }>`
           select count(*) as n
             from photo_faces f join photo_items i on i.id = f.photo_id
-           where f.cluster_id = ${clusterId} and i.in_trash = 0
+           where f.cluster_id = ${clusterId} and ${notTrashed('i.id', uid)}
+             and i.library_id in (select id from photo_library_scope where owner_id = ${uid})
         `.execute(k.db)
       ).rows[0];
       const rows = (
@@ -1187,7 +1233,8 @@ export async function registerPhotoFaces(app: any, k: KernelApi): Promise<void> 
           select f.id, f.photo_id, f.score, i.rel_path, i.taken_at,
                  f.box_left, f.box_top, f.box_width, f.box_height
           from photo_faces f join photo_items i on i.id = f.photo_id
-          where f.cluster_id = ${clusterId} and i.in_trash = 0
+          where f.cluster_id = ${clusterId} and ${notTrashed('i.id', uid)}
+            and i.library_id in (select id from photo_library_scope where owner_id = ${uid})
           order by i.taken_at desc, f.id asc limit ${limit} offset ${offset}
         `.execute(k.db)
       ).rows;

@@ -1021,4 +1021,76 @@ export const PHOTO_MIGRATIONS: Migration[] = [
         `.execute(db);
       },
     },
+    {
+      // 同源目录复用：一个物理来源目录只扫描 / 识别一次，多账号共享这份索引与派生数据。
+      //
+      // 数据分层：
+      //   · photo_libraries —— 物理来源（root_path 全局唯一），扫描 / AI 派生数据都挂在它的库 id 上；
+      //   · photo_library_shares —— 「某账号也能看这个来源」，只记录访问关系，不复制照片行；
+      //   · photo_library_scope（视图）—— 把「自己的来源 + 别人共享给我的来源」展平成一份，
+      //     所有既有的 `library_id in (select id from photo_libraries where owner_id = ?)`
+      //     只改表名即可自动支持共享，不用把照片 / 缩略图 / 人脸 / 场景复制两份。
+      //
+      // 个人状态（收藏 / 回收站 / 永久移出）原先是 photo_items 上的列，行共享后两个人会互相串。
+      // 这里把它们迁到按账号的 photo_item_user_state：同一张照片，A 收藏 / 删除不影响 B。
+      id: '177_photo_shared_source',
+      async up(db) {
+        await sql`
+          create table if not exists photo_library_shares (
+            library_id text not null,
+            owner_id text not null,
+            created_at integer not null,
+            primary key (library_id, owner_id)
+          )
+        `.execute(db);
+        await sql`
+          create index if not exists idx_photo_library_shares_owner
+            on photo_library_shares(owner_id, created_at)
+        `.execute(db);
+
+        // 列名保持 id / owner_id，调用方只把 from photo_libraries 换成 from photo_library_scope。
+        // shared 标记用于前端区分「我添加的来源」与「别人共享给我的来源」。
+        await sql`
+          create view if not exists photo_library_scope as
+            select l.id, l.name, l.root_path, l.created_at, l.last_scan_at, l.items,
+                   l.owner_id, 0 as shared
+              from photo_libraries l
+            union all
+            select l.id, l.name, l.root_path, l.created_at, l.last_scan_at, l.items,
+                   s.owner_id, 1 as shared
+              from photo_library_shares s
+              join photo_libraries l on l.id = s.library_id
+        `.execute(db);
+
+        await sql`
+          create table if not exists photo_item_user_state (
+            owner_id text not null,
+            item_id text not null,
+            favorite integer not null default 0,
+            in_trash integer not null default 0,
+            deleted_at integer,
+            delete_batch_id text,
+            removed integer not null default 0,
+            updated_at integer not null default 0,
+            primary key (owner_id, item_id)
+          )
+        `.execute(db);
+        await sql`
+          create index if not exists idx_photo_item_user_state_item
+            on photo_item_user_state(item_id)
+        `.execute(db);
+
+        // 老数据回填：收藏 / 回收站 / 删除批次按「所属库的 owner」写入个人状态。
+        // 没有这些状态的绝大多数照片不建行 —— 缺行即「未收藏、未删除」。
+        await sql`
+          insert or ignore into photo_item_user_state
+            (owner_id, item_id, favorite, in_trash, deleted_at, delete_batch_id, removed, updated_at)
+          select l.owner_id, i.id, i.favorite, i.in_trash, i.deleted_at, i.delete_batch_id, 0,
+                 cast(strftime('%s','now') as integer)
+            from photo_items i
+            join photo_libraries l on l.id = i.library_id
+           where i.favorite = 1 or i.in_trash = 1 or i.delete_batch_id is not null
+        `.execute(db);
+      },
+    },
 ];

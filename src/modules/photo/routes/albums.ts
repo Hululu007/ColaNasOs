@@ -2,6 +2,7 @@ import { sql } from 'kysely';
 import { secured } from '../../../../kernel/route';
 import { Err } from '../../../../kernel/errors';
 import { TAG, PhotoItemRow, AlbumRow, newId, toItem, encodeCursor, decodeCursor, albumFrom } from '../util';
+import { favoriteOf, notTrashed } from '../state';
 import {
   type AlbumRule,
   backfillAlbumByRules,
@@ -70,7 +71,7 @@ export async function registerPhotoAlbums(app: FastifyInstance, k: KernelApi, h:
 
         // 规则相册：建完立刻把现有的命中照片补进去，不然用户建完看到的是空相册
         if (rules.length > 0) {
-          await backfillAlbumByRules(k.db as any, id, rules);
+          await backfillAlbumByRules(k.db as any, id, rules, String(owner || ''));
         }
 
         const album = await h.loadAlbum(id, owner);
@@ -209,7 +210,7 @@ export async function registerPhotoAlbums(app: FastifyInstance, k: KernelApi, h:
         await sql`update photo_albums set updated_at = ${now} where id = ${album.id}`.execute(k.db);
 
         if (rulesChanged && nextRules.length > 0) {
-          await backfillAlbumByRules(k.db as any, album.id, nextRules);
+          await backfillAlbumByRules(k.db as any, album.id, nextRules, String(owner || ''));
         }
 
         const updated = await h.loadAlbum(album.id, owner);
@@ -237,7 +238,7 @@ export async function registerPhotoAlbums(app: FastifyInstance, k: KernelApi, h:
         if (!album) return reply.code(404).send({ error: Err.notFound, message: 'album not found' });
 
         const rules = parseAlbumRules(album.rules_json ?? '[]');
-        if (rules.length > 0) await backfillAlbumByRules(k.db as any, album.id, rules);
+        if (rules.length > 0) await backfillAlbumByRules(k.db as any, album.id, rules, String(owner || ''));
         const fresh = await h.loadAlbum(album.id, owner);
         return fresh ? albumFrom(fresh) : albumFrom(album);
       },
@@ -270,13 +271,14 @@ export async function registerPhotoAlbums(app: FastifyInstance, k: KernelApi, h:
         }
         const limit = h.limitOf(q.limit, 60, 200);
 
-        let where = sql`m.album_id = ${album.id} and i.in_trash = 0`;
+        let where = sql`m.album_id = ${album.id} and ${notTrashed('i.id', String(owner || ''))}`;
         if (cur) {
           where = sql`${where} and (i.taken_at < ${cur.takenAt} or (i.taken_at = ${cur.takenAt} and i.id > ${cur.id}))`;
         }
 
         const res = await sql<PhotoItemRow>`
-          select i.* from photo_album_items m
+          select i.*, ${favoriteOf('i.id', String(owner || ''))} as favorite
+            from photo_album_items m
             join photo_items i on i.id = m.item_id
            where ${where}
            order by i.taken_at desc, i.id asc

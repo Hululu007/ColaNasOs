@@ -89,9 +89,14 @@ class _PhotoSourcePageState extends State<PhotoSourcePage> {
         body: PhotoLibraryCreateBody(name: name.isEmpty ? picked : name, path: picked),
       );
       if (!mounted) return;
-      NasSnack.show(context, tr('photo.source.added'));
+      // 同源目录复用：别的账号已经扫过这个目录，缩略图 / 人脸 / 场景 / 活动都现成，
+      // 直接可看，不能再触发一次扫描。
+      NasSnack.show(
+        context,
+        tr(created.shared ? 'photo.source.sharedAdded' : 'photo.source.added'),
+      );
       await _load();
-      await _scan(libraryId: created.id);
+      if (!created.shared) await _scan(libraryId: created.id);
     } catch (e) {
       if (!mounted) return;
       final text = e.toString();
@@ -362,6 +367,29 @@ class _PhotoSourcePageState extends State<PhotoSourcePage> {
                             ),
                           ),
                         ),
+                        if (item.shared) ...[
+                          const SizedBox(width: 4),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .primary
+                                  .withValues(alpha: 0.14),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text(
+                              tr('photo.source.shared'),
+                              style: TextStyle(
+                                fontSize: NasTokens.fontMicro,
+                                color: Theme.of(context).colorScheme.primary,
+                              ),
+                            ),
+                          ),
+                        ],
                         const SizedBox(width: NasTokens.spaceXs),
                         Expanded(
                           child: Text(

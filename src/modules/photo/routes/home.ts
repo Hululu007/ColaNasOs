@@ -7,6 +7,7 @@ import { aiConfig } from '../ai/config';
 import { coverRanker } from '../cover';
 import { phashSimilarity } from '../phash';
 import { TAG, toItem, type PhotoItemRow } from '../util';
+import { favoriteOf, notTrashed } from '../state';
 
 /** 相册首页看板：把统计 / 足迹 / 人物 / 那年今日聚合成一次请求 */
 export async function registerPhotoHome(
@@ -26,7 +27,8 @@ export async function registerPhotoHome(
     }),
     async (req: FastifyRequest) => {
       const uid = String((req as any).user?.sub || '');
-      const owner = sql`library_id in (select id from photo_libraries where owner_id = ${uid})`;
+      const owner = sql`${notTrashed('photo_items.id', uid)}
+        and library_id in (select id from photo_library_scope where owner_id = ${uid})`;
 
       const agg = await sql<{
         n: number;
@@ -42,14 +44,14 @@ export async function registerPhotoHome(
                         then 1 else 0 end) as today_new,
                count(distinct date(taken_at, 'unixepoch', 'localtime')) as active_days
           from photo_items
-         where in_trash = 0 and ${owner}
+         where ${owner}
       `.execute(k.db);
 
       const years = await sql<{ year: number; count: number }>`
         select cast(strftime('%Y', taken_at, 'unixepoch', 'localtime') as integer) as year,
                count(*) as count
           from photo_items
-         where in_trash = 0 and ${owner}
+         where ${owner}
          group by year order by year desc
       `.execute(k.db);
 
@@ -57,7 +59,7 @@ export async function registerPhotoHome(
       const days = await sql<{ date: string; count: number }>`
         select date(taken_at, 'unixepoch', 'localtime') as date, count(*) as count
           from photo_items
-         where in_trash = 0 and taken_at >= ${since} and ${owner}
+         where taken_at >= ${since} and ${owner}
          group by date order by date asc
       `.execute(k.db);
 
@@ -66,7 +68,7 @@ export async function registerPhotoHome(
                cast(strftime('%m', taken_at, 'unixepoch', 'localtime') as integer) as month,
                count(*) as count
           from photo_items
-         where in_trash = 0 and taken_at >= ${since} and ${owner}
+         where taken_at >= ${since} and ${owner}
          group by year, month order by count desc limit 1
       `.execute(k.db);
 
@@ -75,7 +77,7 @@ export async function registerPhotoHome(
                count(distinct geohash5) as places,
                count(distinct date(taken_at, 'unixepoch', 'localtime')) as days
           from photo_items
-         where in_trash = 0 and latitude is not null and longitude is not null and ${owner}
+         where latitude is not null and longitude is not null and ${owner}
       `.execute(k.db);
 
       // 首页人物同样跟随「AI 设置 → 人脸显示下限」：1~2 张的碎片组不占卡片位。
@@ -117,8 +119,8 @@ export async function registerPhotoHome(
         ranges.push([Math.floor(start.getTime() / 1000), Math.floor(end.getTime() / 1000)]);
       }
       const sameDay = await sql<PhotoItemRow>`
-        select * from photo_items
-         where in_trash = 0 and ${owner}
+        select *, ${favoriteOf('photo_items.id', uid)} as favorite from photo_items
+         where ${owner}
            and (${sql.join(
              ranges.map(([a, b]) => sql`(taken_at >= ${a} and taken_at < ${b})`),
              sql` or `,
@@ -213,10 +215,11 @@ export async function registerPhotoHome(
       const dd = String(q.day ?? now.getDate()).padStart(2, '0');
       const perYear = Math.min(Math.max(Number(q.perYear) || 60, 1), 200);
       const rows = await sql<PhotoItemRow & { y: number }>`
-        select *, cast(strftime('%Y', taken_at, 'unixepoch', 'localtime') as integer) as y
+        select *, ${favoriteOf('photo_items.id', uid)} as favorite,
+               cast(strftime('%Y', taken_at, 'unixepoch', 'localtime') as integer) as y
           from photo_items
-         where in_trash = 0
-           and library_id in (select id from photo_libraries where owner_id = ${uid})
+         where ${notTrashed('photo_items.id', uid)}
+           and library_id in (select id from photo_library_scope where owner_id = ${uid})
            and strftime('%m-%d', taken_at, 'unixepoch', 'localtime') = ${`${mm}-${dd}`}
          order by taken_at desc
          limit 4000
@@ -286,11 +289,12 @@ export async function registerPhotoHome(
       const dayKey = `${mm}-${dd}`;
 
       const rows = await sql<PhotoItemRow & { y: number; phash: string | null }>`
-        select *, cast(strftime('%Y', taken_at, 'unixepoch', 'localtime') as integer) as y
+        select *, ${favoriteOf('photo_items.id', uid)} as favorite,
+               cast(strftime('%Y', taken_at, 'unixepoch', 'localtime') as integer) as y
           from photo_items
-         where in_trash = 0
+         where ${notTrashed('photo_items.id', uid)}
            and media_kind = 'image'
-           and library_id in (select id from photo_libraries where owner_id = ${uid})
+           and library_id in (select id from photo_library_scope where owner_id = ${uid})
            and strftime('%m-%d', taken_at, 'unixepoch', 'localtime') = ${dayKey}
          order by taken_at desc
          limit 4000
@@ -335,8 +339,8 @@ export async function registerPhotoHome(
             from photo_faces f
             join photo_items i on i.id = f.photo_id
             left join photo_face_clusters c on c.id = f.cluster_id
-           where i.in_trash = 0
-             and i.library_id in (select id from photo_libraries where owner_id = ${uid})
+           where ${notTrashed('i.id', uid)}
+             and i.library_id in (select id from photo_library_scope where owner_id = ${uid})
              and strftime('%m-%d', i.taken_at, 'unixepoch', 'localtime') = ${dayKey}
         `.execute(k.db)
       ).rows;
