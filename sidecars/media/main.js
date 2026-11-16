@@ -879,17 +879,38 @@ async function hls(params) {
         '库标记缺失，按片源自动启用 HDR→SDR',
     );
   }
-  // 片源视频编码：由上层从 video_items.video_codec 带下来。
-  // 「原画（copy）」只有在片源本身就是 H.264 时才成立 —— 把 AV1 / HEVC 原样复制进
-  // MPEG-TS 播放器根本解不出来（实测 hls.js 反复拉 init.mp4 后黑屏），
-  // 所以非 H.264 片源即使选了原画也走转码（H.264）。
-  const srcCodec = String(params.srcVideoCodec || '').toLowerCase();
-  const srcH264 = /h264|avc/.test(srcCodec);
-  const copyVideo = presetRow.copy === true && !params.subtitle && !hdrToSdr && srcH264;
+  // 「原画（copy）」= 不转码，所以输出编码必须**等于片源编码**，不能一律当 h264。
+  // 旧实现只允许 H.264 直通，理由是「AV1 / HEVC 复制进 MPEG-TS 解不出来」——
+  // 容器统一 fMP4（带 EXT-X-MAP）之后这条不再成立：实测 hls.js 1.4.10 + Chrome 157
+  // 播 HEVC/AV1 的 fMP4 正常（buffered 连续、seek 正常、powerEfficient=true 硬解）。
+  //
+  // 但必须要求「用户请求的编码 == 片源编码」：客户端请求 h265 前会用
+  // `MediaSource.isTypeSupported('hvc1…')` 探过，请求什么就说明它能解什么；
+  // 不看请求直接吐 HEVC 会让 Firefox 黑屏（它不支持 HEVC），也违反用户选择。
+  //
+  // 编码取 ffprobe 实测（`probeSourceInfo` 刚跑过）：库里的 video_codec 对老库
+  // 整批不可信，实测拿不到才退回上层传来的标记。
+  const srcCodec = String(source.codec || params.srcVideoCodec || '').toLowerCase();
+  const srcMapped = /h264|avc/.test(srcCodec)
+    ? 'h264'
+    : /hevc|h265/.test(srcCodec)
+      ? 'h265'
+      : /av1/.test(srcCodec)
+        ? 'av1'
+        : '';
+  const wantCodec = PLAY_QUALITY.codecs.some((c) => c.key === params.codec)
+    ? params.codec
+    : PLAY_QUALITY.defaultCodec;
+  const copyVideo =
+    presetRow.copy === true &&
+    !params.subtitle &&
+    !hdrToSdr &&
+    !!srcMapped &&
+    srcMapped === wantCodec;
   // 目标码率：按「这一档 × 当前编码」取，H.265 / AV1 同画质更省流量
   const targetKbps = copyVideo
     ? 0
-    : Number((presetRow.bitrates || {})[params.codec] || presetRow.videoBitrateKbps || 0);
+    : Number((presetRow.bitrates || {})[wantCodec] || presetRow.videoBitrateKbps || 0);
   // original 档 height=0：scale=-2:0 非法，改成保持原分辨率的合法滤镜
   const scale = height > 0 ? `scale=-2:${height}` : 'scale=iw:-2';
   const subtitleFilter = params.subtitle
@@ -904,9 +925,6 @@ async function hls(params) {
   // 硬件帧链用滤镜自带的 apply_dovi（d3d11 / cuda 默认开启）。
   let pipelineCtx = null;
   const cpuFilter = (tonemapOn) => gpu.cpuFilter(pipelineCtx, tonemapOn);
-  const wantCodec = PLAY_QUALITY.codecs.some((c) => c.key === params.codec)
-    ? params.codec
-    : PLAY_QUALITY.defaultCodec;
   const timeoutMs = Math.max(Number(params.timeoutMs) || 0, 30 * 60 * 1000);
   // 首选解码器（auto / nvenc / qsv / amf / cpu）：只影响「用哪家硬件」，不影响编码格式
   const prefer = String(params.hwaccel || 'auto');
@@ -918,9 +936,9 @@ async function hls(params) {
   const audioIndex = Number.isInteger(an) && an >= 0 ? an : 0;
   // 硬件编码器探测（异步 + 缓存）：不阻塞心跳，结果供所有 attempt 复用
   const hw = await detectHwAll();
-  // 原画复制只可能是 H.264 in MPEG-TS：容器/编码标签必须跟着实际输出走，
+  // 原画直通只可能是「片源编码未变」：容器 / 编码标签必须跟着实际输出走，
   // 否则会出现「界面显示 AV1、实际拷的是 H.264 却塞进 fMP4」的错位。
-  const outputCodec = copyVideo ? 'h264' : wantCodec;
+  const outputCodec = copyVideo ? srcMapped : wantCodec;
   // 解码方案按编码器所属厂商分派：AMD→D3D11、NVIDIA→CUDA、Intel→QSV；
   // 三家都用「硬解 → 显存内 tonemap/scale → 硬编」零拷贝，失败逐级回退。
   const primaryEncoder = videoCodecArgs(outputCodec, true, prefer, hw).encoder;
@@ -990,7 +1008,12 @@ async function hls(params) {
       // 数据流（章节 / 时间码）更没用。MKV 里几十条轨会明显拖慢起流。
       '-sn',
       '-dn',
-      ...(copyVideo ? ['-c:v', 'copy'] : ['-vf', vf, '-c:v', ...vCodec]),
+      // 直通时把 HEVC 的 sample entry 标成 `hvc1`：MKV 源多是 `hev1`（参数集可随
+      // 分片变动），`hvc1` 要求参数集只在 init.mp4 里出现一次。ffmpeg 只改这个
+      // 四字符标签、不重编，Chrome / Safari / libmpv 都按 hvc1 走硬件解码。
+      ...(copyVideo
+        ? ['-c:v', 'copy', ...(srcMapped === 'h265' ? ['-tag:v', 'hvc1'] : [])]
+        : ['-vf', vf, '-c:v', ...vCodec]),
       // 色彩标记：输出统一标为 BT.709 SDR，避免播放器按源元数据乱解
       ...(!copyVideo
         ? ['-color_primaries', 'bt709', '-color_trc', 'bt709', '-colorspace', 'bt709']
@@ -1082,13 +1105,15 @@ async function hls(params) {
             dir,
             firstMs: Number(process.env.COLANAS_HLS_FIRST_SEGMENT_MS) || 90000,
             idleMs: Number(process.env.COLANAS_HLS_STALL_MS) || 120000,
-            // 首片落盘时写 <dir>/.session.json，供上层回显「实际用上的编码」
+            // 首片落盘时写 <dir>/.session.json，供上层回显「实际用上的编码」。
+            // 直通（copy）没有编码器 / 解码器参与，别把 `hevc_amf`+`cpu` 写出去 ——
+            // 界面会显示「CPU 软解」，用户以为在烧 CPU，实际一个像素都没重编。
             meta: {
               codec,
               container: fmp4 ? 'fmp4' : 'mpegts',
-              encoder: vc.encoder,
-              decoder: plan.decoder,
-              pipeline: plan.pipeline,
+              encoder: copyVideo ? 'copy' : vc.encoder,
+              decoder: copyVideo ? 'copy' : plan.decoder,
+              pipeline: copyVideo ? 'copy' : plan.pipeline,
             },
           },
         }),
@@ -1118,11 +1143,13 @@ async function hls(params) {
       codec,
       container: fmp4 ? 'fmp4' : 'mpegts',
       playlist,
-      // 实际用的编码 / 解码链路：排障时能一眼看出「到底 GPU 跑了没有」
-      encoder: vc.encoder,
-      decoder: plan.decoder,
-      pipeline: plan.pipeline,
-      vendor: plan.vendor || 'cpu',
+      // 实际用的编码 / 解码链路：排障时能一眼看出「到底 GPU 跑了没有」。
+      // copy 时三者都写 `copy`：这时候既没解码器也没编码器，写 hevc_amf+cpu
+      // 会让人误判成本地软解在烧 CPU。
+      encoder: copyVideo ? 'copy' : vc.encoder,
+      decoder: copyVideo ? 'copy' : plan.decoder,
+      pipeline: copyVideo ? 'copy' : plan.pipeline,
+      vendor: copyVideo ? 'copy' : plan.vendor || 'cpu',
       source: {
         codec: source.codec,
         pixFmt: source.pixFmt,

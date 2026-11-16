@@ -34,6 +34,7 @@ if (!process.versions.electron) {
 
 const root = path.join(__dirname, '..', '..');
 const { startKernel } = require(path.join(root, 'dist', 'kernel', 'index'));
+const { sql } = require('kysely');
 
 // 测试环境不落盘日志：临时目录在 app.close() 后立刻删除，异步日志句柄会触发 ENOTEMPTY
 process.env.COLANAS_LOG_FILE = '0';
@@ -95,6 +96,33 @@ process.chdir(root);
       path.join(filesRoot, 'media', 'demo.mp4'),
     ]);
     if (made.status !== 0) console.error('[warn] lavfi 生成测试视频失败');
+    // HEVC 素材：「原画直通」只对 H.264 生效是旧限制，2026-11-16 起 h265 / av1
+    // 也能 copy（容器早就统一 fMP4）。没有这条素材就永远测不到直通分支。
+    const madeHevc = spawnSync(ffmpeg, [
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-y',
+      '-f',
+      'lavfi',
+      '-i',
+      'testsrc=size=320x240:rate=24',
+      '-t',
+      '2',
+      '-pix_fmt',
+      'yuv420p',
+      '-c:v',
+      'libx265',
+      '-preset',
+      'ultrafast',
+      '-x265-params',
+      'log-level=error',
+      '-tag:v',
+      'hvc1',
+      '-an',
+      path.join(filesRoot, 'media', 'demo.hevc.mp4'),
+    ]);
+    if (madeHevc.status !== 0) console.error('[warn] lavfi 生成 HEVC 测试视频失败');
   }
   // 外挂字幕（烧录用）
   fs.writeFileSync(
@@ -613,6 +641,77 @@ process.chdir(root);
       check('session_default_lead_3min', true, 'skipped: create failed');
       check('session_default_lead_part_dir', true, 'skipped: create failed');
       check('session_default_lead_playlist_part', true, 'skipped: create failed');
+    }
+
+    // ---- 原画直通（copy）：HEVC / AV1 不再强制转码 ----
+    // 以前 copy 只允许 H.264（当年 MPEG-TS 复制 HEVC 出来黑屏）。容器统一 fMP4 后
+    // 这条限制没意义了：Chrome 157 实测 hvc1 / av01 的 MSE 分片能播、powerEfficient=true。
+    // 现在的规则是「请求的编码 == 片源编码 才直通」，所以这里请求 h265 验 copy。
+    // 按文件名找，不依赖 video_codec 列：扫描期偶尔拿不到编码（写 NULL），
+    // 但直通判定用的是 sidecar 自己 ffprobe 的结果，不靠这一列。
+    let hevcId = null;
+    try {
+      const found = await sql`
+        select id from video_items where rel_path like ${'%demo.hevc%'} limit 1
+      `.execute(k.db);
+      hevcId = (found.rows[0] || {}).id || null;
+    } catch {
+      /* rel_path 列不存在时（老 schema）跳过整组 */
+    }
+    if (!hevcId) {
+      for (const n of [
+        'session_original_hevc_copy_codec',
+        'session_original_hevc_copy_pipeline',
+        'session_original_hevc_copy_hvc1',
+      ]) {
+        check(n, true, 'skipped: 没有 HEVC 素材');
+      }
+    } else {
+      const rCopy = await inject('POST', '/api/v1/player/sessions', admin, {
+        id: hevcId,
+        preset: 'original',
+        codec: 'h265',
+      });
+      const idCopy = rCopy.json().id;
+      let jobCopy = null;
+      for (let i = 0; i < 120; i += 1) {
+        const q = await inject('GET', '/api/v1/player/sessions?id=' + idCopy, admin);
+        jobCopy = q.json();
+        if (['done', 'paused', 'failed'].includes(jobCopy.status)) break;
+        await new Promise((res) => setTimeout(res, 200));
+      }
+      check(
+        'session_original_hevc_copy_codec',
+        Boolean(jobCopy) && jobCopy.codec === 'h265' && jobCopy.container === 'fmp4',
+        `codec=${jobCopy && jobCopy.codec} container=${jobCopy && jobCopy.container} ` +
+          `err=${jobCopy && jobCopy.error}`,
+      );
+      // 直通时不该出现编码器 / 解码器：写 copy，别让界面以为在烧 CPU 软解
+      const metaCopy = path.join(dataDir, 'hls', idCopy, 'p0', '.session.json');
+      let metaJson = null;
+      try {
+        metaJson = JSON.parse(fs.readFileSync(metaCopy, 'utf8'));
+      } catch {
+        /* 首片还没写元数据 */
+      }
+      check(
+        'session_original_hevc_copy_pipeline',
+        Boolean(metaJson) && metaJson.pipeline === 'copy',
+        `pipeline=${metaJson && metaJson.pipeline} exists=${fs.existsSync(metaCopy)}`,
+      );
+      // MKV/MP4 源多是 hev1；播放器要求 init 里声明 hvc1 才走硬解直通
+      const initCopy = path.join(dataDir, 'hls', idCopy, 'p0', 'init.mp4');
+      let hasHvc1 = false;
+      try {
+        hasHvc1 = fs.readFileSync(initCopy, 'latin1').includes('hvc1');
+      } catch {
+        /* 没写出来 */
+      }
+      check(
+        'session_original_hevc_copy_hvc1',
+        hasHvc1,
+        `init=${fs.existsSync(initCopy)}`,
+      );
     }
 
     // ---- 起转偏移（startMs）：进度条跳到「还没转出来」的位置时建的中途会话 ----
