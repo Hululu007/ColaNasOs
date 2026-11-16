@@ -273,6 +273,24 @@ class _PlayerPageState extends State<PlayerPage> {
   /// 跳转进行中又有新目标：只保留最后一个，等当前这次完成后再跳。
   Duration? _pendingJump;
 
+  /// 「原地 seek 到底落地没有」的看门狗（见 [_watchSeekLanding]）。
+  /// 代际号用来作废旧的那一个定时器：连续拖进度条会连开好几轮。
+  Timer? _seekWatchdog;
+  int _seekWatchdogGen = 0;
+
+  /// 第几次 `open()`。同一个 open 只允许「首片没到就补开」一次 ——
+  /// 没有这个计数的话，失败→重开→再失败会把画面刷成闪烁（早期线上问题）。
+  int _openGen = 0;
+  int _retriedOpenGen = -1;
+
+  /// 「这台机器直连解不动」的落盘清单（`codec@height`，逗号分隔）。
+  ///
+  /// 手机端 4K AV1 直连实测：8 秒里播放位置只走了 66ms，画面是黑的。
+  /// 用户一旦把默认档存成「原画」，就是**每次进播放页都黑一遍再切**、提示反复弹。
+  /// 这里只记「数据已经缓冲、位置却不动」这种解码跟不上的情况（网慢不记，
+  /// 换个网络还能直连）；命中就直接进转码档，只留一条提示说明原因。
+  static const _directBlockKey = 'player.directBlock';
+
   /// 服务端回传的**实际**编码（降级后以它为准）；为空表示还没出片。
   String? _actualCodec;
 
@@ -315,6 +333,38 @@ class _PlayerPageState extends State<PlayerPage> {
   int get _srcHeight {
     final h = widget.sourceHeight ?? (widget.compat?['height'] as int?);
     return h == null || h <= 0 ? 0 : h;
+  }
+
+  /// 直连能力的指纹：`编码@高度`。拿不到编码 / 高度时返回空串（不参与记忆）。
+  String get _directKey {
+    final codec = '${widget.compat?['videoCodec'] ?? ''}'.toLowerCase().trim();
+    if (codec.isEmpty || _srcHeight <= 0) return '';
+    return '$codec@$_srcHeight';
+  }
+
+  /// 同样特征的片源上次是不是「直连解不动」（见 [_directBlockKey]）。
+  bool get _directBlocked {
+    final key = _directKey;
+    if (key.isEmpty) return false;
+    final raw = SettingsStore.instance.getString(_directBlockKey) ?? '';
+    return raw.split(',').contains(key);
+  }
+
+  /// 记住 / 忘掉「这台机器直连解不动这个特征」。
+  Future<void> _markDirectBlocked(bool blocked) async {
+    final key = _directKey;
+    if (key.isEmpty) return;
+    final raw = SettingsStore.instance.getString(_directBlockKey) ?? '';
+    final keys = raw.split(',').where((e) => e.isNotEmpty).toList();
+    if (blocked == keys.contains(key)) return;
+    if (blocked) {
+      keys.add(key);
+    } else {
+      keys.remove(key);
+    }
+    // 只留最近 12 条：常见组合就那几个，别把设置项养肥
+    final kept = keys.length > 12 ? keys.sublist(keys.length - 12) : keys;
+    await SettingsStore.instance.setString(_directBlockKey, kept.join(','));
   }
 
   String get _reasonText {
@@ -613,6 +663,7 @@ class _PlayerPageState extends State<PlayerPage> {
     _hideTimer?.cancel();
     _seekHintTimer?.cancel();
     _noticeTimer?.cancel();
+    _seekWatchdog?.cancel();
     for (final sub in _logSubs) {
       sub.cancel();
     }
@@ -637,6 +688,10 @@ class _PlayerPageState extends State<PlayerPage> {
   }) async {
     _url = u;
     _lastOpenAt = DateTime.now();
+    // 换了播放源：上一次原地 seek 的看门狗作废，别让它在新的流上误判「没动」
+    _seekWatchdog?.cancel();
+    _seekWatchdogGen += 1;
+    _openGen += 1;
     final openSw = Stopwatch()..start();
     // 要不要在打开后自动播：默认沿用用户意图（跳转 / 首播 = 想播，暂停中换档 = 不想播）
     final want = autoPlay ?? _wantPlay;
@@ -819,6 +874,34 @@ class _PlayerPageState extends State<PlayerPage> {
 
   /// 良性中断 → 静默重开当前地址；重试四次仍没播起来才把错误显示出来。
   void _retryAfterBenignError(String message) {
+    final young = _player.state.position <= const Duration(seconds: 2);
+    final fatalOpen = message.toLowerCase().contains('failed to open') ||
+        message.toLowerCase().contains('failed to recognize') ||
+        message.toLowerCase().contains('404');
+    // 「一次都还没播起来」就报「打不开」：这是首片还没落盘的 404（AV1 首片
+    // 8~10s，比固定 10s 的等待预算还长的时候就会撞上）。这种情况**必须**补开
+    // 一次，否则播放器整场 fatal 黑屏 —— 用户看到的就是「跳完进度条一直黑着」。
+    // 但同一个 open 只补一次、总共最多补两次，避免失败→重开→再失败把画面刷成闪烁。
+    if (young &&
+        fatalOpen &&
+        !_jumping &&
+        !_switching &&
+        _benignRetries < 2 &&
+        _retriedOpenGen != _openGen) {
+      _retriedOpenGen = _openGen;
+      _benignRetries += 1;
+      final target = _url;
+      if (target.isEmpty) return;
+      ClientLogger.instance.warn(
+        '首片未就绪就 open 失败（$message）→ 补开一次',
+        route: 'player.retry/${_sessionId ?? 'direct'}',
+      );
+      Future<void>.delayed(const Duration(milliseconds: 1500), () {
+        if (!mounted || _player.state.playing) return;
+        _openUrl(target, resetBenignRetries: false);
+      });
+      return;
+    }
     // 跳转 / 换档 / 刚 open 或刚 seek 的 3 秒内，浏览器必然抛
     // 「play() interrupted / media removed」——这是我们换流导致的，不能再
     // `_openUrl` 重开：重开又会中断新的 play()，表现就是画面一直闪、位置不动。
@@ -849,31 +932,74 @@ class _PlayerPageState extends State<PlayerPage> {
   /// （用户明确要原片），所以：明确提示 + 切成一个转码档位。
   Future<void> _guardDirectPlayback() async {
     final startPos = _player.state.position;
-    await Future<void>.delayed(const Duration(seconds: 8));
+    // 2026-11-16：从「先睡满 8 秒再看一眼」改成 1 秒一拍地看。
+    // 手机端 4K AV1 直连实测 8 秒只走了 66ms —— 用户就是「干黑 8 秒才看到提示」。
+    // 判据拆成两种，别把慢网当成解不了：
+    //   数据已经缓冲了 ≥2s、位置却不动 → 解码跟不上（APP 里 `state.buffer` 是
+    //   「当前位置之后还有多少秒」），3 拍就能定；
+    //   连缓冲都没有 → 是网速，多给几拍（最多 10 秒）。
+    var reason = '';
+    var w = 0;
+    var advanced = Duration.zero;
+    for (var i = 0; i < 10; i += 1) {
+      await Future<void>.delayed(const Duration(seconds: 1));
+      if (!mounted || _isTranscode || _error != null) return;
+      w = _player.state.width ?? 0;
+      advanced = _player.state.position - startPos;
+      // 只看 width 不够：libmpv 对某些 HEVC 10bit / DV 片源能报出视频尺寸，
+      // 但画面帧出不来（用户看到的就是「有声音、画面停住」）。
+      // 所以再要求「播放位置真的往前走了」，否则一律按播不了处理。
+      if (w > 0 && advanced > const Duration(seconds: 2)) {
+        ClientLogger.instance.info(
+          '直连正常 width=$w advanced=${advanced.inMilliseconds}ms 用时${i + 1}s',
+          route: 'player.directGuard',
+        );
+        // 这次能直连：把历史失败记录清掉（换了网络 / 换了片源特征都可能变好）
+        if (_directBlocked) unawaited(_markDirectBlocked(false));
+        return;
+      }
+      final ahead = kIsWeb ? Duration.zero : _player.state.buffer;
+      if (w > 0 &&
+          ahead >= const Duration(seconds: 2) &&
+          advanced < const Duration(milliseconds: 500) &&
+          i >= 2) {
+        reason = '解码跟不上 buffered=${ahead.inMilliseconds}ms';
+        break;
+      }
+    }
     if (!mounted || _isTranscode || _error != null) return;
-    final w = _player.state.width ?? 0;
-    final advanced = _player.state.position - startPos;
+    w = _player.state.width ?? 0;
+    advanced = _player.state.position - startPos;
+    if (w > 0 && advanced > const Duration(seconds: 2)) return;
     ClientLogger.instance.info(
       '直连检测 width=$w advanced=${advanced.inMilliseconds}ms '
-      'playing=${_player.state.playing} buffering=${_player.state.buffering}',
+      'playing=${_player.state.playing} buffering=${_player.state.buffering} '
+      '${reason.isEmpty ? '超时' : reason}',
       route: 'player.directGuard',
     );
-    // 只看 width 不够：libmpv 对某些 HEVC 10bit / DV 片源能报出视频尺寸，
-    // 但画面帧出不来（用户看到的就是「有声音、画面停住」）。
-    // 所以再要求「播放位置真的往前走了」，否则一律按播不了处理。
-    if (w > 0 && advanced > const Duration(seconds: 2)) return;
     // 兜底档：桌面端保分辨率（4K 直连失败不该跳成 1080P），手机 / Web / TV
     // 退到用户偏好档 —— 手机上 4K 7M 在移动网络里就是「一直缓冲 + 软解跟不上」。
     final fallback = _transcodeFallback();
+    // 只有「数据在手、位置不动」这种才算这台机器解不动，记下来下次免试；
+    // 网慢导致的卡顿不记（换个网络它就能直连）。
+    if (reason.startsWith('解码跟不上')) unawaited(_markDirectBlocked(true));
     // persist: false —— 这是自动兜底，不能写进用户偏好。存下来的结果就是
     // 「下次一进播放页直接从 4K 7M 起步」，用户再也调不回来。
-    await _switchQuality(fallback, codec: _codec, persist: false);
+    // notify: false —— 提示由本方法统一发一条「原画直连没有画面，已切到 X」，
+    // 否则 3~8 秒内会连弹两条（「原画直连切编码」+「直连没有画面」）。
+    await _switchQuality(
+      fallback,
+      codec: _codec,
+      persist: false,
+      notify: false,
+    );
     if (!mounted) return;
     _showNotice(
       tr('player.directFailed', {
         'actual': playQualityPresetOf(fallback)?.labelFor(_codec) ?? fallback,
       }),
-      log: '直连无画面：width=$w advanced=${advanced.inMilliseconds}ms → $fallback',
+      log: '直连无画面：width=$w advanced=${advanced.inMilliseconds}ms '
+          '${reason.isEmpty ? '' : '($reason) '}→ $fallback',
     );
   }
 
@@ -962,6 +1088,11 @@ class _PlayerPageState extends State<PlayerPage> {
   /// 这里零延迟返回，不影响秒开。
   Future<void> _waitForFirstSegment(String id) async {
     final sw = Stopwatch()..start();
+    // 首片预算按编码给：AV1 实测 1080P 首片 7.8~10.4s（4K / 两路并跑更久），
+    // 原来固定 40 次 × ~260ms ≈ 10s 就放弃 —— 播放器拿到的是一份「分片还没落盘」
+    // 的点播列表，首片请求等满 10s 变 404，libmpv 直接 fatal：表现就是「跳转 /
+    // 换档后黑屏卡死」。H.264 / H.265 首片只有 1~2s，所以这个坑只在 AV1 上显形。
+    final budgetMs = _codec == 'av1' ? 30000 : 15000;
     var polls = 0;
     var last = '';
     void log(String why) {
@@ -971,7 +1102,7 @@ class _PlayerPageState extends State<PlayerPage> {
       );
     }
 
-    for (var i = 0; i < 40; i += 1) {
+    while (sw.elapsedMilliseconds < budgetMs) {
       if (!mounted) return;
       try {
         final job = await ApiSession.instance.client.playerSessionGet(
@@ -1178,9 +1309,13 @@ class _PlayerPageState extends State<PlayerPage> {
       // 直连条件：用户要原画 + 本机能保证颜色正确 + 真有直链可用。
       // Web 端仍然受「浏览器解不了 MKV/HEVC」限制（_needTranscode）。
       final colorBlocked = _colorBlocksDirect;
+      // 上一次同样特征的片源（编码 + 高度）直连就是「有尺寸、画面不走」：
+      // 别再黑一遍再说同样的话，直接进转码档。
+      final directBlocked = _directBlocked;
       final toDirect =
           wantOriginal &&
           !colorBlocked &&
+          !directBlocked &&
           widget.compat != null &&
           (!kIsWeb || !_needTranscode);
       // 档位按片源高度收敛：偏好 1080P 但片源只有 720P 时，按 720P 转，
@@ -1191,7 +1326,7 @@ class _PlayerPageState extends State<PlayerPage> {
           : (wantOriginal
                 ? _transcodeFallback()
                 : clampPresetForSource(_preset, _srcHeight, codec: _codec));
-      if (kIsWeb && wantOriginal && !toDirect && !colorBlocked) {
+      if (kIsWeb && wantOriginal && !toDirect && !colorBlocked && !directBlocked) {
         // 浏览器解不了 HEVC/10bit 时，「原画」实际是转码档；不说明的话
         // 用户会以为「我选了原片为什么还在转」。
         _showNotice(
@@ -1212,6 +1347,16 @@ class _PlayerPageState extends State<PlayerPage> {
           log:
               '色调映射回退：src=${_srcHdr.reason} direct=false preset=$effective '
               'render=${_caps.renderer} ${_caps.summary}',
+        );
+      }
+      if (directBlocked && wantOriginal) {
+        // 上次同样特征直连就黑过：跳过那 8 秒试探，但仍要说明为什么没给你原画
+        _showNotice(
+          tr('player.directFailed', {
+            'actual':
+                playQualityPresetOf(effective)?.labelFor(_codec) ?? effective,
+          }),
+          log: '直连历史失败（$_directKey），直接进转码档 $effective',
         );
       }
       final u = toDirect
@@ -1240,6 +1385,9 @@ class _PlayerPageState extends State<PlayerPage> {
     String preset, {
     String? codec,
     bool persist = true,
+    // 自动兜底（原画直连失败）时传 false：提示由调用方发一条更准确的，
+    // 免得用户在半分钟内连着看到两条说法不同的提示。
+    bool notify = true,
   }) async {
     final messenger = ScaffoldMessenger.maybeOf(context);
     // 本机解不出来的编码先回落 H.264：界面标签也要跟着回落，
@@ -1307,7 +1455,7 @@ class _PlayerPageState extends State<PlayerPage> {
       _preset = effective;
       _codec = targetCodec;
     });
-    if (fromDirect) {
+    if (fromDirect && notify) {
       _showNotice(
         tr('player.codecToTranscode', {
           'preset':
@@ -1333,6 +1481,11 @@ class _PlayerPageState extends State<PlayerPage> {
             );
       // 回直链：时间轴是片源时间轴，起转偏移必须清零，否则位置会凭空多一截
       if (toDirect) _startMs = 0;
+      // `_isTranscode` 必须在 open **之前**落位：`_openUrl` 按它决定要不要挂
+      // 「直连保底」（`_guardDirectPlayback`）。以前等 open 返回才置位，于是
+      // 转码流也白挂了一个直连守卫 —— 它 8 秒后再判一次「没画面」，又切一次档，
+      // 用户看到的就是「换档之后画面开始反复闪」。
+      if (mounted) setState(() => _isTranscode = !toDirect);
       // 换档也是新建会话，同样可能撞上「首片还没落盘」，给三次重试
       // （服务端已经会等到 25s，这里再兜几次是给 SMB 片源 + 4K 的余量）。
       // 转码会话的时间轴 0 = pos（见 _ensureTranscode 的 startMs），不能再 seekTo。
@@ -1858,33 +2011,60 @@ class _PlayerPageState extends State<PlayerPage> {
       if (_wantPlay) unawaited(_ensurePlayingAfterOpen());
       return;
     }
-    // 目标超「播放器已缓冲的末尾」时不要原地 seek。
+    // 进度条上**已经变粗**的那一段（服务端已转出的分片）一律原地 seek。
     //
-    // `_loadedEnd` 用的是**服务端已转出**，它可能远大于播放器手里的分片：
-    // 实测 4K DV 拖到 43 分钟，服务端 p13 段只产出 30 片（60s）就停了，
-    // 播放器原地 seek 过去拿不到分片 → `readyState=1` 干等（日志里
-    // `seg00078.ts part=p13 waitedMs=10198 producedBefore=30` 连刷），
-    // 而 pump 只会开新段（p14），不会补完 p13 的半截段 ⇒ 永远等不到。
-    // 这种位置直接重建会话（从 target 起转 2s 分片），比干等可靠。
+    // 以前这里用「播放器已缓冲末尾 + 2s」当界限：只要目标超出播放器手里那点
+    // 缓冲就去重建会话。播放器通常只缓冲十几秒，等于「几乎每次拖进度条都重建」——
+    // H.264 首片 1.8s 还算能忍，AV1 首片 7.8~10.4s（实测），用户看到的就是
+    // 「已经加载好的位置也跳不动」。分片就在服务端磁盘上，直接 seek 才是对的。
+    //
+    // 旧的顾虑（服务端 `transcodedMs` 比真实落盘多报，原地 seek 到空洞里干等）
+    // 现在交给 [_watchSeekLanding]：原地 seek 后位置 8 秒还不往前走，就自动
+    // 升级成重建会话 —— 既拿到「近处秒跳」，又不至于卡在空洞里。
+    final producedEnd = _loadedEnd;
     final bufferedAbs = _bufferedEndAbs();
-    if (bufferedAbs > Duration.zero &&
-        t > bufferedAbs + const Duration(seconds: 2) &&
-        allowJump) {
-      await _jumpTo(t);
+    // 拖动过程中（allowJump=false，Slider 每帧都回调）只跟随播放器手里的缓冲：
+    // 每帧都 poll 一个还没缓冲的分片只会让 mpv 不停中止上一次 seek。
+    // 松手（allowJump=true）只要目标落在已转出区间内就原地 seek —— 分片就在
+    // 服务端磁盘上，没必要为了它重建一整条转码会话。
+    final reachable = allowJump ? producedEnd : bufferedAbs;
+    if (reachable > Duration.zero &&
+        t >= _startOffset &&
+        t <= reachable - const Duration(seconds: 2)) {
+      // 拖动中每帧都会进来，只在松手那次记日志（否则一天能刷满预算）
+      if (allowJump) {
+        ClientLogger.instance.info(
+          '原地 seek ${t.inMilliseconds}ms '
+          '(produced=${producedEnd.inMilliseconds}ms '
+          'buffered=${bufferedAbs.inMilliseconds}ms)',
+          route: 'player.seek/${_sessionId ?? 'direct'}',
+        );
+      }
+      await _player.seek(t - _startOffset);
+      _poke();
+      if (_wantPlay) unawaited(_ensurePlayingAfterOpen());
+      // 拖动过程中每帧都会走这里，看门狗只在松手那次（allowJump）挂
+      if (allowJump) _watchSeekLanding(t);
       return;
     }
     if (seekNeedsJump(target: t, start: _startOffset, loadedEnd: _loadedEnd)) {
       if (!allowJump) return;
       // 只比已转出末尾多一点点（键盘 ±10s、拖个几十秒）：不重建会话。
-      // 新会话要重新起一次 AMF/AV1 ffmpeg，实测首片 ~10s；这里只差几秒，
+      // 新会话要重新起一次 AV1 / AMF ffmpeg，实测首片 8~10s；这里只差几秒，
       // 直接让播放器在 VOD 列表里 seek，服务端分片路由会等并按需续转，
       // 当前画面和已有缓冲都保留。
       final over = t - _loadedEnd;
       if (over > Duration.zero && over <= const Duration(seconds: 30)) {
+        ClientLogger.instance.info(
+          '前探 seek ${t.inMilliseconds}ms over=${over.inMilliseconds}ms '
+          '(produced=${producedEnd.inMilliseconds}ms)',
+          route: 'player.seek/${_sessionId ?? 'direct'}',
+        );
         await _player.seek(t - _startOffset);
         _poke();
         if (_wantPlay) unawaited(_ensurePlayingAfterOpen());
         _nudgeTranscode(t);
+        _watchSeekLanding(t);
         return;
       }
       await _jumpTo(t);
@@ -1893,6 +2073,48 @@ class _PlayerPageState extends State<PlayerPage> {
     await _player.seek(t - _startOffset);
     _poke();
     if (_wantPlay) unawaited(_ensurePlayingAfterOpen());
+  }
+
+  /// 原地 seek 之后盯着「到底动没动」，卡住就升级成重建会话。
+  ///
+  /// 只靠「目标 ≤ 已转出」这一条判断不够：服务端偶发会多报（某一段 ffmpeg
+  /// 只产出半截就停了，`transcodedMs` 仍是按播放列表算的），原地 seek 过去
+  /// 就拿不到分片。这个看门狗把那种情况接住：8 秒位置还不往前走 →
+  /// 按同一目标重建会话（首片慢一点，但一定出得来）。
+  void _watchSeekLanding(Duration target) {
+    _seekWatchdog?.cancel();
+    final gen = ++_seekWatchdogGen;
+    var stuck = 0;
+    Duration last = _player.state.position;
+    _seekWatchdog = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted || gen != _seekWatchdogGen) {
+        timer.cancel();
+        return;
+      }
+      // 换档 / 新一轮跳转 / 用户按了暂停：都轮不到这个看门狗管
+      if (_jumping || _switching || !_wantPlay) {
+        timer.cancel();
+        return;
+      }
+      final pos = _player.state.position;
+      if (pos - last > const Duration(milliseconds: 400)) {
+        timer.cancel();
+        return;
+      }
+      last = pos;
+      if (_player.state.completed) {
+        timer.cancel();
+        return;
+      }
+      stuck += 1;
+      if (stuck < 8) return;
+      timer.cancel();
+      ClientLogger.instance.warn(
+        '原地 seek 未落地（8s 位置不动）→ 重建会话 target=${target.inMilliseconds}ms',
+        route: 'player.seek/${_sessionId ?? 'direct'}',
+      );
+      unawaited(_jumpTo(target));
+    });
   }
 
   /// 小幅跳转后立刻上报目标位置，让服务端马上续转，不用等 3s 轮询。
