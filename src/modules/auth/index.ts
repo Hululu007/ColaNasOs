@@ -7,6 +7,7 @@ import { isFullAccess, readPolicy, writePolicy, type AccessPolicy } from '../../
 import type { ServerModule } from '../../../kernel/types';
 import { Err } from '../../../kernel/errors';
 import { hashApiToken, newApiToken } from './api-token';
+import { renderDeviceAuthorizePage } from './device-authorize-page';
 
 /**
  * SP3-01 auth / user / security。
@@ -46,6 +47,72 @@ const LoginResponse = Type.Object({
   scopes: Type.Array(Type.String()),
   user: Type.Object({ id: Type.String(), username: Type.String() }),
 });
+
+/**
+ * 设备授权码（电视扫码登录）。
+ *
+ * 状态机：`pending` → `approved`（手机批准并签发 token）｜`canceled`（电视取消）
+ * ｜`expired`（5 分钟超时）。code 一次性：token 只会下发一次，取走后不再返回。
+ */
+const DeviceCodeBody = Type.Object({
+  deviceName: Type.Optional(Type.String({ maxLength: 64 })),
+});
+const DeviceCodeResponse = Type.Object({
+  code: Type.String(),
+  userCode: Type.String(),
+  verifyUrl: Type.String(),
+  expiresAt: Type.Integer(),
+  expiresInSec: Type.Integer(),
+  pollIntervalSec: Type.Integer(),
+});
+const DeviceStatusQuery = Type.Object({
+  code: Type.String({ minLength: 6, maxLength: 128 }),
+});
+const DeviceStatusResponse = Type.Object({
+  status: Type.String(),
+  expiresInSec: Type.Integer(),
+  token: Type.Optional(Type.String()),
+  user: Type.Optional(Type.Object({ id: Type.String(), username: Type.String() })),
+});
+const DeviceApproveBody = Type.Object({
+  code: Type.Optional(Type.String({ minLength: 6, maxLength: 128 })),
+  userCode: Type.Optional(Type.String({ minLength: 4, maxLength: 12 })),
+});
+const DeviceApproveResponse = Type.Object({
+  ok: Type.Boolean(),
+  username: Type.String(),
+});
+const DeviceCancelBody = Type.Object({
+  code: Type.String({ minLength: 6, maxLength: 128 }),
+});
+const DeviceCancelResponse = Type.Object({ ok: Type.Boolean() });
+
+type DeviceGrantStatus = 'pending' | 'approved' | 'canceled' | 'expired';
+
+interface DeviceGrant {
+  code: string;
+  userCode: string;
+  deviceName: string;
+  createdAt: number;
+  expiresAt: number;
+  status: DeviceGrantStatus;
+  /** 批准后签发的会话 token：只允许通过轮询下发一次 */
+  token?: string;
+  userId?: string;
+  username?: string;
+  delivered: boolean;
+}
+
+const DEVICE_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+
+/** 电视上显示的 6 位短码（去掉容易混淆的 0/O/1/I） */
+function newUserCode(): string {
+  let out = '';
+  for (let i = 0; i < 6; i += 1) {
+    out += DEVICE_CODE_ALPHABET[crypto.randomInt(DEVICE_CODE_ALPHABET.length)];
+  }
+  return out;
+}
 
 /**
  * 账号名 / 密码一律不做格式限制（内网自用）。
@@ -552,6 +619,21 @@ export const accounts: ServerModule = {
       createdAt: r.created_at,
     });
 
+    /**
+     * 会话 token：密码登录与设备授权共用。
+     *
+     * 两个「所有登录用户的基础能力」单独注入而不改响应里的 `scopes`：
+     * - `events:read`：事件流只含「哪个域有扫描完成」的摘要，具体资源仍按 scope / owner 过滤；
+     * - `tasks:read`：扫描 / 索引 / 刮削都改成入队了，界面必须能轮询 `/tasks/{id}` 拿进度。
+     */
+    const issueSessionToken = (userId: string, rawScopes: string[]): string => {
+      const baseScopes = ['events:read', 'tasks:read'];
+      const tokenScopes = rawScopes.includes('*')
+        ? rawScopes
+        : [...new Set([...rawScopes, ...baseScopes])];
+      return k.auth.sign({ sub: userId, scopes: tokenScopes }, 30 * 24 * 3600);
+    };
+
     app.post(
       '/api/v1/auth/login',
       {
@@ -592,16 +674,7 @@ export const accounts: ServerModule = {
           }
         }
         const scopes = JSON.parse(user.scopes || '[]') as string[];
-        // 两个「所有登录用户的基础能力」，单独注入而不改响应里的 `scopes`（前端展示不变）：
-        // - `events:read`：事件流只含「哪个域有扫描完成」的摘要，具体资源仍按 scope / owner 过滤；
-        // - `tasks:read`：扫描 / 索引 / 刮削都改成入队了，界面必须能轮询 `/tasks/{id}` 拿进度，
-        //   否则「点扫描 → 没有任何反馈」。注：`tasks.uid` 尚未落库，现在无法按用户隔离任务，
-        //   单机个人云盘口径下可接受；多用户部署前应补 uid 列并按创建者过滤。
-        const baseScopes = ['events:read', 'tasks:read'];
-        const tokenScopes = scopes.includes('*')
-          ? scopes
-          : [...new Set([...scopes, ...baseScopes])];
-        const token = k.auth.sign({ sub: user.id, scopes: tokenScopes }, 30 * 24 * 3600);
+        const token = issueSessionToken(user.id, scopes);
         await sql`
           update auth_users set last_login_at = ${now()} where id = ${user.id}
         `.execute(k.db);
@@ -609,6 +682,216 @@ export const accounts: ServerModule = {
         return { token, scopes, user: { id: user.id, username: user.username } };
       },
     );
+
+    // -----------------------------------------------------------------------
+    // 设备授权码（电视扫码登录）
+    //
+    //   pending → approved（手机批准并签发 token）｜canceled（电视取消）｜expired（超时）
+    //
+    // code 是 32 字节随机串（只出现在二维码里），userCode 是给电视显示的 6 位短码；
+    // token 只在批准后的第一次轮询下发，之后重复轮询不再返回 —— 一次性使用。
+    // -----------------------------------------------------------------------
+    const deviceGrants = new Map<string, DeviceGrant>();
+    const DEVICE_TTL_SEC = 300;
+    const DEVICE_POLL_SEC = 2;
+
+    const sweepDeviceGrants = () => {
+      const cutoff = now() - 60;
+      for (const [code, grant] of deviceGrants) {
+        if (grant.expiresAt < cutoff) deviceGrants.delete(code);
+      }
+    };
+
+    const expireIfNeeded = (grant: DeviceGrant): DeviceGrant => {
+      if (grant.status === 'pending' && grant.expiresAt <= now()) grant.status = 'expired';
+      return grant;
+    };
+
+    const grantByCode = (code: string): DeviceGrant | null => {
+      const grant = deviceGrants.get(code);
+      return grant ? expireIfNeeded(grant) : null;
+    };
+
+    const grantByUserCode = (userCode: string): DeviceGrant | null => {
+      const normalized = userCode.trim().toUpperCase();
+      if (!normalized) return null;
+      for (const grant of deviceGrants.values()) {
+        if (grant.userCode === normalized) return expireIfNeeded(grant);
+      }
+      return null;
+    };
+
+    app.post(
+      '/api/v1/auth/device/code',
+      {
+        schema: {
+          operationId: 'authDeviceCode',
+          tags: TAG,
+          summary: '创建设备授权码（电视扫码登录）',
+          body: DeviceCodeBody,
+          response: { 200: DeviceCodeResponse },
+        },
+      },
+      async (req) => {
+        sweepDeviceGrants();
+        const body = (req.body || {}) as { deviceName?: string };
+        const code = crypto.randomBytes(24).toString('base64url');
+        const userCode = newUserCode();
+        const expiresAt = now() + DEVICE_TTL_SEC;
+        deviceGrants.set(code, {
+          code,
+          userCode,
+          deviceName: String(body.deviceName || '').slice(0, 64),
+          createdAt: now(),
+          expiresAt,
+          status: 'pending',
+          delivered: false,
+        });
+        const host = String(req.headers.host || '127.0.0.1');
+        return {
+          code,
+          userCode,
+          verifyUrl: `${req.protocol}://${host}/device?code=${encodeURIComponent(code)}`,
+          expiresAt,
+          expiresInSec: DEVICE_TTL_SEC,
+          pollIntervalSec: DEVICE_POLL_SEC,
+        };
+      },
+    );
+
+    app.get(
+      '/api/v1/auth/device/status',
+      {
+        schema: {
+          operationId: 'authDeviceStatus',
+          tags: TAG,
+          summary: '轮询设备授权状态（批准后带回 token，仅一次）',
+          querystring: DeviceStatusQuery,
+          response: { 200: DeviceStatusResponse },
+        },
+      },
+      async (req) => {
+        const q = (req.query || {}) as { code?: string };
+        const grant = grantByCode(String(q.code || ''));
+        if (!grant) return { status: 'expired', expiresInSec: 0 };
+        const expiresInSec = Math.max(0, grant.expiresAt - now());
+        const user =
+          grant.userId && grant.username
+            ? { id: grant.userId, username: grant.username }
+            : undefined;
+        if (grant.status === 'approved') {
+          if (grant.delivered || !grant.token) return { status: 'approved', expiresInSec, user };
+          grant.delivered = true;
+          return { status: 'approved', expiresInSec, token: grant.token, user };
+        }
+        return { status: grant.status, expiresInSec, user };
+      },
+    );
+
+    // 手机浏览器里已登录的账号批准这次设备登录（需要 Bearer token）
+    app.post(
+      '/api/v1/auth/device/approve',
+      {
+        schema: {
+          operationId: 'authDeviceApprove',
+          tags: TAG,
+          summary: '已登录用户批准电视登录',
+          body: DeviceApproveBody,
+          response: {
+            200: DeviceApproveResponse,
+            401: ErrorResponse,
+            403: ErrorResponse,
+            404: ErrorResponse,
+            410: ErrorResponse,
+          },
+        },
+      },
+      async (req, reply) => {
+        const body = (req.body || {}) as { code?: string; userCode?: string };
+        const grant = body.code
+          ? grantByCode(body.code)
+          : body.userCode
+            ? grantByUserCode(body.userCode)
+            : null;
+        if (!grant) {
+          return reply
+            .code(404)
+            .send({ error: 'device_code_invalid', message: '授权码不存在或已失效' });
+        }
+        if (grant.status === 'expired') {
+          return reply
+            .code(410)
+            .send({ error: 'device_code_expired', message: '授权码已过期，请在电视上刷新二维码' });
+        }
+        if (grant.status === 'canceled') {
+          return reply
+            .code(410)
+            .send({ error: 'device_code_canceled', message: '授权已被电视取消' });
+        }
+        if (grant.status === 'approved') {
+          // 幂等：手机重复点「允许」不再重复签发
+          return { ok: true, username: grant.username || '' };
+        }
+        const user = (req as { user?: { sub?: string } }).user;
+        const uid = String(user?.sub || '');
+        if (!uid) {
+          return reply.code(401).send({ error: Err.unauthorized, message: 'missing user' });
+        }
+        const rows = (
+          await sql<{ id: string; username: string; scopes: string; disabled: number }>`
+            select id, username, scopes, disabled from auth_users where id = ${uid}
+          `.execute(k.db)
+        ).rows;
+        const row = rows[0];
+        if (!row || row.disabled === 1) {
+          return reply.code(403).send({ error: Err.forbidden, message: 'account disabled' });
+        }
+        const scopes = JSON.parse(row.scopes || '[]') as string[];
+        grant.status = 'approved';
+        grant.userId = row.id;
+        grant.username = row.username;
+        grant.token = issueSessionToken(row.id, scopes);
+        grant.delivered = false;
+        await sql`
+          update auth_users set last_login_at = ${now()} where id = ${row.id}
+        `.execute(k.db);
+        await writeEvent(
+          'login',
+          row.id,
+          row.username,
+          req,
+          `device${grant.deviceName ? `:${grant.deviceName}` : ''}`,
+        );
+        return { ok: true, username: row.username };
+      },
+    );
+
+    app.post(
+      '/api/v1/auth/device/cancel',
+      {
+        schema: {
+          operationId: 'authDeviceCancel',
+          tags: TAG,
+          summary: '电视取消设备授权（关闭二维码时调用）',
+          body: DeviceCancelBody,
+          response: { 200: DeviceCancelResponse },
+        },
+      },
+      async (req) => {
+        const body = (req.body || {}) as { code?: string };
+        const grant = grantByCode(String(body.code || ''));
+        if (grant && grant.status === 'pending') {
+          grant.status = 'canceled';
+          grant.token = undefined;
+        }
+        return { ok: true };
+      },
+    );
+
+    // 手机浏览器打开的授权页：由 NAS 自己托管，不用公网页面
+    app.get('/device', { schema: { hide: true } }, async (_req, reply) => {
+      return reply.type('text/html; charset=utf-8').send(renderDeviceAuthorizePage());
+    });
 
     // 当前登录用户的授权快照：客户端据此隐藏未授权应用、裁剪目录选择器。
     // `hide: true` = 不进 OpenAPI，避免为这么一个只读接口重跑整套生成链；

@@ -27,6 +27,7 @@ import type { KernelApi } from './types';
 import { createRegistry } from './modules';
 import websocket from '@fastify/websocket';
 import { attachTerminal } from '../src/modules/system/pty';
+import { filesRoot } from '../src/modules/files/fs-root';
 import { resolveApiToken } from '../src/modules/auth/api-token';
 import { BASE_MIGRATIONS } from './migrations/base';
 import { MIGRATION_ORDER } from './migrations/manifest';
@@ -70,6 +71,13 @@ const PUBLIC_PATHS = new Set([
   '/openapi.json',
   '/api/v1/auth/dev-token',
   '/api/v1/auth/login',
+  // 电视扫码登录：电视还没有 token，创码 / 轮询 / 取消必须匿名可访问；
+  // 真正的授权动作 `/auth/device/approve` 需要已登录用户，不在这个名单里。
+  '/api/v1/auth/device/code',
+  '/api/v1/auth/device/status',
+  '/api/v1/auth/device/cancel',
+  // 手机浏览器打开的授权页（NAS 自己托管的静态 HTML）
+  '/device',
   // 首次安装引导：库里没有账号时允许匿名创建第一个管理员（有账号即 409）
   '/api/v1/auth/bootstrap',
   '/api/v1/share/info',
@@ -487,9 +495,12 @@ export async function startKernel(opts: KernelOptions) {
       // 折算规则都在 effectivePathRules 里，别在这里另写一套。
       const pathRules = effectivePathRules(policy, isFullAccess(payload));
       const { paths, target } = requestPathsOf(req as { query?: unknown; body?: unknown });
+      // 规则里的相对路径以文件根为基准，和请求里的绝对路径（盘符 / UNC / 反斜杠）
+      // 必须在同一坐标系里比较，否则「授权了却 403」。
+      const aclRoot = filesRoot();
       // 批量接口逐条判：只要有一条越界就整单拒绝，不做「部分成功」
       for (const p of paths) {
-        const pathDecision = checkPathAccess(pathRules, needAction, p);
+        const pathDecision = checkPathAccess(pathRules, needAction, p, aclRoot);
         if (!pathDecision.ok) {
           return reply.code(403).send({
             error: Err.pathForbidden,
@@ -500,7 +511,7 @@ export async function startKernel(opts: KernelOptions) {
         }
       }
       if (cfg.pathTargetAction && target) {
-        const decision = checkPathAccess(pathRules, cfg.pathTargetAction, target);
+        const decision = checkPathAccess(pathRules, cfg.pathTargetAction, target, aclRoot);
         if (!decision.ok) {
           return reply.code(403).send({
             error: Err.pathForbidden,
