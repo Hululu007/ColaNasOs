@@ -773,9 +773,6 @@ class _PlayerPageState extends State<PlayerPage> {
     String preset,
     String codec, {
     int startMs = 0,
-
-    /// 覆盖「提前量（分钟）」：跳转到未转位置时用小段，首片更快落地。
-    int? leadOverride,
   }) async {
     final id = widget.itemId!;
     // 请求的编码在本机解不出来时回落 H.264（桌面端一律解得出来，浏览器由
@@ -804,8 +801,9 @@ class _PlayerPageState extends State<PlayerPage> {
         forceSdr: null,
         audioNormalize: PlayPreferences.audioNormalize ? true : null,
         audioDownmix: PlayPreferences.audioDownmix ? true : null,
-        // 0 = 整片一次转完；>0 时服务端按段转，播放位置靠近末尾才续下一段
-        leadMinutes: leadOverride ?? PlayPreferences.leadMinutes,
+        // 服务端一律按段转（默认 3 分钟），播放位置靠近末尾才续下一段。
+        // 0 / 负数会被服务端归到默认值，客户端不再有「整片一次转完」这条路径。
+        leadMinutes: PlayPreferences.leadMinutes,
         // 0 = 从片头转。服务端会按片源时长夹取，越界不会建出空会话。
         startMs: startMs > 0 ? startMs : null,
       ),
@@ -825,7 +823,7 @@ class _PlayerPageState extends State<PlayerPage> {
     // 记下这一轮的提前量：决定 `_loadedEnd` 能不能信 libmpv 报的 duration。
     // 建会话的响应里没有 leadMs，先用客户端请求值推算，下一次轮询会用
     // 服务端回显的 leadMs 校正（见 _watchSession）。
-    _leadMs = (leadOverride ?? PlayPreferences.leadMinutes) * 60000;
+    _leadMs = PlayPreferences.leadMinutes * 60000;
     // 起转偏移以服务端回显为准（它可能夹取过），播放器时间轴 0 = 这个位置
     _startMs = created.startedMs ?? startMs;
     // 实际编码换会话后必须清空，否则换了档还显示上一轮的结果

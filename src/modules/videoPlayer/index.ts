@@ -216,7 +216,9 @@ const transcodedMsOf = (parts: PlaylistPart[]) =>
   parts.reduce((sum, p) => sum + playlistDurationMs(p.text), 0);
 
 /**
- * `lead_ms=0`（用户选「整片一次转完」）时产物在**会话根目录**，没有 p0/p1。
+ * `lead_ms=0` 的**老会话**（2026-11-16 之前建、用户选了「整片一次转完」）产物在
+ * **会话根目录**，没有 p0/p1。新建会话已经不可能再落这个模式（`leadMinutes`
+ * 0 / 负数归默认分段值），这里只为升级前遗留的会话保住播放能力。
  * 以前这里只走 `partsOf`，根目录列表永远读不到 → `transcodedMs` 恒为 0，
  * 客户端认为「已转出 0 秒」：每次拖进度条都新建会话（连往回拖也新建），
  * 首片等待也永远超时。整片模式同样要把根 index.m3u8 当成一段。
@@ -450,8 +452,9 @@ async function runJob(k: KernelApi, job: SessionRow): Promise<void> {
     if (normalize) filters.push('dynaudnorm');
     // 降混双声道：aformat 把 5.1 / 7.1 压成 stereo，单声道不会再被升混
     if (Number(job.audio_downmix) === 1) filters.push('aformat=channel_layouts=stereo');
-    // 分段续转：leadMs=0（用户显式选整片）时完全走原来的「一次转完整片」单目录路径；
-    // >0（默认 3 分钟）时每段一个 pN 子目录，ffmpeg 只转 [已转出位置, +leadMs) 这一截。
+    // 分段续转：leadMs > 0 时每段一个 pN 子目录，ffmpeg 只转 [已转出位置, +leadMs) 这一截。
+    // leadMs=0 只剩升级前遗留的老会话（新建已不可能，见 sessionCreate），
+    // 它们继续走「一次转完整片」的单目录路径，别再认为这是可选模式。
     const leadMs = Math.max(0, Number(job.lead_ms) || 0);
     // 起转位置：>0 表示这个会话是从片源中途开始的（进度条跳到了未转码的位置）。
     // 每段都是「从片头算」的绝对位置，所以 seekMs 一律是 startMs + 已转出长度。
