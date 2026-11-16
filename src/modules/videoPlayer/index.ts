@@ -513,17 +513,127 @@ async function pump(k: KernelApi): Promise<void> {
   }
 }
 
+const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/** 旧会话正在写的输出目录（pN 或整片单目录） */
+function sessionOutDirOf(k: KernelApi, id: string): string {
+  const remembered = activeOutDir.get(id);
+  if (remembered) return remembered;
+  const parts = partsOf(k, id);
+  const base = sessionDirOf(k, id);
+  return parts.length ? path.join(base, `p${parts.length}`) : base;
+}
+
+/** 会话是否已经有可播的播放列表（分段 / 整片两种目录都算）。 */
+function hasPlayablePlaylist(k: KernelApi, id: string): boolean {
+  const roots = [sessionDirOf(k, id), path.join(k.paths.dataDir, 'hls', id)];
+  for (const root of roots) {
+    try {
+      if (fs.readFileSync(path.join(root, 'index.m3u8'), 'utf8').includes('#EXTINF')) {
+        return true;
+      }
+    } catch {
+      // 整片单目录还没有列表，继续看分段
+    }
+    let names: string[] = [];
+    try {
+      names = fs.readdirSync(root).filter((n) => /^p\d+$/.test(n));
+    } catch {
+      continue;
+    }
+    for (const name of names) {
+      try {
+        const text = fs.readFileSync(path.join(root, name, 'index.m3u8'), 'utf8');
+        if (text.includes('#EXTINF')) return true;
+      } catch {
+        // 这一段还在落盘
+      }
+    }
+  }
+  return false;
+}
+
+/** 真正杀掉旧会话：标记 canceled + kill ffmpeg（已产出的分片保留，播放器能把缓冲放完） */
+async function killSession(k: KernelApi, id: string, dir: string): Promise<void> {
+  await sql`
+    update player_sessions
+    set status = 'canceled', error = 'superseded', updated_at = ${now()}
+    where id = ${id} and status <> 'canceled'
+  `.execute(k.db);
+  await k.media.cancel(dir);
+  k.log.info({ session: id, dir }, '[player] 取消旧转码');
+}
+
+type Handoff = { oldId: string; oldDir: string };
+
+/**
+ * 新会话首片落盘后再杀旧会话。
+ *
+ * 以前在 `create` 里立刻杀旧 ffmpeg：用户一换档，旧流当场断，新会话又要
+ * 8~12s 才出首片（实测 `首片等待 ready 8601ms / 11645ms`），这段时间就是
+ * 「同一台机器还一直缓冲」的来源。现在旧流继续放，等新会话有可播列表再杀，
+ * 切换期间画面不断。
+ *
+ * 新会话失败（编码器起不来 / 参数非法）时**不杀**旧会话：旧流还在，用户至少
+ * 能继续看，不至于两头都黑。
+ */
+async function cancelWhenReplacementReady(
+  k: KernelApi,
+  handoff: Handoff,
+  newId: string,
+): Promise<void> {
+  const deadline = Date.now() + 25_000;
+  while (Date.now() < deadline) {
+    await wait(350);
+    const rows = (
+      await sql<{ status: string }>`
+        select status from player_sessions where id = ${newId}
+      `.execute(k.db)
+    ).rows;
+    const st = rows[0]?.status;
+    if (!st) return;
+    if (st === 'failed' || st === 'canceled') {
+      k.log.info(
+        { old: handoff.oldId, session: newId },
+        '[player] 新会话未就绪，保留旧会话继续播',
+      );
+      return;
+    }
+    if (hasPlayablePlaylist(k, newId) || st === 'done') {
+      await killSession(k, handoff.oldId, handoff.oldDir);
+      return;
+    }
+  }
+  // 超时仍没首片：别让两路 ffmpeg 长期并跑，收回旧的
+  await killSession(k, handoff.oldId, handoff.oldDir);
+}
+
 /**
  * 新会话建好时，把同一部片还在排队 / 正在转的旧会话取消掉。
  * 用户换档（AV1 → 480p）时旧编码没必要继续跑，否则新会话只能排它后面。
+ *
+ * 例外：**正在播的那一路**（最近 15s 内有 pos 轮询）延后到新会话首片就绪再杀，
+ * 见 `cancelWhenReplacementReady`；其余旧会话照旧立刻取消，给新会话腾槽位。
  */
-async function supersedeOlder(k: KernelApi, itemId: string): Promise<void> {
+async function supersedeOlder(k: KernelApi, itemId: string): Promise<Handoff | null> {
   const rows = (
     await sql<{ id: string; status: string }>`
       select id, status from player_sessions
        where item_id = ${itemId} and status in ('pending', 'running', 'paused')
     `.execute(k.db)
   ).rows;
+
+  // 只保留「最近还在被客户端轮询」的那一路，其余全部立即取消
+  const nowMs = Date.now();
+  let keep: { id: string; at: number } | null = null;
+  for (const row of rows) {
+    if (row.status !== 'running') continue;
+    const poll = lastPoll.get(row.id);
+    if (!poll || nowMs - poll.at > 15_000) continue;
+    if (!keep || poll.at > keep.at) keep = { id: row.id, at: poll.at };
+  }
+
+  let handoff: Handoff | null = null;
   for (const row of rows) {
     // 所有旧会话都停止预取（lastPoll 会让 runJob 末尾把它标回 pending 抢槽位）
     lastPoll.delete(row.id);
@@ -531,28 +641,18 @@ async function supersedeOlder(k: KernelApi, itemId: string): Promise<void> {
     // （同参数重新打开 / 跳回已转过的位置时秒开）。把它标 canceled 会让
     // dupe 查不到，每次都得重新起转码 —— 实测「连启动都变慢了」。
     if (row.status === 'paused') continue;
-    await sql`
-      update player_sessions
-      set status = 'canceled', error = 'superseded', updated_at = ${now()}
-      where id = ${row.id}
-    `.execute(k.db);
-    if (row.status === 'running') {
-      // 必须指向**正在写**的那一段：partsOf 只返回已完成段，正在跑的 ffmpeg
-      // 写的是 p{parts.length}。以前用最后一个已完成目录 cancel，activeHls
-      // 里查不到 child，旧 ffmpeg 照样跑满 20s，新会话只能排队等。
-      const remembered = activeOutDir.get(row.id);
-      const parts = partsOf(k, row.id);
-      const base = sessionDirOf(k, row.id);
-      const dir =
-        remembered ??
-        (parts.length ? path.join(base, `p${parts.length}`) : base);
-      await k.media.cancel(dir);
+    const dir = sessionOutDirOf(k, row.id);
+    if (row.status === 'running' && keep && row.id === keep.id) {
+      handoff = { oldId: row.id, oldDir: dir };
       k.log.info(
-        { session: row.id, dir, exact: Boolean(remembered), parts: parts.length },
-        '[player] 取消旧转码',
+        { session: row.id, dir },
+        '[player] 旧转码延后取消（等新会话首片）',
       );
+      continue;
     }
+    await killSession(k, row.id, dir);
   }
+  return handoff;
 }
 
 async function itemPath(k: KernelApi, itemId: string): Promise<string | null> {
@@ -884,7 +984,7 @@ export const videoPlayer: ServerModule = {
         }
         // 换档 / 重试：同一部片还在排队或正在转的旧会话先取消，
         // 否则新会话只能排在它后面（4K 转不动的片实测能把队列堵 50 分钟）。
-        await supersedeOlder(k, body.id as string);
+        const handoff = await supersedeOlder(k, body.id as string);
         await sql`
           insert into player_sessions
             (id, item_id, preset, codec, subtitle, audio_normalize, audio_downmix,
@@ -893,6 +993,12 @@ export const videoPlayer: ServerModule = {
                   ${subtitle}, ${audioNormalize}, ${audioDownmix},
                   ${audioIndex}, ${forceSdr}, ${forceSdr}, ${leadMs}, ${startMs}, 'pending', ${ts}, ${ts})
         `.execute(k.db);
+        // 旧流先不杀：等新会话首片落盘再收（新会话失败则保留旧流）
+        if (handoff) {
+          void cancelWhenReplacementReady(k, handoff, id).catch((err) =>
+            k.log.warn({ err: String(err), session: handoff.oldId }, 'player handoff failed'),
+          );
+        }
         pump(k).catch((err) => k.log.warn({ err: String(err) }, 'player pump stopped'));
         // 不再等首片：播放列表是即时生成的静态 VOD 列表，播放器按序拉分片，
         // 还没转出来的那一片由分片路由等待（点播放到出画面不再有 20s 空转）。

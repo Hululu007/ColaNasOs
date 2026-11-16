@@ -1059,7 +1059,20 @@ class _PlayerPageState extends State<PlayerPage> {
 
   Future<void> _switchQuality(String preset, {String? codec}) async {
     final messenger = ScaffoldMessenger.maybeOf(context);
-    final targetCodec = codec ?? _codec;
+    // 本机解不出来的编码先回落 H.264：界面标签也要跟着回落，
+    // 否则会显示「已切到 AV1」而实际跑的是 264。
+    final wantedCodec = codec ?? _codec;
+    final targetCodec = codecPlayable(wantedCodec) ? wantedCodec : 'h264';
+    final prevPreset = _preset;
+    final prevCodec = _codec;
+
+    // 选「编码」时如果当前是**原画直连**，编码参数根本没地方生效：
+    // 直连就是把原文件丢给 libmpv，不存在转码编码。以前这里仍然走直链，
+    // 用户点 H.265 / AV1 什么都不发生 —— 这就是「无法切换解码方式」。
+    // 现在自动落到一个保分辨率的转码档，让编码选择真的起作用。
+    final fromDirect = codec != null && !_isTranscode;
+    final wanted = fromDirect ? _transcodeFallback(codec: targetCodec) : preset;
+
     // 直链要求：调用方给的是真直链（compat 存在）且片源本身能直链。
     // 详情页「转码」入口拿的是 HLS 地址（compat=null），那里不存在直链可退。
     // 桌面端（libmpv）能解 HEVC / AV1 / 10bit，但**杜比视界不行**：
@@ -1068,17 +1081,17 @@ class _PlayerPageState extends State<PlayerPage> {
     // Web 端保持原判定（Chromium 确实解不了 MKV/HEVC）。
     final colorBlocked = _colorBlocksDirect;
     final toDirect =
-        preset == 'original' &&
+        wanted == 'original' &&
         !colorBlocked &&
         widget.compat != null &&
         (!kIsWeb || !_needTranscode);
     if (!toDirect && widget.itemId == null) return;
     // 必须转码时「原画」没法真原样播：桌面退到保分辨率的档，
     // 界面也跟着显示实际档位，不要出现「显示原画、跑的是 1080p」。
-    final effective = preset == 'original' && !toDirect
+    final effective = wanted == 'original' && !toDirect
         ? _transcodeFallback(codec: targetCodec)
-        : preset;
-    if (preset == 'original' && colorBlocked) {
+        : wanted;
+    if (wanted == 'original' && colorBlocked) {
       _showNotice(
         tr('player.colorFallback', {
           'source': tr('player.reason.${_srcHdr.reason}'),
@@ -1090,12 +1103,30 @@ class _PlayerPageState extends State<PlayerPage> {
       );
     }
     final pos = _absPosition(_player.state.position);
-    setState(() => _switching = true);
+    // 先把档位/编码写进界面，再去等服务端首片：新会话要 8~12s 才出片，
+    // 码率列表不能等它 —— 以前 `_codec` 要等 open 成功才更新，切完打开菜单
+    // 还是旧的 1080P 8M（H.264 码率），看起来像「切了没生效」。
+    setState(() {
+      _switching = true;
+      _preset = effective;
+      _codec = targetCodec;
+    });
+    if (fromDirect) {
+      _showNotice(
+        tr('player.codecToTranscode', {
+          'preset':
+              playQualityPresetOf(effective)?.labelFor(targetCodec) ??
+              effective,
+          'codec': playCodecOf(targetCodec)?.label ?? targetCodec,
+        }),
+        log: '原画直连切编码：$targetCodec → $effective',
+      );
+    }
     // 新一次换档允许再提示一次编码回落
     _codecNoticeShown = false;
     try {
-      // 服务端建新会话会取消这部片还在排队 / 正在转的旧会话，
-      // 所以换档不会让上一档的转码继续占 CPU。
+      // 服务端建新会话时，旧会话会延后到新会话首片就绪再取消
+      // （见 videoPlayer supersedeOlder），切换期间旧画面还能继续放。
       final u = toDirect
           ? _directUrl
           : await _ensureTranscode(
@@ -1123,6 +1154,13 @@ class _PlayerPageState extends State<PlayerPage> {
       // 偏好仍记用户点的那个档位：下一部片能直链时「原画」就该直链
       await PlayPreferences.save(preset: preset, codec: targetCodec);
     } catch (e) {
+      // 切换失败：把界面回滚到切换前的档位/编码，别让菜单显示一个没跑起来的档
+      if (mounted) {
+        setState(() {
+          _preset = prevPreset;
+          _codec = prevCodec;
+        });
+      }
       if (messenger != null) {
         NasSnack.showOn(messenger, tr('player.switchFailed', {'error': '$e'}));
       }
@@ -1866,6 +1904,15 @@ class _PlayerPageState extends State<PlayerPage> {
             child: _checked(p.labelFor(_codec), _preset == p.key),
           ),
         const PopupMenuDivider(),
+        // 原画直连没有「转码编码」可切，先说明一声：选编码会自动转码
+        if (!_isTranscode)
+          PopupMenuItem<String>(
+            enabled: false,
+            child: Text(
+              tr('player.codecHintDirect'),
+              style: const TextStyle(color: Colors.white54, fontSize: 12),
+            ),
+          ),
         // 只列本机能解的编码：列了点了却黑屏，比不列更糟
         for (final c in playableCodecs())
           PopupMenuItem<String>(

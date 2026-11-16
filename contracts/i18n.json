@@ -2170,6 +2170,11 @@
       "want": {},
       "actual": {}
     },
+    "player.codecHintDirect": {},
+    "player.codecToTranscode": {
+      "preset": {},
+      "codec": {}
+    },
     "player.colorFallback": {
       "source": {},
       "actual": {}

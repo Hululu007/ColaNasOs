@@ -1595,6 +1595,8 @@
     "player.back": "Back",
     "player.bitrate": "Bitrate",
     "player.codecFallback": "{want} unavailable, fell back to {actual}",
+    "player.codecHintDirect": "Direct play has no transcoder codec; picking one switches to transcode",
+    "player.codecToTranscode": "Switched to {preset} transcode ({codec})",
     "player.colorFallback": "This device cannot display {source} correctly; playing with server tone mapping ({actual})",
     "player.directFailed": "Direct play showed no picture; switched to {actual} transcode",
     "player.dvDirect": "Dolby Vision direct play",
