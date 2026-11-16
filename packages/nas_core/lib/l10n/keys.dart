@@ -1668,6 +1668,7 @@ class I18nKeys {
   static const playerPlaylist = 'player.playlist';
   static const playerPreparing = 'player.preparing';
   static const playerPreparingHint = 'player.preparingHint';
+  static const playerPreparingSlow = 'player.preparingSlow';
   static const playerPrev = 'player.prev';
   static const playerQuality = 'player.quality';
   static const playerQualityHint = 'player.qualityHint';
@@ -2954,4 +2955,4 @@ class I18nKeys {
 }
 
 /// 契约键总数（生成时确定），供完整性自检使用。
-const int i18nKeyCount = 2907;
+const int i18nKeyCount = 2908;
