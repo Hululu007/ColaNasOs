@@ -6,6 +6,35 @@ import 'package:nas_core/nas_core.dart';
 import 'http_transport.dart';
 import 'settings_store.dart';
 
+/// Flutter dev server 的端口：`dev.bat` 用 5173，`TV.bat` 用 5175。
+///
+/// 这类页面只是静态壳（`/health`、`/api/**` 都会回落到 index.html 200），
+/// API 必须另打内核端口，不能照抄页面端口 —— 否则登录会把 POST 发到静态服务器，
+/// 表现为「已连接 http://localhost:5175」+ `ApiError(404 UNKNOWN)`。
+const Set<int> _flutterDevPorts = <int>{5173, 5175};
+
+/// 从页面地址推算 dev 壳的 API 地址。
+///
+/// - 页面就在本机（localhost / 127.x）：直接信任 `COLANAS_API_BASE`，
+///   兼容「页面在本机、内核在另一台 NAS」的开发方式；
+/// - 页面是 TV / 其它设备用内网 IP 打开的：主机跟随页面地址，端口用内核端口，
+///   否则 TV 上的 `127.0.0.1` 会指向电视自己。
+String _apiBaseForDevShell(Uri page) {
+  const configured = String.fromEnvironment('COLANAS_API_BASE');
+  final configuredUri = configured.isEmpty ? null : Uri.tryParse(configured);
+  final host = page.host;
+  final loopback =
+      host == 'localhost' ||
+      host == '127.0.0.1' ||
+      host == '::1' ||
+      host == '[::1]';
+  if (loopback && configuredUri != null && configuredUri.host.isNotEmpty) {
+    return configured;
+  }
+  final port = configuredUri?.port ?? 7788;
+  return '${page.scheme}://$host:$port';
+}
+
 /// 全局会话：baseUrl + token + 预构建的 ApiClient。
 ///
 /// 自动登录：登录成功后把 **服务端 / 账号 / token** 落盘；启动时 `restore()` 直接恢复，
@@ -22,7 +51,8 @@ class ApiSession {
   final ValueNotifier<bool> autoLoginChecking = ValueNotifier<bool>(false);
 
   /// 页面所在来源优先：内核换端口 / 用内网 IP 打开时，前端不会再去打 7788。
-  /// `dev.bat`（Flutter 5173 热重载 + 内核 7788）用 `--dart-define=COLANAS_API_BASE` 显式指定。
+  /// `dev.bat`（Flutter 5173）和 `TV.bat`（Flutter 5175）都用
+  /// `--dart-define=COLANAS_API_BASE` 显式指定内核地址。
   static String defaultBaseUrl() {
     const configured = String.fromEnvironment('COLANAS_API_BASE');
     if (kIsWeb) {
@@ -30,20 +60,16 @@ class ApiSession {
       if (base.hasScheme &&
           base.host.isNotEmpty &&
           base.scheme.startsWith('http')) {
-        // 只有 Flutter dev 的 5173 页面是「纯静态壳」，API 得另打到内核端口。
+        // 只有 Flutter dev 的页面是「纯静态壳」，API 得另打到内核端口。
         // 其它情况页面本身就是内核提供的（直连 7788，或经 lucky 反代到 23788/443），
         // **端口必须照抄页面自己的** —— API 与页面同源才连得上。
         //
-        // 旧实现不管从哪个口打开，一律改成 7788。于是用 lucky 反代访问
-        // https://home.gexuan.net:23788 时，登录框预填成了 https://home.gexuan.net:7788，
-        // 而 7788 是内核的**明文 HTTP** 口，浏览器 TLS 握手直接失败，
-        // 表现为「Failed to fetch」，看着像服务挂了。
-        const flutterDevPort = 5173;
-        if (base.port != flutterDevPort && base.port != 0) {
+        // 旧实现把 dev 端口写死成 5173，TV.bat 的 5175 漏了：
+        // 页面被当成服务端，登录 POST 打到静态服务器 → 404。
+        if (!_flutterDevPorts.contains(base.port) && base.port != 0) {
           return base.origin;
         }
-        final port = configured.isNotEmpty ? Uri.parse(configured).port : 7788;
-        return '${base.scheme}://${base.host}:$port';
+        return _apiBaseForDevShell(base);
       }
     }
     if (configured.isNotEmpty) return configured;
@@ -192,8 +218,10 @@ class ApiSession {
       if (base.hasScheme &&
           base.host.isNotEmpty &&
           base.scheme.startsWith('http')) {
-        const flutterDevPort = 5173;
-        if (base.port != flutterDevPort && base.port != 0) return base.origin;
+        if (!_flutterDevPorts.contains(base.port) && base.port != 0) {
+          return base.origin;
+        }
+        return _apiBaseForDevShell(base);
       }
     }
     final saved = SettingsStore.instance.getString('auth.server');
@@ -270,6 +298,29 @@ class ApiSession {
       await loadServerInfo();
       events.start();
     }
+  }
+
+  /// 扫码授权成功后，用服务端下发的 token 直接建立会话（与密码登录等价）。
+  ///
+  /// 不保存密码：token 过期后需要重新扫码或手输密码；token 本身照旧记忆，
+  /// 下次启动 `restore()` 仍能自动恢复。
+  Future<void> adoptToken({
+    required String tokenValue,
+    required String userName,
+  }) async {
+    token = tokenValue;
+    username = userName;
+    authState.value = true;
+    await SettingsStore.instance.setString('auth.server', baseUrl);
+    await SettingsStore.instance.setString('auth.username', userName);
+    await SettingsStore.instance.setInt('auth.expiresAt', expiryOf(tokenValue));
+    if (!autoLoginDisabled) {
+      await SettingsStore.instance.setString('auth.token', tokenValue);
+      await SettingsStore.instance.setString('auth.password', null);
+    }
+    await refreshAccess();
+    await loadServerInfo();
+    events.start();
   }
 
   /// 读取服务端公开展示信息（欢迎语 / 主机名）；失败不阻断登录

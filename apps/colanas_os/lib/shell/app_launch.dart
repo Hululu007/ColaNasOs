@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/scheduler.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:nas_core/nas_core.dart';
 import 'package:nas_ui/nas_ui.dart';
@@ -12,6 +11,7 @@ import '../core/app_settings.dart';
 import '../core/audio_background.dart';
 import '../core/client_log.dart';
 import '../core/i18n_setup.dart';
+import '../core/perf_diagnostics.dart';
 import '../core/session.dart';
 import '../core/settings_store.dart';
 import '../core/tv_mode.dart';
@@ -22,6 +22,7 @@ import '../features/photo/photo_page.dart';
 import '../features/sync/sync_page.dart';
 import '../features/sync/sync_scheduler.dart';
 import '../features/sync/sync_tray_bridge.dart';
+import '../features/tv/tv_shell.dart';
 import 'app_shell.dart';
 import 'desktop_tray.dart';
 
@@ -53,73 +54,41 @@ Future<void> _ensureClientId() async {
   ColanasClientId.override = id;
 }
 
-/// 每 30 秒汇总一次帧耗时上报到服务端日志。
-///
-/// 装机版用户反馈「客户端非常卡、完全无法操作」时，光看服务端请求看不出是
-/// UI 线程被阻塞还是网络慢；这个数字能直接区分：平均帧 >32ms / 慢帧占比高
-/// 说明是渲染或同步 I/O 卡住，帧耗时正常则问题在别处。回调只做累加，不额外
-/// 建 widget，不会反过来拖慢界面。
-///
-/// build / raster 分开统计：`totalSpan` 高但分不出是哪一半时，排查方向会跑偏
-/// （2026-11-13 就是「帧少 + 平均低」= 空闲 与「帧少 + 平均 2s」= 渲染慢混在一起，
-/// 看日志判断不了）。build 高 = Dart 主线程被占；raster 高 = GPU/纹理合成慢。
-void _installFrameMonitor() {
-  var frames = 0;
-  var slow = 0;
-  var sumMs = 0.0;
-  var worstMs = 0.0;
-  var sumBuild = 0.0;
-  var sumRaster = 0.0;
-  var worstRaster = 0.0;
-  var last = DateTime.now();
-  SchedulerBinding.instance.addTimingsCallback((List<FrameTiming> timings) {
-    for (final t in timings) {
-      final ms = t.totalSpan.inMicroseconds / 1000.0;
-      frames += 1;
-      sumMs += ms;
-      sumBuild += t.buildDuration.inMicroseconds / 1000.0;
-      final raster = t.rasterDuration.inMicroseconds / 1000.0;
-      sumRaster += raster;
-      if (raster > worstRaster) worstRaster = raster;
-      if (ms > 32) {
-        slow += 1;
-        if (ms > worstMs) worstMs = ms;
-      }
-    }
-    final now = DateTime.now();
-    if (frames > 0 && now.difference(last) >= const Duration(seconds: 30)) {
-      ClientLogger.instance.info(
-        '$frames帧/30s 平均${(sumMs / frames).toStringAsFixed(1)}ms '
-        '慢帧$slow 最慢${worstMs.toStringAsFixed(0)}ms '
-        'build=${(sumBuild / frames).toStringAsFixed(1)}ms '
-        'raster=${(sumRaster / frames).toStringAsFixed(1)}ms '
-        '最慢raster=${worstRaster.toStringAsFixed(0)}ms',
-        route: 'perf.frame',
-      );
-      frames = 0;
-      slow = 0;
-      sumMs = 0;
-      sumBuild = 0;
-      sumRaster = 0;
-      worstMs = 0;
-      worstRaster = 0;
-      last = now;
-    }
-  });
-}
-
 /// 统一入口：初始化设置、恢复会话、初始化播放内核，然后启动应用
-Future<void> runColanasApp({AppLaunchMode mode = AppLaunchMode.full}) async {
+///
+/// [tvEntry] 为 TV 专用入口（`main_tv.dart`）：强制 TV 模式 + 深色外观，
+/// 首页直接进 [TvShell]。普通入口不传，行为与以前完全一致。
+Future<void> runColanasApp({
+  AppLaunchMode mode = AppLaunchMode.full,
+  bool tvEntry = false,
+}) async {
   WidgetsFlutterBinding.ensureInitialized();
+  // 启动阶段耗时：用户反馈「打开就卡、完全点不了」时，先要分清是启动阶段
+  // 卡在磁盘/网络（设置、会话恢复）还是渲染。这里只记几个时间点，结束后
+  // 打一行日志；诊断开关打开时会带进上报里。
+  final boot = Stopwatch()..start();
+  final bootMarks = <String, int>{};
+  void mark(String name) => bootMarks[name] = boot.elapsedMilliseconds;
+
   // 先加载设置与会话：避免启动时先用默认主题闪一下、再跳到用户主题
   await AppSettings.instance.load();
+  mark('settings');
+  if (tvEntry) {
+    // TV 版面按深色 10-foot UI 设计；这里只改本次运行的缓存值，不写回用户设置。
+    AppSettings.instance.tvMode.value = true;
+    AppSettings.instance.themeMode.value = ThemeMode.dark;
+  }
   await _ensureClientId();
   await initI18n();
+  mark('i18n');
   await ApiSession.instance.restore();
+  mark('session');
   // 前端异常也进服务端日志：日志页只有一份，排查时不用两头找。
   // 传端标识，dev 批量日志里能区分是完整端还是相册/音乐/同步端。
   ClientLogger.instance.install(app: mode.name);
-  _installFrameMonitor();
+  // 帧耗时 / 接口耗时 / 设备信息：默认关闭，设置页可开；关闭时只保留一行 60s 摘要
+  PerfDiagnostics.instance.install(app: mode.name);
+  PerfDiagnostics.instance.setBootMarks(bootMarks);
   MediaKit.ensureInitialized();
   // Android 前台服务：熄屏 / 切后台继续播，通知栏与锁屏才有控制。
   // Web 走浏览器自己的 Media Session、桌面窗口常驻，两端都是空实现。
@@ -129,6 +98,7 @@ Future<void> runColanasApp({AppLaunchMode mode = AppLaunchMode.full}) async {
   );
   // 桌面端托盘：关窗缩到托盘常驻；初始化失败自动降级为普通关闭
   await desktopTray.init();
+  mark('services');
   // Electron 托盘的同步三项：**登录前就要挂上**，否则「同步任务」点了没反应
   // （页面停在登录页时 AppShell 还没创建）。动作本身在未登录时会自己空转。
   unawaited(
@@ -148,7 +118,17 @@ Future<void> runColanasApp({AppLaunchMode mode = AppLaunchMode.full}) async {
   // 装好就把状态报一次：主进程据此画「暂停/恢复自动同步」「立即同步是否可点」。
   // 未登录时 `localTaskCount` 返回 0，菜单里「立即同步」是灰的 —— 符合实际。
   unawaited(syncTrayBridge.refresh());
-  runApp(ColaNasApp(launchMode: mode));
+  runApp(ColaNasApp(launchMode: mode, tvEntry: tvEntry));
+  // 首帧出来后再补一个时间点：启动阶段到底是卡在磁盘 / 网络 / 首帧渲染，
+  // 这一行日志就能分开（帧耗时单独由 PerfDiagnostics 每 60s 打一次）。
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    mark('firstFrame');
+    ClientLogger.instance.info(
+      '启动 ${boot.elapsedMilliseconds}ms '
+      '${bootMarks.entries.map((e) => '${e.key}=${e.value}').join(' ')}',
+      route: 'perf.boot',
+    );
+  });
   // 相册备份开关是整机状态：必须在 App 启动时就把控制器挂到进程上。
   // 挂在页面里的话，用户切出备份页 / 最小化时 State.dispose 会把网络监听
   // 一起取消，后台上传和通知栏进度全断（2026-11-07 反馈）。
@@ -159,100 +139,124 @@ Future<void> runColanasApp({AppLaunchMode mode = AppLaunchMode.full}) async {
 }
 
 class ColaNasApp extends StatelessWidget {
-  const ColaNasApp({super.key, this.launchMode = AppLaunchMode.full});
+  const ColaNasApp({
+    super.key,
+    this.launchMode = AppLaunchMode.full,
+    this.tvEntry = false,
+  });
 
   final AppLaunchMode launchMode;
+  final bool tvEntry;
 
   @override
   Widget build(BuildContext context) {
     final settings = AppSettings.instance;
     return ListenableBuilder(
       listenable: Listenable.merge([settings.listenable, i18nRevision]),
-      builder: (context, _) => MaterialApp(
-        // 全局 Navigator key：无 context 的 GetX controller 靠它弹对话框
-        // （`Get.context` 在 MaterialApp 下恒为 null，见 core/app_navigator.dart）
-        navigatorKey: kAppNavigatorKey,
-        title: switch (launchMode) {
-          AppLaunchMode.full => 'ColaNasOs 客户端',
-          AppLaunchMode.photo => tr('ui.shell.h2aea9e'),
-          AppLaunchMode.music => tr('ui.shell.h8d6e63'),
-          AppLaunchMode.sync => tr('ui.shell.hsync'),
-        },
-        debugShowCheckedModeBanner: false,
-        theme: NasTheme.styled(
-          styleId: settings.styleId.value,
-          schemeId: settings.schemeId.value,
-          skinId: settings.skinId.value,
-          fontFamily: nasFontFamily(settings.fontId.value),
-          brightness: Brightness.light,
-        ),
-        darkTheme: NasTheme.styled(
-          styleId: settings.styleId.value,
-          schemeId: settings.schemeId.value,
-          skinId: settings.skinId.value,
-          fontFamily: nasFontFamily(settings.fontId.value),
-          brightness: Brightness.dark,
-        ),
-        themeMode: settings.themeMode.value,
-        // 背景层铺在 MaterialApp 之下、页面之上：Scaffold 透明，切换风格即刻生效
-        builder: (context, child) {
-          final spec = NasStyles.spec(
-            NasStyles.parse(settings.styleId.value),
-            Theme.of(context).brightness,
-            Theme.of(context).colorScheme,
-          );
-          final tv = settings.tvMode.value;
-          // TV 模式：整体放大字号（10-foot UI），并把遥控器确认键补进快捷键表
-          final media = MediaQuery.of(context);
-          return NasStyleScope(
-            spec: spec,
-            child: TvScope(
-              enabled: tv,
-              child: Shortcuts(
-                shortcuts: tv
-                    ? kTvShortcuts
-                    : const <ShortcutActivator, Intent>{},
-                child: MediaQuery(
-                  data: tv
-                      ? media.copyWith(
-                          textScaler: const TextScaler.linear(kTvTextScale),
-                        )
-                      : media,
-                  child: Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      spec.background,
-                      child ?? const SizedBox.shrink(),
-                    ],
+      builder: (context, _) {
+        // 流畅模式：NasPanel 读这个静态开关决定是否创建 BackdropFilter。
+        // 必须在 builder 里赋值（设置一变就在这里重建），外层 build 不会因为
+        // settings.listenable 变化而重跑。
+        NasEffects.reduceBlur = settings.reduceBlur.value;
+        return MaterialApp(
+          // 全局 Navigator key：无 context 的 GetX controller 靠它弹对话框
+          // （`Get.context` 在 MaterialApp 下恒为 null，见 core/app_navigator.dart）
+          navigatorKey: kAppNavigatorKey,
+          title: switch (launchMode) {
+            AppLaunchMode.full => 'ColaNasOs 客户端',
+            AppLaunchMode.photo => tr('ui.shell.h2aea9e'),
+            AppLaunchMode.music => tr('ui.shell.h8d6e63'),
+            AppLaunchMode.sync => tr('ui.shell.hsync'),
+          },
+          debugShowCheckedModeBanner: false,
+          theme: NasTheme.styled(
+            styleId: settings.styleId.value,
+            schemeId: settings.schemeId.value,
+            skinId: settings.skinId.value,
+            fontFamily: nasFontFamily(settings.fontId.value),
+            brightness: Brightness.light,
+          ),
+          darkTheme: NasTheme.styled(
+            styleId: settings.styleId.value,
+            schemeId: settings.schemeId.value,
+            skinId: settings.skinId.value,
+            fontFamily: nasFontFamily(settings.fontId.value),
+            brightness: Brightness.dark,
+          ),
+          themeMode: settings.themeMode.value,
+          // 背景层铺在 MaterialApp 之下、页面之上：Scaffold 透明，切换风格即刻生效
+          builder: (context, child) {
+            final spec = NasStyles.spec(
+              NasStyles.parse(settings.styleId.value),
+              Theme.of(context).brightness,
+              Theme.of(context).colorScheme,
+            );
+            final tv = settings.tvMode.value;
+            // TV 模式：整体放大字号（10-foot UI），并把遥控器确认键补进快捷键表
+            final media = MediaQuery.of(context);
+            return NasStyleScope(
+              spec: spec,
+              child: TvScope(
+                enabled: tv,
+                child: Shortcuts(
+                  shortcuts: tv
+                      ? kTvShortcuts
+                      : const <ShortcutActivator, Intent>{},
+                  child: MediaQuery(
+                    data: tv
+                        ? media.copyWith(
+                            textScaler: const TextScaler.linear(kTvTextScale),
+                          )
+                        : media,
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        // 背景（极光风格是 3 层全屏径向渐变）必须独立成一个图层。
+                        //
+                        // 不放 RepaintBoundary 时，页面里任何一次重绘（滚动、悬停、
+                        // 图片渐显）都会把背景一起重新光栅化：2.5K 窗口下 3 层全屏
+                        // 渐变约 20ms/帧，直接吃满 60Hz 预算的一半以上。实测（AMD
+                        // 780M，2560×1369）：裸动画 UI raster 0.9ms → 加这 3 层渐变
+                        // 后 20.4ms；页面滚动时再叠加内容后达到 40~60ms（约 16fps）。
+                        // 独立图层后背景只在尺寸/主题变化时重绘一次，滚动只重绘内容。
+                        RepaintBoundary(child: spec.background),
+                        // 页面内容同样独立：内容重绘不再带动背景，反过来主题切换
+                        // 重绘背景也不会带着整棵树。
+                        RepaintBoundary(
+                          child: child ?? const SizedBox.shrink(),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
-            ),
-          );
-        },
-        home: ValueListenableBuilder<bool>(
-          valueListenable: ApiSession.instance.autoLoginChecking,
-          builder: (context, checking, _) {
-            if (checking) {
-              return const Scaffold(
-                body: Center(child: CircularProgressIndicator()),
-              );
-            }
-            return ValueListenableBuilder<bool>(
-              valueListenable: ApiSession.instance.authState,
-              builder: (context, authed, _) {
-                if (!authed) return const LoginPage();
-                return switch (launchMode) {
-                  AppLaunchMode.full => const AppShell(),
-                  AppLaunchMode.photo => const PhotoPage(),
-                  AppLaunchMode.music => const MusicPage(),
-                  AppLaunchMode.sync => const SyncPage(),
-                };
-              },
             );
           },
-        ),
-      ),
+          home: ValueListenableBuilder<bool>(
+            valueListenable: ApiSession.instance.autoLoginChecking,
+            builder: (context, checking, _) {
+              if (checking) {
+                return const Scaffold(
+                  body: Center(child: CircularProgressIndicator()),
+                );
+              }
+              return ValueListenableBuilder<bool>(
+                valueListenable: ApiSession.instance.authState,
+                builder: (context, authed, _) {
+                  if (!authed) return const LoginPage();
+                  if (tvEntry) return const TvShell();
+                  return switch (launchMode) {
+                    AppLaunchMode.full => const AppShell(),
+                    AppLaunchMode.photo => const PhotoPage(),
+                    AppLaunchMode.music => const MusicPage(),
+                    AppLaunchMode.sync => const SyncPage(),
+                  };
+                },
+              );
+            },
+          ),
+        );
+      },
     );
   }
 }

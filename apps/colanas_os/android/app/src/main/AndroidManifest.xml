@@ -21,10 +21,19 @@
     <uses-permission
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32"/>
+    <!-- Android TV：应用要能装到没有触摸屏、没有 Leanback 的设备上（手机/盒子通用清单），
+         所以两条都声明为非必需；TV 桌面入口见 MainActivity 的 LEANBACK_LAUNCHER intent-filter。 -->
+    <uses-feature
+        android:name="android.software.leanback"
+        android:required="false"/>
+    <uses-feature
+        android:name="android.hardware.touchscreen"
+        android:required="false"/>
     <application
         android:label="ColaNasOs 客户端"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
+        android:banner="@drawable/tv_banner"
         android:usesCleartextTraffic="true">
         <activity
             android:name=".MainActivity"
@@ -46,6 +55,13 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+            <!-- Android TV 桌面入口：单独一条 filter（不能和上面的 LAUNCHER 混在一条里，
+                 TV 桌面只带 LEANBACK_LAUNCHER 一个 category，混在一起会匹配不上）。
+                 手机桌面只查 LAUNCHER，因此这条不影响手机端入口与行为。 -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER"/>
             </intent-filter>
         </activity>
         <!-- audio_service：前台服务（进程在后台 / 熄屏时不被冻结）+ 媒体键广播。
