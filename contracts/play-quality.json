@@ -120,9 +120,9 @@
     {
       "key": "h264",
       "label": "H.264 / AVC",
-      "container": "mpegts",
+      "container": "fmp4",
       "bitrateFactor": 1.0,
-      "note": "兼容性最好，同画质体积最大"
+      "note": "兼容性最好，同画质体积最大；fMP4 带 tfdt，seek 后 hls.js 才能算准分片时长"
     },
     {
       "key": "h265",

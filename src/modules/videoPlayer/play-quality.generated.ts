@@ -22,7 +22,7 @@ export const PLAY_QUALITY_PRESETS = [
 export type PlayPreset = (typeof PLAY_QUALITY_PRESETS)[number]['key'];
 
 export const PLAY_CODECS = [
-  { key: 'h264', label: 'H.264 / AVC', container: 'mpegts', bitrateFactor: 1 },
+  { key: 'h264', label: 'H.264 / AVC', container: 'fmp4', bitrateFactor: 1 },
   { key: 'h265', label: 'H.265 / HEVC', container: 'fmp4', bitrateFactor: 0.6 },
   { key: 'av1', label: 'AV1', container: 'fmp4', bitrateFactor: 0.5 },
 ] as const;

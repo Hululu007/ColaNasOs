@@ -51,6 +51,13 @@ function findFfmpeg() {
   return null;
 }
 
+/** 读 fMP4 分片第一处 `tfdt` 的 baseMediaDecodeTime（0 = 时间轴从 0 起）。 */
+function readTfdt(buf) {
+  const i = buf.indexOf(Buffer.from('tfdt'));
+  if (i < 0 || i + 12 > buf.length) return null;
+  return buf[i + 4] === 1 ? Number(buf.readBigUInt64BE(i + 8)) : buf.readUInt32BE(i + 8);
+}
+
 process.chdir(root);
 
 (async () => {
@@ -384,6 +391,34 @@ process.chdir(root);
       if (job && job.status === 'done') {
         check('session_segments', job.segments >= 1, 'segments=' + job.segments);
         check('session_url', job.url.startsWith(`/api/v1/player/hls/${id}/index.m3u8?t=`), job.url);
+
+        // 默认编码 h264 的封装也必须是 fMP4（2026-11-16 起统一，以前是 MPEG-TS）。
+        // 动机：TS 的 PTS 从 1.483s 起、每片再 +2s，静态列表的 EXTINF 却是
+        // 0/2/4…，hls.js 按列表建的 buffer 与分片时间戳差一拍 → 拖进度条后卡住。
+        // fMP4 的 tfdt 从 0 起、逐片 +2s，与 EXTINF 对齐。下面顺带把 tfdt 钉死。
+        check('session_container_h264', job.container === 'fmp4', 'container=' + job.container);
+        if (job.container === 'fmp4') {
+          const pl0 = await inject('GET', job.url);
+          const firstSeg = String(pl0.body)
+            .split('\n')
+            .find((l) => l && !l.startsWith('#'));
+          check(
+            'h264_playlist_fmp4_map',
+            pl0.statusCode === 200 &&
+              pl0.body.includes('#EXT-X-MAP') &&
+              String(firstSeg || '').includes('.m4s'),
+            `status=${pl0.statusCode} seg=${String(firstSeg || '').slice(0, 40)}`,
+          );
+          // tfdt == 0：分片时间轴必须从 0 起（否则播放器 buffer 对不上 currentTime）
+          const seg0 = await inject('GET', `/api/v1/player/hls/${id}/${firstSeg}`);
+          const raw = seg0.rawPayload;
+          const tfdt = Buffer.isBuffer(raw) ? readTfdt(raw) : null;
+          check(
+            'h264_first_segment_tfdt_zero',
+            tfdt === 0,
+            `tfdt=${tfdt} status=${seg0.statusCode}`,
+          );
+        }
 
         // 响度归一：库开关打开后转码仍必须成功 —— 滤镜名或参数写错会直接 failed，
         // 所以这条同时验证了「库开关 → pump → sidecar → ffmpeg -af」这条链是通的

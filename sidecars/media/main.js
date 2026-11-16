@@ -499,11 +499,14 @@ function escapeFilterPath(p) {
   return p.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "\\'");
 }
 
-/** HLS 转码：`dir` 下产出 index.m3u8 + seg%05d.ts（6 s 一片，VOD 播放列表） */
 /**
- * HLS 转码：h264 → MPEG-TS；h265 / av1 → fMP4（**必须带 EXT-X-MAP**）。
+ * HLS 转码：产物统一 fMP4（**必须带 EXT-X-MAP**），h264 / h265 / av1 都是。
  *
- * 背景：AV1 in MPEG-TS 实测无法解析；H.265 没有初始化段时播放器起播会失败。
+ * 背景：AV1 / HEVC in MPEG-TS 本来就不稳；h264 以前走 MPEG-TS，但 TS 的 PTS
+ * 从 1.483s 起、每片再 +2s，与静态列表的 EXTINF（0/2/4…）错开一拍，
+ * hls.js 按列表建的 buffer 和分片时间戳对不上，seek 后容易卡住。
+ * fMP4 的 tfdt 从 0 起、逐片 +2s，与 EXTINF 完全一致（实测见
+ * docs/进度与下一步.md §159.8）。
  * 失败自动降级回 h264（兼容性优先），并在返回值里带回实际使用的编码与容器，
  * 便于上层显示与排障（不静默假装成功）。
  */
@@ -942,7 +945,7 @@ async function hls(params) {
     if (canceledHls.has(dir)) {
       throw Object.assign(new Error('ffmpeg canceled'), { code: 'E_CANCELED' });
     }
-    // 封装由契约决定：h265 / av1 → fMP4（带 EXT-X-MAP），h264 → MPEG-TS
+    // 封装由契约决定：h264 / h265 / av1 统一 fMP4（带 EXT-X-MAP）
     const container =
       (PLAY_QUALITY.codecs.find((c) => c.key === codec) || {}).container || 'mpegts';
     const fmp4 = container === 'fmp4';

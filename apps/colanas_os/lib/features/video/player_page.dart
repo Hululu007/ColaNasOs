@@ -3064,8 +3064,8 @@ class _PlayerPageState extends State<PlayerPage> {
     await _openUrl(_url, retries: 3);
   }
 
-  /// 换到 H.264 重新建会话。DV / 10-bit 片源在 AV1(fMP4) 下跨段会解不出分片，
-  /// H.264 走 mpegts 最稳，用户不必退出播放页就能自救。
+  /// 换到 H.264 重新建会话。DV / 10-bit 片源在 AV1 下跨段会解不出分片，
+  /// H.264 兼容性最好（现在也是 fMP4），用户不必退出播放页就能自救。
   Future<void> _retryWithH264() async {
     if (widget.itemId == null) return;
     setState(() => _error = null);

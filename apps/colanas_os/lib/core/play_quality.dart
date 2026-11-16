@@ -53,7 +53,7 @@ class PlayQualityPreset {
   String get bitrateLabel => bitrateLabelFor('h264');
 }
 
-/// 输出编码：h264 → MPEG-TS；h265 / av1 → fMP4（带 EXT-X-MAP）。
+/// 输出编码：h264 / h265 / av1 统一 fMP4（带 EXT-X-MAP）。
 class PlayCodec {
   const PlayCodec({
     required this.key,
@@ -65,7 +65,7 @@ class PlayCodec {
   final String key;
   final String label;
 
-  /// mpegts / fmp4（与服务端实际封装一致）。
+  /// 实际封装（fmp4 / mpegts，与服务端一致；2026-11-16 起统一 fmp4）。
   final String container;
 
   /// 同画质下相对 H.264 的码率系数（1.0 / 0.6 / 0.5），用于估算流量。
@@ -247,7 +247,7 @@ const List<PlayCodec> playCodecs = <PlayCodec>[
     PlayCodec(
       key: 'h264',
       label: 'H.264 / AVC',
-      container: 'mpegts',
+      container: 'fmp4',
       bitrateFactor: 1,
     ),
     PlayCodec(

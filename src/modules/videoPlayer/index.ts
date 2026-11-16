@@ -270,9 +270,10 @@ async function buildStaticVodPlaylist(
 ): Promise<string | null> {
   const totalMs = await sourceDurationMsOf(k, row.item_id);
   const actual = actualCodecOf(k, session);
-  const codec = actual.codec || row.codec || 'h264';
-  const container =
-    actual.container || row.container || (codec === 'h264' ? 'mpegts' : 'fmp4');
+  // 三个编码统一 fMP4（2026-11-16）：MPEG-TS 的 PTS 从 1.48s 起、每片再 +2s，
+  // 与静态列表的 EXTINF（0/2/4…）对不上，hls.js 按播放列表建的 buffer 与实际
+  // 分片时间戳差一拍，seek 后容易卡住；fMP4 的 tfdt 从 0 起、逐片 +2s，正好一致。
+  const container = actual.container || row.container || 'fmp4';
   const fmp4 = container === 'fmp4';
   const ext = fmp4 ? 'm4s' : 'ts';
   const leadMs = Math.max(0, Number(row.lead_ms) || 0);
@@ -512,7 +513,7 @@ async function runJob(k: KernelApi, job: SessionRow): Promise<void> {
       update player_sessions
       set status = ${more ? (keepGoing ? 'pending' : 'paused') : 'done'}, segments = ${segments},
           codec = ${res.codec ?? effectiveCodec},
-          container = ${res.container ?? 'mpegts'},
+          container = ${res.container ?? 'fmp4'},
           updated_at = ${now()}
       where id = ${job.id} and status <> 'canceled'
     `.execute(k.db);
@@ -574,7 +575,7 @@ function hasPlayablePlaylist(k: KernelApi, id: string): boolean {
     } catch {
       // 整片单目录还没有列表，继续看分段
     }
-    let names: string[] = [];
+    let names: string[];
     try {
       names = fs.readdirSync(root).filter((n) => /^p\d+$/.test(n));
     } catch {
