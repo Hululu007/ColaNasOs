@@ -216,6 +216,30 @@ const transcodedMsOf = (parts: PlaylistPart[]) =>
   parts.reduce((sum, p) => sum + playlistDurationMs(p.text), 0);
 
 /**
+ * `lead_ms=0`（用户选「整片一次转完」）时产物在**会话根目录**，没有 p0/p1。
+ * 以前这里只走 `partsOf`，根目录列表永远读不到 → `transcodedMs` 恒为 0，
+ * 客户端认为「已转出 0 秒」：每次拖进度条都新建会话（连往回拖也新建），
+ * 首片等待也永远超时。整片模式同样要把根 index.m3u8 当成一段。
+ */
+function wholePlaylistOf(k: KernelApi, id: string): PlaylistPart[] {
+  const roots = [sessionDirOf(k, id), path.join(k.paths.dataDir, 'hls', id)];
+  for (const root of roots) {
+    try {
+      const text = fs.readFileSync(path.join(root, 'index.m3u8'), 'utf8');
+      if (text.includes('#EXTINF')) return [{ name: '', text }];
+    } catch {
+      // 还没写出首片
+    }
+  }
+  return [];
+}
+
+/** 按会话模式取「已产出的播放列表」：分段取 pN，整片取根目录。 */
+function producedPartsOf(k: KernelApi, id: string, leadMs: number): PlaylistPart[] {
+  return leadMs > 0 ? partsOf(k, id) : wholePlaylistOf(k, id);
+}
+
+/**
  * HLS 分片时长（毫秒）。必须与 sidecar 的 `-hls_time` 完全一致，
  * 否则静态播放列表的 EXTINF / 分片编号会和实际产物错位（seek 会漂）。
  *
@@ -431,7 +455,7 @@ async function runJob(k: KernelApi, job: SessionRow): Promise<void> {
     // 起转位置：>0 表示这个会话是从片源中途开始的（进度条跳到了未转码的位置）。
     // 每段都是「从片头算」的绝对位置，所以 seekMs 一律是 startMs + 已转出长度。
     const startMs = Math.max(0, Number(job.start_ms) || 0);
-    const parts = leadMs > 0 ? partsOf(k, job.id) : [];
+    const parts = producedPartsOf(k, job.id, leadMs);
     const alreadyMs = transcodedMsOf(parts);
     const transcodedMs = startMs + alreadyMs;
     const totalMs = leadMs > 0 ? await sourceDurationMsOf(k, job.item_id) : 0;
@@ -470,7 +494,7 @@ async function runJob(k: KernelApi, job: SessionRow): Promise<void> {
     );
     // 这一段转完：片源还没到头就标 paused，等播放位置靠近了再续下一段。
     // 这样用户看 10 分钟就关掉，服务端最多只多转一个 leadMs，不会再烧整片。
-    const doneParts = leadMs > 0 ? partsOf(k, job.id) : [];
+    const doneParts = producedPartsOf(k, job.id, leadMs);
     // 已转出的是「片源里的绝对位置」：起点偏移 + 各段时长之和。
     const doneMs = startMs + transcodedMsOf(doneParts);
     const more = leadMs > 0 && totalMs > 0 && doneMs < totalMs - 1000; 
@@ -1067,7 +1091,7 @@ export const videoPlayer: ServerModule = {
         }
         const leadMs = Math.max(0, Number(row.lead_ms) || 0);
         const startMs = Math.max(0, Number(row.start_ms) || 0);
-        const parts = leadMs > 0 ? partsOf(k, row.id) : [];
+        const parts = producedPartsOf(k, row.id, leadMs);
         // 对内对外都按「片源绝对位置」算：起转偏移 + 各段时长之和。
         const doneMs = transcodedMsOf(parts);
         const transcodedMs = startMs + doneMs;

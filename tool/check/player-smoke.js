@@ -367,6 +367,13 @@ process.chdir(root);
         job && job.leadMs === 0,
         `leadMs=${job && job.leadMs}`,
       );
+      // 整片模式（lead=0）的产物在会话根目录，没有 p0/p1；进度必须仍能上报，
+      // 否则客户端认为「已转出 0 秒」，往回拖也会新建会话（2026-11-16 Web 实测）。
+      check(
+        'session_full_progress',
+        job && Number(job.transcodedMs) - Number(job.startedMs || 0) >= 1000,
+        `transcoded=${job && job.transcodedMs} started=${job && job.startedMs}`,
+      );
       check(
         'session_actual_codec',
         echoes.length > 0 && echoes.every((x) => x.file === x.api),
