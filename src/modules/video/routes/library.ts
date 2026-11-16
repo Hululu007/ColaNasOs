@@ -186,17 +186,22 @@ export async function registerVideoLibrary(
       const id = newId();
       const now = Math.floor(Date.now() / 1000);
       const primary = normalized[0];
+      // 只有电影 / 电视剧库默认勾上「首页显示」和「搜刮」。图片库、混合库、
+      // 番号库默认全关：新建一个图库不该自动联网刮削（浪费带宽、把无关条目
+      // 写进首页）。要开就在库设置里手动勾，建库时不做这个决定。
+      const screenLib = libType === 'movie' || libType === 'tv';
       await sql`
         insert into video_libraries
           (id, name, root_path, created_at, last_scan_at, items, lib_type, jp_movie,
            conn_type, host, share, sub_path, unc_path, smb_user, smb_password_enc,
-           online_state, online_checked_at)
+           online_state, online_checked_at, show_in_home, scrape_enabled)
         values (${id}, ${name}, ${primary.root_path}, ${now}, null, 0, ${libType},
                 ${libType === 'jp_movie' ? 1 : 0},
                 ${primary.conn_type}, ${primary.host}, ${primary.share}, ${primary.sub_path},
                 ${primary.unc_path}, ${primary.smb_user},
                 ${primary.password_plain ? sealSmbPassword(primary.password_plain) : null},
-                ${ONLINE_UNKNOWN}, null)
+                ${ONLINE_UNKNOWN}, null,
+                ${screenLib ? 1 : 0}, ${screenLib ? 1 : 0})
       `.execute(k.db);
       const sources = await replaceSources(k.db, id, normalized, sealSmbPassword);
 
@@ -586,11 +591,39 @@ export async function registerVideoLibrary(
           delete from jp_actor_items
            where item_id in (select id from video_items where library_id = ${lib.id})
         `.execute(trx);
+        // 播放进度 / 已看标记 / 收藏 / 合集条目都挂在 item_id 上：条目没了，
+        // 这些行只会变成点进去 404 的幽灵。以前只删 video_items，实测留下过
+        // 5313 条孤儿（用户「扫到一半把库删了」那条路径）。
+        await sql`
+          delete from video_progress
+           where item_id in (select id from video_items where library_id = ${lib.id})
+        `.execute(trx);
+        await sql`
+          delete from video_watch
+           where item_id in (select id from video_items where library_id = ${lib.id})
+        `.execute(trx);
+        await sql`
+          delete from video_favorites
+           where item_id in (select id from video_items where library_id = ${lib.id})
+        `.execute(trx);
+        await sql`
+          delete from video_collection_items
+           where item_id in (select id from video_items where library_id = ${lib.id})
+        `.execute(trx);
         await sql`delete from video_items where library_id = ${lib.id}`.execute(trx);
         await sql`delete from image_items where library_id = ${lib.id}`.execute(trx);
         await sql`delete from video_library_sources where library_id = ${lib.id}`.execute(trx);
         await sql`delete from video_libraries where id = ${lib.id}`.execute(trx);
       });
+
+      // 正在跑的扫描任务必须一起取消：worker 不会检查库还在不在，继续跑会把
+      // 刚删掉的条目又 insert 回来（这就是「删了库还留一堆孤儿」的来源）。
+      await sql`
+        update tasks set state = 'canceled', finished_at = ${Date.now()}
+         where type = 'video.scan'
+           and state in ('pending', 'running', 'paused')
+           and payload like ${'%' + lib.id + '%'}
+      `.execute(k.db);
 
       void h.libWatch.refresh();
       return { ok: true };

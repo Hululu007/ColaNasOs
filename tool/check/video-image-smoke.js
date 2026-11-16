@@ -101,6 +101,15 @@ const PNG = Buffer.from(
 
   const imageLib = await createLib('Images', '/imgs', 'image');
   const mixedLib = await createLib('Mixed', '/mixed', 'mixed');
+  // 图片 / 混合库默认不勾「首页显示」（新建库的默认值只给 movie / tv），
+  // 这一组断言测的是「显示在首页时」的封面 / 最近添加 / stats 口径，
+  // 所以在这里显式打开；下面 hide_in_home_* 会再关掉做反向验证。
+  await app.inject({
+    method: 'POST',
+    url: '/api/v1/video/libraries/flags',
+    headers: bearer,
+    payload: { id: imageLib.id, showInHome: true },
+  });
   const scanImage = await scan(imageLib.id);
   check('image_scan', scanImage.images === 3, 'images=' + scanImage.images);
   const scanMixed = await scan(mixedLib.id);

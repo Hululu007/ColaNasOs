@@ -1,6 +1,7 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart'
+    show kIsWeb, defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
@@ -861,9 +862,12 @@ class _PlayerPageState extends State<PlayerPage> {
     // 但画面帧出不来（用户看到的就是「有声音、画面停住」）。
     // 所以再要求「播放位置真的往前走了」，否则一律按播不了处理。
     if (w > 0 && advanced > const Duration(seconds: 2)) return;
-    // 兜底档同样保分辨率：4K 片直连失败不该跳成 1080P（用户选的是原画）。
+    // 兜底档：桌面端保分辨率（4K 直连失败不该跳成 1080P），手机 / Web / TV
+    // 退到用户偏好档 —— 手机上 4K 7M 在移动网络里就是「一直缓冲 + 软解跟不上」。
     final fallback = _transcodeFallback();
-    await _switchQuality(fallback, codec: _codec);
+    // persist: false —— 这是自动兜底，不能写进用户偏好。存下来的结果就是
+    // 「下次一进播放页直接从 4K 7M 起步」，用户再也调不回来。
+    await _switchQuality(fallback, codec: _codec, persist: false);
     if (!mounted) return;
     _showNotice(
       tr('player.directFailed', {
@@ -1130,8 +1134,20 @@ class _PlayerPageState extends State<PlayerPage> {
   /// 因为电视解码 / 网络更脆弱，1080P 3M 的起播和拖动都更稳。
   String _transcodeFallback({String? codec}) {
     final c = codec ?? _codec;
-    if (kIsWeb || _tvMode) {
-      return clampPresetForSource(defaultPlayPreset, _srcHeight, codec: c);
+    // 手机 / 平板（安卓、iOS）：网络和解码都比桌面脆。实测 4K 源退到「保分辨率」
+    // 的 4K 7M，在移动网络里就是一直缓冲，而且 4K HEVC / AV1 软解根本跟不上
+    // —— 用户看到的是「进度条加载完了还在卡、看几秒停一下，等一分钟再几秒」。
+    // 所以这里按**用户偏好档**回落（没存过才用默认档），绝不主动抬码率。
+    final handheld =
+        !kIsWeb &&
+        (defaultTargetPlatform == TargetPlatform.android ||
+            defaultTargetPlatform == TargetPlatform.iOS);
+    if (kIsWeb || _tvMode || handheld) {
+      final pref = PlayPreferences.savedPreset;
+      final base = (pref == null || pref == 'original')
+          ? defaultPlayPreset
+          : pref;
+      return clampPresetForSource(base, _srcHeight, codec: c);
     }
     return fallbackPresetPreservingHeight(_srcHeight, codec: c);
   }
@@ -1220,7 +1236,11 @@ class _PlayerPageState extends State<PlayerPage> {
     }
   }
 
-  Future<void> _switchQuality(String preset, {String? codec}) async {
+  Future<void> _switchQuality(
+    String preset, {
+    String? codec,
+    bool persist = true,
+  }) async {
     final messenger = ScaffoldMessenger.maybeOf(context);
     // 本机解不出来的编码先回落 H.264：界面标签也要跟着回落，
     // 否则会显示「已切到 AV1」而实际跑的是 264。
@@ -1328,8 +1348,10 @@ class _PlayerPageState extends State<PlayerPage> {
         _codec = targetCodec;
         _isTranscode = !toDirect;
       });
-      // 偏好仍记用户点的那个档位：下一部片能直链时「原画」就该直链
-      await PlayPreferences.save(preset: preset, codec: targetCodec);
+      // 只有用户自己点的档位才写进偏好。自动降级（原画黑屏兜底、编码回落）
+      // 也存下来的话，下一次进播放页会直接从 4K 7M 起步 —— 手机上就是
+      // 「明明设了 1080P 0.9M，一播又变 4K 7M」。
+      if (persist) await PlayPreferences.save(preset: preset, codec: targetCodec);
     } catch (e) {
       // 切换失败：把界面回滚到切换前的档位/编码，别让菜单显示一个没跑起来的档
       if (mounted) {

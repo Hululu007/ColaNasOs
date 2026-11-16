@@ -214,6 +214,8 @@ export const MIGRATION_ORDER: readonly string[] = Object.freeze([
   '176_photo_growth',
   // 相册同源目录复用：来源共享关系 + 账号作用域视图 + 按账号的收藏/回收站状态
   '177_photo_shared_source',
+  // 清「库已删除但条目还在」的孤儿（删库没清残留 + 扫描中途写回的历史脏数据）
+  '178_video_orphan_purge',
 ]);
 
 export interface OrderCheck {

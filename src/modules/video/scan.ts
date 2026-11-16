@@ -492,6 +492,15 @@ async function scanOneSource(
     for (const p of probed) if (p.meta.durationMs !== null) result.probed += 1;
 
     for (let i = 0; i < probed.length; i += UPSERT_BATCH) {
+      // 用户可能在扫描中途把库删了：库行没了就别再写，否则会留下
+      // `library_id` 指向已删库的孤儿条目（实测留下过 5313 条，永远没人清）。
+      const alive = await sql`
+        select 1 as ok from video_libraries where id = ${lib.id}
+      `.execute(db);
+      if (!alive.rows.length) {
+        // 库已被删除：不再写入。缺片列表也交空 —— 库里已经没有条目可 prune。
+        return { result, missingVideo: [], missingImage: [] };
+      }
       const chunk = probed.slice(i, i + UPSERT_BATCH);
       await db.transaction().execute(async (trx: any) => {
         for (const p of chunk) {
@@ -582,6 +591,13 @@ async function scanOneSource(
     });
 
     for (let i = 0; i < metas.length; i += UPSERT_BATCH) {
+      // 同上：库被删就停，别往已删的库里塞图片条目
+      const alive = await sql`
+        select 1 as ok from video_libraries where id = ${lib.id}
+      `.execute(db);
+      if (!alive.rows.length) {
+        return { result, missingVideo: [], missingImage: [] };
+      }
       const chunk = metas.slice(i, i + UPSERT_BATCH);
       await db.transaction().execute(async (trx: any) => {
         for (const p of chunk) {

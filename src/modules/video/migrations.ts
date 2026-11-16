@@ -792,4 +792,36 @@ export const VIDEO_MIGRATIONS: Migration[] = [
         }
       },
     },
+    {
+      // 清掉「库已删除、条目还在」的孤儿。
+      //
+      // 2026-11-16 实测：用户库里躺着 5313 条 `library_id` 指向已删库的条目。
+      // 成因是「扫到一半把库删了」—— 删除逻辑删的是当时已有的行，正在跑的
+      // 扫描任务随后又 insert 回来。删除路径已补「取消任务 + 清关联表」，
+      // 扫描写入也加了「库不存在就中止」，这里负责清历史遗留（幂等，跑一次）。
+      id: '178_video_orphan_purge',
+      async up(db) {
+        await sql.raw(`
+          delete from video_items
+           where library_id not in (select id from video_libraries)
+        `).execute(db);
+        await sql.raw(`
+          delete from image_items
+           where library_id not in (select id from video_libraries)
+        `).execute(db);
+        // 关联表里指向已不存在条目的行一并清掉（条目没了，留着的只是幽灵）
+        for (const table of [
+          'video_progress',
+          'video_watch',
+          'video_favorites',
+          'video_collection_items',
+        ] as const) {
+          await sql.raw(`
+            delete from ${table}
+             where item_id not in (select id from video_items)
+               and item_id not in (select id from image_items)
+          `).execute(db);
+        }
+      },
+    },
 ];
