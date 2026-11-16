@@ -246,6 +246,20 @@ class _PlayerPageState extends State<PlayerPage> {
   /// 正在按目标位置重建会话（跳到未转码区），期间忽略再次拖动。
   bool _jumping = false;
 
+  /// 用户「想让它播」的意图：true = 应该在播（含正在缓冲），false = 用户自己按了暂停。
+  ///
+  /// 为什么需要它：media_kit 的 Web 实现里 `open()` 是同步的两步 ——
+  /// `element.pause()` 紧跟 `element.play()`，两个 Promise 在同一个事件循环里
+  /// 竞态，Chrome 经常把 play() 判成 `interrupted by a call to pause` 直接拒绝。
+  /// media_kit 只把这个拒绝丢进 error 流，而客户端在刚 open 的 3 秒内把这类错误
+  /// 当「自己换流造成的」直接忽略 —— 于是画面停在暂停，等用户手点。
+  /// 有了这个标志就能在 open / 换档 / 跳转后主动补播，同时不抢用户的暂停。
+  bool _wantPlay = true;
+
+  /// [_resumeIfIdle] 的去抖时间戳：buffering 一开一关会连续发事件，
+  /// 每次关都 play() 会和新一次缓冲打架。
+  DateTime? _lastResumeAt;
+
   /// 最近一次 seek / 重新 open 的时间。
   ///
   /// 浏览器换 src / seek 时会主动中断上一个 `play()`，抛
@@ -365,6 +379,17 @@ class _PlayerPageState extends State<PlayerPage> {
       _player.stream.playing.listen((playing) {
         // TV 的播放/暂停按钮图标要跟着变（索引式控制层不是 StreamBuilder）
         if (mounted && _tvMode) setState(() {});
+        // 播放器自己停了、而用户并没有按过暂停（[_wantPlay] 仍为 true）：
+        // 典型就是拖进度条触发换源后浏览器把这次播放丢了。补一次，别让人手点。
+        // 用户点暂停时 `_togglePlay` 会先把 _wantPlay 置 false，所以不会抢。
+        if (!playing &&
+            mounted &&
+            _wantPlay &&
+            !_jumping &&
+            !_switching &&
+            !_player.state.completed) {
+          unawaited(_resumeIfIdle('playing 掉了'));
+        }
         ClientLogger.instance.info(
           'playing=$playing',
           route: 'player.state/${_sessionId ?? 'direct'}',
@@ -377,6 +402,16 @@ class _PlayerPageState extends State<PlayerPage> {
           'buffering=$buffering',
           route: 'player.state/${_sessionId ?? 'direct'}',
         );
+        // 「缓冲几秒、数据够了却不自己播」正是用户报的现象：换源 / seek 会把
+        // 浏览器那次 play() 打断，media_kit 只把它塞进 error 流，没人再补。
+        // 缓冲结束后如果仍然没在播、而用户意图是播（[_wantPlay]），补一次。
+        if (!buffering &&
+            mounted &&
+            _wantPlay &&
+            !_player.state.playing &&
+            !_player.state.completed) {
+          unawaited(_resumeIfIdle('缓冲结束'));
+        }
       }),
     );
     _logSubs.add(
@@ -405,6 +440,9 @@ class _PlayerPageState extends State<PlayerPage> {
       // 不是播放失败：既不重开（会再次打断新的 play()），也不显示错误页。
       // 以前它走良性重试，4 次后把错误页摆上来 → 与视频交替出现，就是一直闪。
       if (_isPlayInterrupted(message)) {
+        // 但这次中断把「本来要播」的请求也吞掉了：换源 / seek 之后浏览器
+        // 不会自己再 play，画面就停在暂停等手点。补一次（用户按过暂停才不补）。
+        unawaited(_resumeIfIdle('play 被打断'));
         return;
       }
       if (_isBenignPlaybackError(message)) {
@@ -594,10 +632,14 @@ class _PlayerPageState extends State<PlayerPage> {
     Duration? seekTo,
     int retries = 0,
     bool resetBenignRetries = true,
+    bool? autoPlay,
   }) async {
     _url = u;
     _lastOpenAt = DateTime.now();
     final openSw = Stopwatch()..start();
+    // 要不要在打开后自动播：默认沿用用户意图（跳转 / 首播 = 想播，暂停中换档 = 不想播）
+    final want = autoPlay ?? _wantPlay;
+    if (want) _wantPlay = true;
     // 色调映射 / dither 必须在 open 之前生效，否则第一个 HDR 帧就按 mpv 默认
     // （hdr-compute-peak=no）渲染，出现「开头几秒发灰、后面才对」。
     await _renderReady;
@@ -609,7 +651,9 @@ class _PlayerPageState extends State<PlayerPage> {
     try {
       // 视频也带声音：开播前先让音乐 / 播客 / 音色试听让路
       await AudioFocus.instance.request(_player, () async => _player.pause());
-      await _player.open(Media(u));
+      // `play: want` 显式给意图：media_kit 的默认值是 true，换档时如果用户
+      // 本来是暂停状态（在挑画质），默认值会莫名其妙自己播起来。
+      await _player.open(Media(u), play: want);
       ClientLogger.instance.info(
         'open 完成 ${openSw.elapsedMilliseconds}ms',
         route: 'player.open/${_sessionId ?? 'direct'}',
@@ -634,6 +678,9 @@ class _PlayerPageState extends State<PlayerPage> {
       // 永远走不到 _benignRetries >= 2，黑屏且不显示任何错误。
       if (resetBenignRetries) _benignRetries = 0;
       if (mounted) setState(() => _error = null);
+      // 见 _ensurePlayingAfterOpen：Web 上 open() 内部的 pause→play 竞态会把
+      // 这次播放静默吞掉，必须补一轮，否则画面停在暂停等用户手点。
+      if (want) unawaited(_ensurePlayingAfterOpen());
       // 直连保底：libmpv 解不了的容器/编码（典型 MKV + HEVC 10bit / DV）不会报错，
       // 而是「有声音、画面停在首帧」。8 秒还拿不到视频尺寸就自动切回转码。
       if (!_isTranscode) unawaited(_guardDirectPlayback());
@@ -651,11 +698,77 @@ class _PlayerPageState extends State<PlayerPage> {
       if (retries > 0 && _isTranscode && mounted) {
         await Future<void>.delayed(const Duration(milliseconds: 2000));
         if (!mounted) return;
-        return _openUrl(u, seekTo: seekTo, retries: retries - 1);
+        return _openUrl(u, seekTo: seekTo, retries: retries - 1, autoPlay: want);
       }
       if (mounted) setState(() => _error = e.toString());
       _renewIfTokenExpired(e.toString());
     }
+  }
+
+  /// open() 之后核对「到底播起来没有」，没播就补 play()。
+  ///
+  /// Web 端 `open()` 内部是 `element.pause()` 紧跟 `element.play()`，两个 Promise
+  /// 在同一个事件循环里竞态：Chrome 常把 play() 判成 `interrupted by a call to
+  /// pause` 并拒绝。media_kit 只把这个拒绝塞进 error 流，而客户端在「刚 open /
+  /// 刚 seek 的 3 秒内」把这类错误当自己换流造成的静默忽略 —— 结果画面停在暂停，
+  /// 用户只能手点。跳转尤其明显：新会话要等 3~8s 首片，用户手势早过期了。
+  ///
+  /// 只在用户意图是「播」时动手（[_wantPlay]），不会把用户按的暂停顶掉；
+  /// 有新的跳转 / 换档在进行时直接让位，免得和新的 open 抢同一个元素。
+  Future<void> _ensurePlayingAfterOpen() async {
+    for (var i = 0; i < 5; i += 1) {
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      if (!mounted) return;
+      // 这里必须 continue 不能 return：这个方法是在 `_openUrl` 内部启动的，
+      // 那一刻 `_jumping` 还是 true（`_jumpTo` 要等 open 返回才清标志）。
+      // 以前直接 return，等于每次跳转都白白放弃补播 —— 拖完停在暂停的根因之一。
+      if (_jumping || _switching) continue;
+      if (!_wantPlay) return;
+      if (_player.state.playing || _player.state.completed) return;
+      // 正在拉流（buffering）说明这次播放请求已经被接受，插一脚只会打断它
+      if (_player.state.buffering) continue;
+      final pos = _player.state.position;
+      await _player.play();
+      ClientLogger.instance.info(
+        '补播 play() #${i + 1} pos=${pos.inMilliseconds}ms',
+        route: 'player.resume/${_sessionId ?? 'direct'}',
+      );
+    }
+  }
+
+  /// 用户点了播放 / 暂停（控制条、空格、遥控器、手势都走这里）。
+  ///
+  /// 统一入口只为记下「用户到底想不想播」：[_ensurePlayingAfterOpen] 靠它
+  /// 决定要不要补播 —— 用户主动按的暂停必须尊重，浏览器自己丢掉的那次播放才补。
+  void _togglePlay() {
+    // buffering 时 `playing` 是 false，但用户此刻按的显然是「暂停」
+    final nowPlaying = _player.state.playing || _player.state.buffering;
+    _wantPlay = !nowPlaying;
+    _player.playOrPause();
+  }
+
+  /// 缓冲刚结束 / 换流之后，播放器没在播就补一次 play（800ms 内只补一次）。
+  ///
+  /// 用户的原话是「加载了几秒可以播了，就要继续播呀」—— 数据够了但没人按
+  /// play，画面就停在那儿。这里把「补播」收成一个入口，日志统一打
+  /// `player.resume/...`，真出问题能直接从日志看出补了几次。
+  Future<void> _resumeIfIdle(String why) async {
+    final now = DateTime.now();
+    final last = _lastResumeAt;
+    if (last != null && now.difference(last) < const Duration(milliseconds: 800)) {
+      return;
+    }
+    if (!mounted || _jumping || _switching || !_wantPlay) return;
+    // 还没装过播放地址（首帧之前的初始 playing=false）时没得补
+    if (_url.isEmpty) return;
+    if (_player.state.playing || _player.state.completed) return;
+    _lastResumeAt = now;
+    final pos = _player.state.position;
+    await _player.play();
+    ClientLogger.instance.info(
+      '补播 play() [$why] pos=${pos.inMilliseconds}ms',
+      route: 'player.resume/${_sessionId ?? 'direct'}',
+    );
   }
 
   /// 浏览器换 src / seek 时主动中断上一个 `play()` 的 DOMException。
@@ -1163,6 +1276,9 @@ class _PlayerPageState extends State<PlayerPage> {
       );
     }
     final pos = _absPosition(_player.state.position);
+    // 换档前记下「当时是不是在播」：暂停中挑画质的人，换完还应该停在暂停，
+    // 别因为 open 默认 play=true 自己响起来；在播的人则必须无缝续上。
+    final wasPlaying = _player.state.playing || _player.state.buffering;
     // 先把档位/编码写进界面，再去等服务端首片：新会话要 8~12s 才出片，
     // 码率列表不能等它 —— 以前 `_codec` 要等 open 成功才更新，切完打开菜单
     // 还是旧的 1080P 8M（H.264 码率），看起来像「切了没生效」。
@@ -1204,6 +1320,7 @@ class _PlayerPageState extends State<PlayerPage> {
         u,
         seekTo: toDirect ? pos : null,
         retries: toDirect ? 0 : 3,
+        autoPlay: wasPlaying,
       );
       if (!mounted) return;
       setState(() {
@@ -1226,6 +1343,9 @@ class _PlayerPageState extends State<PlayerPage> {
       }
     } finally {
       if (mounted) setState(() => _switching = false);
+      // 换档也是在播状态下的换源：open 期间那次 play() 被打断，这里补回来。
+      // 原本就是暂停的（wasPlaying=false）不动，尊重用户的选择。
+      if (wasPlaying && mounted) unawaited(_resumeIfIdle('换档完成'));
     }
   }
 
@@ -1696,6 +1816,9 @@ class _PlayerPageState extends State<PlayerPage> {
       if (_isTranscode && limit > Duration.zero && t > limit) t = limit;
       await _player.seek(t);
       _poke();
+      // Web 上 seek 会把当前 play() 打断（"interrupted by a new load request"），
+      // 浏览器不会自己续上；想让位置动起来只能显式再 play。仅当用户意图是播。
+      if (_wantPlay) unawaited(_ensurePlayingAfterOpen());
       return;
     }
     if (seekNeedsJump(target: t, start: _startOffset, loadedEnd: _loadedEnd)) {
@@ -1708,6 +1831,7 @@ class _PlayerPageState extends State<PlayerPage> {
       if (over > Duration.zero && over <= const Duration(seconds: 30)) {
         await _player.seek(t - _startOffset);
         _poke();
+        if (_wantPlay) unawaited(_ensurePlayingAfterOpen());
         _nudgeTranscode(t);
         return;
       }
@@ -1716,6 +1840,7 @@ class _PlayerPageState extends State<PlayerPage> {
     }
     await _player.seek(t - _startOffset);
     _poke();
+    if (_wantPlay) unawaited(_ensurePlayingAfterOpen());
   }
 
   /// 小幅跳转后立刻上报目标位置，让服务端马上续转，不用等 3s 轮询。
@@ -1746,8 +1871,10 @@ class _PlayerPageState extends State<PlayerPage> {
         // 跳转会话同样按段转（跟随偏好，默认 3 分钟）：整片模式已取消，
         // 而且目标位置之后通常只占几分钟，没必要从头铺到头。
       );
-      // 新播放列表的时间轴 0 就是 target，不能再 seekTo（否则会跳过 target 那一段）
-      await _openUrl(u, retries: 3);
+      // 新播放列表的时间轴 0 就是 target，不能再 seekTo（否则会跳过 target 那一段）。
+      // autoPlay: true —— 拖进度条的人一定是想继续看，浏览器把自己的 play() 丢掉时
+      // 要在这里补回来，不能让人手动点第二次。
+      await _openUrl(u, retries: 3, autoPlay: true);
       _poke();
     } catch (e) {
       if (messenger != null && mounted) {
@@ -1757,6 +1884,12 @@ class _PlayerPageState extends State<PlayerPage> {
       if (mounted) setState(() => _jumping = false);
       final next = _pendingJump;
       _pendingJump = null;
+      if (next == null && mounted) {
+        // 跳转收尾：新会话 open 期间那次 play() 会被「media removed / new load」
+        // 打断，浏览器不会自己再补。这里等 _jumping 清掉后补一次，
+        // 否则用户拖完进度条看到的就是「数据都加载好了，却停在暂停」。
+        unawaited(_resumeIfIdle('跳转完成'));
+      }
       if (next != null && mounted) {
         // 让当前这次 open 的 play() 中断先落地，再发起最后一次跳转
         await Future<void>.delayed(const Duration(milliseconds: 300));
@@ -1777,7 +1910,7 @@ class _PlayerPageState extends State<PlayerPage> {
     if (event is! KeyDownEvent) return KeyEventResult.ignored;
     final k = event.logicalKey;
     if (k == LogicalKeyboardKey.space) {
-      _player.playOrPause();
+      _togglePlay();
       _poke();
       return KeyEventResult.handled;
     }
@@ -2729,7 +2862,7 @@ class _PlayerPageState extends State<PlayerPage> {
           _btn(
             playing ? Icons.pause : Icons.play_arrow,
             playing ? tr('player.pause') : tr('player.play'),
-            () => _player.playOrPause(),
+            () => _togglePlay(),
           ),
           // 有播放列表才给「上一集 / 下一集」；没有时这两个位置直接消失，
           // 控制栏不会因为少了按钮而留空。
@@ -2902,7 +3035,7 @@ class _PlayerPageState extends State<PlayerPage> {
                     color: Colors.white,
                   ),
                   onPressed: () {
-                    _player.playOrPause();
+                    _togglePlay();
                     _poke();
                   },
                 ),
@@ -3146,7 +3279,7 @@ class _PlayerPageState extends State<PlayerPage> {
         icon: playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
         label: tr(playing ? 'player.pause' : 'player.play'),
         onTap: () {
-          _player.playOrPause();
+          _togglePlay();
           _poke();
         },
       ),
@@ -3289,7 +3422,7 @@ class _PlayerPageState extends State<PlayerPage> {
 
     // 媒体键：不管控制层在不在都直接生效（电视遥控器最爱用这两个）
     if (k == LogicalKeyboardKey.mediaPlayPause) {
-      _player.playOrPause();
+      _togglePlay();
       _poke();
       return KeyEventResult.handled;
     }
