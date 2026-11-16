@@ -16,7 +16,7 @@
 const fs = require('node:fs');
 const nodePath = require('node:path');
 const { spawn } = require('node:child_process');
-const { cpus } = require('node:os');
+const { cpus, tmpdir } = require('node:os');
 
 /** 画质档位表（由 tool/gen-play-quality.js 从 contracts/play-quality.json 生成） */
 const PLAY_QUALITY = require('./play-quality.generated.json');
@@ -531,6 +531,57 @@ let hwAllCache = null;
 let hwAllPromise = null;
 
 /**
+ * 硬件编码器探测结果落盘缓存。
+ *
+ * 实测：内核冷启动后第一次起流 8.2s，第二次 0.3s —— 差额几乎全是
+ * 「逐个硬件编码器试编一帧」（AMF/NVENC/QSV 各一次，弱机上每次几秒）。
+ * sidecar 进程一重启就重新付一遍，用户看到的就是「隔一会儿第一次播特别慢」。
+ *
+ * key = ffmpeg 路径 + 大小 + mtime：换了 ffmpeg 立刻失效；GPU 驱动换了可能
+ * 命中旧结果，但真正用起来失败时 attempt() 会走 CPU 兜底，不会卡死。
+ */
+const HW_CACHE_TTL_MS = 7 * 86400_000;
+
+function hwCacheFile() {
+  return nodePath.join(tmpdir(), 'colanas-media-hwenc.json');
+}
+
+function hwCacheKey() {
+  try {
+    const ff = findFfmpeg();
+    const st = fs.statSync(ff);
+    return `${ff}|${st.size}|${Math.round(st.mtimeMs)}`;
+  } catch {
+    return '';
+  }
+}
+
+function readHwCache(key) {
+  if (!key) return null;
+  try {
+    const raw = JSON.parse(fs.readFileSync(hwCacheFile(), 'utf-8'));
+    if (raw?.key !== key) return null;
+    if (!raw?.at || Date.now() - raw.at > HW_CACHE_TTL_MS) return null;
+    const out = raw.encoders;
+    if (!out || !Array.isArray(out.h264) || !Array.isArray(out.h265) || !Array.isArray(out.av1)) {
+      return null;
+    }
+    return out;
+  } catch {
+    return null;
+  }
+}
+
+function writeHwCache(key, encoders) {
+  if (!key) return;
+  try {
+    fs.writeFileSync(hwCacheFile(), JSON.stringify({ key, at: Date.now(), encoders }), 'utf-8');
+  } catch {
+    /* 缓存失败不影响转码 */
+  }
+}
+
+/**
  * `ffmpeg -encoders` 的原始输出。
  *
  * **必须异步**：这里曾经是 `spawnSync(..., {timeout: 15000})`。ffmpeg 冷启动 +
@@ -596,6 +647,12 @@ async function detectHwAll() {
   if (hwAllCache) return hwAllCache;
   if (hwAllPromise) return hwAllPromise;
   hwAllPromise = (async () => {
+    const cacheKey = hwCacheKey();
+    const cached = readHwCache(cacheKey);
+    if (cached) {
+      hwAllCache = cached;
+      return cached;
+    }
     const out = { h264: [], h265: [], av1: [] };
     const listing = await encoderListing();
     const map = { h264: 'h264_', h265: 'hevc_', av1: 'av1_' };
@@ -611,6 +668,7 @@ async function detectHwAll() {
       if (await probeEncoder(name)) out[kind].push(name);
     }
     hwAllCache = out;
+    writeHwCache(cacheKey, out);
     return out;
   })();
   return hwAllPromise;

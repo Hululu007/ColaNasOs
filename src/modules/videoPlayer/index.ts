@@ -4,6 +4,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { sql } from 'kysely';
 import { secured } from '../../../kernel/route';
+import { probePeerInstance } from '../../../kernel/dev-instance';
 import type { KernelApi, ServerModule } from '../../../kernel/types';
 import { filesRoot, resolveAnyPath } from '../files/fs-root';
 import { isOfflinePath, offlineSmbPrefixes } from '../video/sources';
@@ -324,6 +325,9 @@ async function sourceDurationMsOf(k: KernelApi, itemId: string): Promise<number>
 const MAX_JOBS = Math.max(1, Math.min(Number(process.env.COLANAS_PLAYER_JOBS) || 2, 4));
 const jobs = new Set<string>();
 let claiming = false;
+
+/** 重叠模式下，对端退出后本实例按需接管播放转码（只启动一次） */
+let overlapPumpStarted = false;
 
 /**
  * 播放器最近的轮询位置（会话 id → 最后一次带 pos 的查询）。
@@ -882,11 +886,26 @@ export const videoPlayer: ServerModule = {
         },
       }),
       async (req, reply) => {
-        // 重叠模式不创建转码会话：会话表共享，正式版的 pump 会把它领走执行
+        // 重叠模式不创建转码会话：会话表共享，正式版的 pump 会把它领走执行。
+        // 但守卫是**启动时**探活的一次性结果：对端后来退出（关了正式版 / dev.bat
+        // 重启前的那次检测）时，这里会永远 503，Web 端表现为「换了哪个端都播不了」。
+        // 所以建会话时再探一次：对端确实不在了，就由本实例接管播放转码。
         if (!k.background.enabled) {
-          return reply
-            .code(503)
-            .send({ error: Err.unavailable, message: '开发实例已跳过后台转码（检测到另一个实例）' });
+          const peer = await probePeerInstance({
+            ownPort: Number(process.env.PORT) || 7888,
+            timeoutMs: 400,
+          });
+          if (peer) {
+            return reply
+              .code(503)
+              .send({ error: Err.unavailable, message: '开发实例已跳过后台转码（检测到另一个实例）' });
+          }
+          if (!overlapPumpStarted) {
+            overlapPumpStarted = true;
+            k.log.warn('[dev] 另一个实例已退出：播放转码改由本实例执行（未接管任务队列）');
+            pump(k).catch((err) => k.log.warn({ err: String(err) }, 'player pump stopped'));
+            sweepHls(k).catch((err) => k.log.warn({ err: String(err) }, 'player hls sweep failed'));
+          }
         }
         const body = (req.body || {}) as {
           id?: string;
