@@ -2484,7 +2484,6 @@ class I18nKeys {
   static const videoClientDownmixHint = 'video.client.downmixHint';
   static const videoClientGroupAudio = 'video.client.group.audio';
   static const videoClientGroupPlay = 'video.client.group.play';
-  static const videoClientLeadFull = 'video.client.leadFull';
   static const videoClientLeadMinutes = 'video.client.leadMinutes';
   static const videoClientLeadMinutesHint = 'video.client.leadMinutesHint';
   static const videoClientLeadN = 'video.client.leadN';
@@ -2955,4 +2954,4 @@ class I18nKeys {
 }
 
 /// 契约键总数（生成时确定），供完整性自检使用。
-const int i18nKeyCount = 2908;
+const int i18nKeyCount = 2907;

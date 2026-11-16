@@ -46,8 +46,8 @@ Duration seekLimit({
 ///
 /// 两个来源取大的那个：
 ///   - `serverMs`：会话详情回报的 `transcodedMs`（已经是绝对位置，含起转偏移）；
-///   - `startMs + playerMs`：播放器报的 HLS 时长 —— 会话是整片一次转完时
-///     （`leadMs = 0`）服务端不给 `transcodedMs`，只能靠它。
+///   - `startMs + playerMs`：播放器报的 HLS 时长 —— 只在老会话（`leadMs = 0`，
+///     2026-11-16 起不再新建）里服务端不给 `transcodedMs` 时才靠它。
 int loadedEndMs({
   required int startMs,
   required int playerMs,

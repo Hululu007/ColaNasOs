@@ -995,12 +995,14 @@ export const videoPlayer: ServerModule = {
         const n = Number(body.audioIndex);
         const audioIndex = Number.isInteger(n) && n >= 0 ? n : 0;
         const forceSdr = body.forceSdr === true ? 1 : 0;
-        // 提前转码时长：分钟 → 毫秒。不传 / 非法值 = 3 分钟（所有端统一默认）；
-        // 显式 0 才是用户选了「整片一次转完」，走原来的单目录路径。
+        // 提前转码时长：分钟 → 毫秒。不传 / 非法值 / 0 / 负数 = 3 分钟（所有端统一默认）。
+        // 2026-11-16 起取消「整片一次转完」：整片会话没有 `-t` 终点，响度归一
+        // （dynaudnorm）会把音频扣住、先写出两个只有视频的分片 → 浏览器播几秒就卡死。
+        // 老客户端仍可能传 0，这里直接归到默认分段值，不再落整片路径。
         const rawLead =
           body.leadMinutes == null ? DEFAULT_LEAD_MINUTES : Number(body.leadMinutes);
         const leadMin =
-          Number.isFinite(rawLead) && rawLead >= 0
+          Number.isFinite(rawLead) && rawLead > 0
             ? Math.min(60, Math.round(rawLead))
             : DEFAULT_LEAD_MINUTES;
         const leadMs = leadMin * 60_000;

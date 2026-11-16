@@ -14405,10 +14405,9 @@
             "type": "boolean"
           },
           "leadMinutes": {
-            "minimum": 0,
             "maximum": 60,
             "default": 3,
-            "description": "提前转码时长（分钟），不传 = 3 分钟；0 = 整片一次转完",
+            "description": "提前转码时长（分钟，分段大小）；不传 / 0 / 负数一律按默认 3 分钟",
             "type": "integer"
           },
           "startMs": {

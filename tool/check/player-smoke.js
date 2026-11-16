@@ -86,7 +86,7 @@ process.chdir(root);
       '-pix_fmt',
       'yuv420p',
       // 带一条音轨：fMP4 首片「只有视频」的 bug 只有在有音频时才暴露
-      // （响度归一 + 整片模式，见 h264_normalize_first_seg_av）
+      // （响度归一触发，见 h264_normalize_first_seg_av）
       '-c:a',
       'aac',
       '-ac',
@@ -322,8 +322,9 @@ process.chdir(root);
   );
 
   // ---- 建会话并等完成 ----
-  // 下面这一整组是「整片一次转完」的旧路径：默认已经改成 3 分钟分段，
-  // 所以必须显式传 0，否则 .session.json 会落到 p0/ 子目录，断言全部跑偏。
+  // 这里显式传 0（老客户端的「整片一次转完」语义）。2026-11-16 起服务端把
+  // 0 / 负数一律归到默认分段值（180000ms）：整片模式没有 `-t` 终点，响度归一
+  // 会把音频扣住、先写出两个只有视频的分片，浏览器播几秒就卡死。
   r = await inject('POST', '/api/v1/player/sessions', admin, {
     id: itemId,
     subtitle: 'demo.srt',
@@ -354,7 +355,11 @@ process.chdir(root);
       // sidecar 在首片落盘 / 正常退出时会写 <hls>/<id>/.session.json（这一轮真正
       // 用上的编码 + 编码器）。用户选了 AV1 但编码器起不来时会被静默降级成
       // H.264，会话接口必须把这个文件读出来回显，否则界面一直显示 AV1。
-      const metaFile = path.join(dataDir, 'hls', id, '.session.json');
+      // 分段会话的 sidecar 元数据落在 `p0/.session.json`（整片老会话才在会话根目录）。
+      const metaCandidates = [
+        path.join(dataDir, 'hls', id, '.session.json'),
+        ...[0, 1, 2, 3].map((n) => path.join(dataDir, 'hls', id, `p${n}`, '.session.json')),
+      ];
       const echoes = [];
       const t0 = Date.now();
       for (;;) {
@@ -365,7 +370,8 @@ process.chdir(root);
         );
         job = s.json();
         try {
-          const meta = JSON.parse(fs.readFileSync(metaFile, 'utf8'));
+          const f = metaCandidates.find((x) => fs.existsSync(x));
+          const meta = JSON.parse(fs.readFileSync(f, 'utf8'));
           echoes.push({ file: String(meta.codec || ''), api: String(job.codec || '') });
         } catch {
           /* 还没写（或正在写）*/
@@ -379,16 +385,16 @@ process.chdir(root);
         job && job.status === 'done',
         `status=${job && job.status} err=${job && job.error}`,
       );
-      // 显式传 0 仍然整片转（老行为不能被默认值改动弄丢）
+      // 显式传 0 不再整片：服务端归到默认分段值，产物落 p0/（2026-11-16 起）
       check(
-        'session_explicit_full_lead_0',
-        job && job.leadMs === 0,
+        'session_lead_zero_falls_back_default',
+        job && job.leadMs === 180000,
         `leadMs=${job && job.leadMs}`,
       );
-      // 整片模式（lead=0）的产物在会话根目录，没有 p0/p1；进度必须仍能上报，
-      // 否则客户端认为「已转出 0 秒」，往回拖也会新建会话（2026-11-16 Web 实测）。
+      // 进度必须能上报（transcodedMs 是片源绝对位置）：否则客户端认为
+      // 「已转出 0 秒」，往回拖也会新建会话（2026-11-16 Web 实测）。
       check(
-        'session_full_progress',
+        'session_progress_reported',
         job && Number(job.transcodedMs) - Number(job.startedMs || 0) >= 1000,
         `transcoded=${job && job.transcodedMs} started=${job && job.startedMs}`,
       );
@@ -442,7 +448,6 @@ process.chdir(root);
           });
           const rNorm = await inject('POST', '/api/v1/player/sessions', admin, {
             id: itemId,
-            leadMinutes: 0,
           });
           const idNorm = rNorm.json().id;
           let jobNorm = null;
@@ -457,9 +462,9 @@ process.chdir(root);
             Boolean(jobNorm) && jobNorm.status === 'done',
             `status=${jobNorm && jobNorm.status} err=${jobNorm && jobNorm.error}`,
           );
-          // 响度归一（dynaudnorm）会先扣住音频：整片模式（无 -t）下曾经导致
+          // 响度归一（dynaudnorm）会先扣住音频：在整片模式（无 `-t`）下曾经导致
           // **前两片只有视频、音频从 0 重来** → 浏览器播到 7 秒卡死、buffered 从 7.5 起。
-          // 首片必须同时含视频与音频（两个 tfdt）。
+          // 现在统一按段转（有 `-t` 终点），首片必须同时含视频与音频（两个 tfdt）。
           if (jobNorm && jobNorm.status === 'done') {
             const plN = await inject('GET', jobNorm.url);
             const segN = String(plN.body)
@@ -483,7 +488,6 @@ process.chdir(root);
           id: itemId,
           preset: '1080p_3m',
           codec: 'h265',
-          leadMinutes: 0,
         });
         const id2 = r.json().id;
         let job2 = null;
@@ -507,8 +511,23 @@ process.chdir(root);
             pl.statusCode === 200 && pl.body.includes('#EXT-X-MAP'),
             `status=${pl.statusCode} map=${pl.body.includes('#EXT-X-MAP')}`,
           );
-          const init = await inject('GET', job2.url.replace('/index.m3u8', '/init.mp4'));
-          check('fmp4_init_mp4', init.statusCode === 200, 'status=' + init.statusCode);
+          // 分段会话的 init 在 p0/ 下，URI 带 `?part=p0&t=`：直接从 #EXT-X-MAP
+          // 里取 URI，别自己拼（拼出来的裸路径 404）。
+          const mapUri = (
+            String(pl.body)
+              .split('\n')
+              .find((l) => l.startsWith('#EXT-X-MAP'))
+              ?.match(/URI="([^"]+)"/) || []
+          )[1];
+          const init = await inject(
+            'GET',
+            `/api/v1/player/hls/${id2}/${String(mapUri || 'init.mp4').replace(/&amp;/g, '&')}`,
+          );
+          check(
+            'fmp4_init_mp4',
+            init.statusCode === 200,
+            `status=${init.statusCode} uri=${mapUri}`,
+          );
         } else {
           // 降级路径也是正确行为：编码器不可用时回 H.264 / MPEG-TS
           check('fmp4_init_mp4', true, 'degraded to mpegts/h264');
@@ -519,10 +538,11 @@ process.chdir(root);
         check('hls_m3u8_requires_token', noToken.statusCode === 401, 'status=' + noToken.statusCode);
 
         // 带令牌：m3u8 可读，且播放列表里的分片被改写成同一令牌
+        // （分段会话的分片是 `?part=p0&t=...`，别死磕「?t=」开头）
         const m3u8 = await inject('GET', job.url);
         check(
           'hls_m3u8_with_token',
-          m3u8.statusCode === 200 && m3u8.body.includes('#EXTM3U') && /\?t=/.test(m3u8.body),
+          m3u8.statusCode === 200 && m3u8.body.includes('#EXTM3U') && /[?&]t=/.test(m3u8.body),
           'status=' + m3u8.statusCode,
         );
 
@@ -552,7 +572,7 @@ process.chdir(root);
     }
 
     // ---- 默认提前转码时长：不传 leadMinutes 时所有端统一 3 分钟 ----
-    // 上面整组用例都显式传 0 走整片旧路径；这里专测「不传」的默认语义：
+    // 上面几组已不再依赖「整片」路径（传 0 也归默认），这里再专测「不传」的默认语义：
     // SDK / 直接 API / 漏传参数的客户端都不能偷偷退回整片。
     // 放在最后是因为建会话会取消同片 pending/running 的旧会话，前面几组都已等到 done。
     r = await inject('POST', '/api/v1/player/sessions', admin, { id: itemId });

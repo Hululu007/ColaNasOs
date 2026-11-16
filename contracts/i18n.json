@@ -3189,7 +3189,6 @@
     "video.client.downmixHint": {},
     "video.client.group.audio": {},
     "video.client.group.play": {},
-    "video.client.leadFull": {},
     "video.client.leadMinutes": {},
     "video.client.leadMinutesHint": {},
     "video.client.leadN": {

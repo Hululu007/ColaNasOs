@@ -227,7 +227,8 @@ class _PlayerPageState extends State<PlayerPage> {
   /// **片源绝对位置**（含下面的起转偏移）。0 = 还没转出来 / 没开会话。
   int _transcodedMs = 0;
 
-  /// 当前会话的「提前量」（毫秒）。0 = 整片一次转完。
+  /// 当前会话的「提前量」（毫秒）。分段会话 > 0（2026-11-16 起不再有整片会话）；
+  /// 老会话可能是 0，代码仍按「整片」兼容。
   ///
   /// 分段会话的播放列表是**按整片时长预列**的（VOD + ENDLIST），所以 libmpv 报的
   /// `duration` 是整片、不是「已转出」；拿它算 `_loadedEnd` 会让 seek 判定
@@ -1744,8 +1745,8 @@ class _PlayerPageState extends State<PlayerPage> {
         _preset,
         _codec,
         startMs: target.inMilliseconds,
-        // 跳转会话也用整片（leadOverride 默认跟随偏好 = 0）：分段会产生
-        // DISCONTINUITY，libmpv 每到接缝重置解码器，画面就黑一下。
+        // 跳转会话同样按段转（跟随偏好，默认 3 分钟）：整片模式已取消，
+        // 而且目标位置之后通常只占几分钟，没必要从头铺到头。
       );
       // 新播放列表的时间轴 0 就是 target，不能再 seekTo（否则会跳过 target 那一段）
       await _openUrl(u, retries: 3);

@@ -51,29 +51,25 @@ class PlayPreferences {
 
   /// 所有端统一的默认提前转码时长（分钟）。
   /// 服务端 API 有同样的兜底值（`DEFAULT_LEAD_MINUTES`），保证 SDK / 直接调用
-  /// 不传这个字段时也是 3 分钟，而不是偷偷退回整片。
-  /// 默认整片一次转完（0 = 不分段）。
+  /// 不传这个字段时也是同一个值。
   ///
-  /// 以前默认 3 分钟一段。每段是独立 ffmpeg、PTS 都从 0 重来（实测每段第 10 片
-  /// 都是 54.000000），播放列表必须插 `#EXT-X-DISCONTINUITY`；libmpv 每到接缝
-  /// 就重置解码器，表现为「跨一段黑一下」—— 段越短闪得越密。
-  /// 实测转码 3x~9x 实时，整片连续转码多占的 GPU 可以忽略（用户退出就 kill），
-  /// 换来全程无接缝、不会有解码器重置。
-  static const int defaultLeadMinutes = 0;
+  /// 2026-11-16：**取消「整片一次转完」**。整片模式下 ffmpeg 没有 `-t` 终点，
+  /// 响度归一（dynaudnorm）会把音频扣住、视频先写出两片 → 浏览器播到 7 秒卡死；
+  /// 而且整片动辄一两个小时，退出就白转。现在一律按段转，播到哪儿转到哪儿。
+  static const int defaultLeadMinutes = 3;
 
-  /// 默认提前转码时长（分钟）。0 只有用户显式选「整片一次转完」时才会出现；
-  /// 没存过值 / 值非法 → [defaultLeadMinutes]。
+  /// 提前转码时长（分钟）。**永远 > 0**：老版本存过 0（整片模式）的，这里
+  /// 直接回落默认值，UI / 建会话都不会再产生整片会话。
   static int get leadMinutes {
     final v = int.tryParse(SettingsStore.instance.getString(_leadKey) ?? '');
-    if (v == null || v < 0) return defaultLeadMinutes;
-    if (v == 0) return 0;
+    if (v == null || v <= 0) return defaultLeadMinutes;
     return v > 60 ? 60 : v;
   }
 
   static Future<void> saveLeadMinutes(int minutes) =>
       SettingsStore.instance.setString(
         _leadKey,
-        '${minutes <= 0 ? 0 : (minutes > 60 ? 60 : minutes)}',
+        '${minutes <= 0 ? defaultLeadMinutes : (minutes > 60 ? 60 : minutes)}',
       );
 
   static Future<void> save({

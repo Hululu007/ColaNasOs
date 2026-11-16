@@ -39,9 +39,10 @@ class _VideoClientSettingsPageState extends State<VideoClientSettingsPage> {
   late bool _downmix = PlayPreferences.audioDownmix;
   late int _lead = PlayPreferences.leadMinutes;
 
-  /// 提前转码时长的可选档；默认选中 [PlayPreferences.defaultLeadMinutes]（3 分钟），
-  /// 0 = 用户显式选「整片一次转完」。
-  static const _leadOptions = [0, 1, 3, 5, 10, 20];
+  /// 提前转码时长的可选档；默认选中 [PlayPreferences.defaultLeadMinutes]（3 分钟）。
+  /// 2026-11-16 起不再提供「整片一次转完」（0）：整片模式没有 `-t` 终点，
+  /// 响度归一时会写出缺音轨的首片，浏览器播几秒就卡死。
+  static const _leadOptions = [1, 3, 5, 10, 20];
 
   /// 本机有编码被砍掉时才提示原因，全都支持就别啰嗦。
   bool get _hasUnplayableCodec => playableCodecs().length < playCodecs.length;
@@ -135,11 +136,7 @@ class _VideoClientSettingsPageState extends State<VideoClientSettingsPage> {
               for (final n in _leadOptions)
                 DropdownMenuItem<int>(
                   value: n,
-                  child: Text(
-                    n == 0
-                        ? tr('video.client.leadFull')
-                        : tr('video.client.leadN', {'n': '$n'}),
-                  ),
+                  child: Text(tr('video.client.leadN', {'n': '$n'})),
                 ),
             ],
             onChanged: (v) async {
