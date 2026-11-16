@@ -77,6 +77,26 @@ export class ColanasClient {
     return this.request('GET', '/api/v1/auth/bootstrap', params, 'query');
   }
 
+  /** 已登录用户批准电视登录 */
+  async authDeviceApprove(params: Record<string, any> = {}): Promise<any> {
+    return this.request('POST', '/api/v1/auth/device/approve', params, 'body');
+  }
+
+  /** 电视取消设备授权（关闭二维码时调用） */
+  async authDeviceCancel(params: Record<string, any> = {}): Promise<any> {
+    return this.request('POST', '/api/v1/auth/device/cancel', params, 'body');
+  }
+
+  /** 创建设备授权码（电视扫码登录） */
+  async authDeviceCode(params: Record<string, any> = {}): Promise<any> {
+    return this.request('POST', '/api/v1/auth/device/code', params, 'body');
+  }
+
+  /** 轮询设备授权状态（批准后带回 token，仅一次） */
+  async authDeviceStatus(params: Record<string, any> = {}): Promise<any> {
+    return this.request('GET', '/api/v1/auth/device/status', params, 'query');
+  }
+
   /** 开发用临时令牌（仅当 COLANAS_DEV_TOKEN=1 且非 production 时可用） */
   async authDevToken(params: Record<string, any> = {}): Promise<any> {
     return this.request('POST', '/api/v1/auth/dev-token', params, 'body');

@@ -195,8 +195,10 @@ process.chdir(root);
   const applied = r.json();
   check('trash_apply', r.statusCode === 200 && applied.count === 2 && applied.operationId, JSON.stringify(applied));
 
+  // 同源目录复用后回收站是账号私有状态，落在 photo_item_user_state，不再是照片行上的列。
   const trashed = (
-    await sql`select count(*) as n from photo_items where in_trash = 1`.execute(k.db)
+    await sql`select count(*) as n from photo_item_user_state
+               where in_trash = 1 and item_id in ('p1','p2')`.execute(k.db)
   ).rows[0];
   check('trash_marked', Number(trashed.n) === 2, 'in_trash=' + trashed.n);
 
@@ -207,7 +209,8 @@ process.chdir(root);
   check('operation_undo', r.statusCode === 200 && r.json().restored === 2, JSON.stringify(r.json()));
 
   const restored = (
-    await sql`select count(*) as n from photo_items where in_trash = 1`.execute(k.db)
+    await sql`select count(*) as n from photo_item_user_state
+               where in_trash = 1 and item_id in ('p1','p2')`.execute(k.db)
   ).rows[0];
   check('undo_restored', Number(restored.n) === 0, 'in_trash=' + restored.n);
 

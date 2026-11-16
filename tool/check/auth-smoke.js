@@ -496,6 +496,114 @@ process.chdir(root);
   r = await app.inject({ method: 'GET', url: '/api/v1/files/list?path=/', headers: tokenHeaders });
   check('api_token_revoked_401', r.statusCode === 401, 'status=' + r.statusCode);
 
+  // ---- 设备授权码（TV 扫码登录）----
+  r = await app.inject({
+    method: 'POST',
+    url: '/api/v1/auth/device/code',
+    payload: { deviceName: 'smoke-tv' },
+  });
+  const grant = r.json();
+  check(
+    'device_code_create',
+    r.statusCode === 200 &&
+      Boolean(grant.code) &&
+      /^[A-Z0-9]{6}$/.test(String(grant.userCode || '')) &&
+      String(grant.verifyUrl || '').includes('/device?code='),
+    'status=' + r.statusCode,
+  );
+
+  r = await app.inject({
+    method: 'GET',
+    url: '/api/v1/auth/device/status?code=' + encodeURIComponent(grant.code),
+  });
+  check('device_pending', r.statusCode === 200 && r.json().status === 'pending', 'status=' + r.json().status);
+
+  // 未登录不能批准
+  r = await app.inject({
+    method: 'POST',
+    url: '/api/v1/auth/device/approve',
+    payload: { code: grant.code },
+  });
+  check('device_approve_requires_login', r.statusCode === 401, 'status=' + r.statusCode);
+
+  r = await app.inject({
+    method: 'POST',
+    url: '/api/v1/auth/device/approve',
+    headers: admin2Bearer,
+    payload: { code: grant.code },
+  });
+  check(
+    'device_approve_ok',
+    r.statusCode === 200 && r.json().ok === true && r.json().username === 'admin2',
+    'status=' + r.statusCode + ' user=' + r.json().username,
+  );
+
+  r = await app.inject({
+    method: 'GET',
+    url: '/api/v1/auth/device/status?code=' + encodeURIComponent(grant.code),
+  });
+  const approved = r.json();
+  check(
+    'device_token_once',
+    r.statusCode === 200 &&
+      approved.status === 'approved' &&
+      Boolean(approved.token) &&
+      approved.user?.username === 'admin2',
+    'status=' + approved.status,
+  );
+
+  r = await app.inject({
+    method: 'GET',
+    url: '/api/v1/auth/device/status?code=' + encodeURIComponent(grant.code),
+  });
+  check(
+    'device_token_not_repeated',
+    r.statusCode === 200 && !r.json().token,
+    'token=' + String(r.json().token),
+  );
+
+  // 取消：码变为 canceled，之后再批准被拒
+  r = await app.inject({ method: 'POST', url: '/api/v1/auth/device/code', payload: {} });
+  const grant2 = r.json();
+  await app.inject({
+    method: 'POST',
+    url: '/api/v1/auth/device/cancel',
+    payload: { code: grant2.code },
+  });
+  r = await app.inject({
+    method: 'GET',
+    url: '/api/v1/auth/device/status?code=' + encodeURIComponent(grant2.code),
+  });
+  check('device_canceled', r.statusCode === 200 && r.json().status === 'canceled', 'status=' + r.json().status);
+  r = await app.inject({
+    method: 'POST',
+    url: '/api/v1/auth/device/approve',
+    headers: admin2Bearer,
+    payload: { code: grant2.code },
+  });
+  check('device_canceled_approve_410', r.statusCode === 410, 'status=' + r.statusCode);
+
+  // 手机端手输短码也能批准
+  r = await app.inject({ method: 'POST', url: '/api/v1/auth/device/code', payload: {} });
+  const grant3 = r.json();
+  r = await app.inject({
+    method: 'POST',
+    url: '/api/v1/auth/device/approve',
+    headers: admin2Bearer,
+    payload: { userCode: grant3.userCode },
+  });
+  check('device_usercode_approve', r.statusCode === 200 && r.json().ok === true, 'status=' + r.statusCode);
+
+  // 授权页由 NAS 自己托管
+  r = await app.inject({ method: 'GET', url: '/device?code=abc' });
+  check(
+    'device_page_html',
+    r.statusCode === 200 &&
+      String(r.headers['content-type'] || '').includes('text/html') &&
+      r.body.includes('授权电视登录'),
+    'status=' + r.statusCode,
+  );
+
   await app.close();
   try { fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); } catch { /* 句柄释放有延迟 */ }
 

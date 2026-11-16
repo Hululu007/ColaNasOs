@@ -175,7 +175,7 @@ function buildJpegWithExif(dateStr) {
   const otherRes = await app.inject({
     method: 'POST',
     url: '/api/v1/auth/dev-token',
-    payload: { sub: 'u3', scopes: ['photo:read', 'photo:write'] },
+    payload: { sub: 'u3', scopes: ['photo:read', 'photo:write', 'files:read'] },
   });
   const other = { authorization: 'Bearer ' + otherRes.json().token };
 
@@ -677,12 +677,14 @@ function buildJpegWithExif(dateStr) {
 
   // 20. 智能相册规则：自定义条件（时间 / 场景 / 人物 / 地点）CRUD + 查询
   // 前面删库用例已清空索引，先重建库并重扫，规则才有可命中的照片
-  await app.inject({
-    method: 'POST',
-    url: '/api/v1/photo/libraries',
-    headers: bearer,
-    payload: { name: 'Rules', path: '/photos' },
-  });
+  const rulesLib = (
+    await app.inject({
+      method: 'POST',
+      url: '/api/v1/photo/libraries',
+      headers: bearer,
+      payload: { name: 'Rules', path: '/photos' },
+    })
+  ).json();
   await app.inject({ method: 'POST', url: '/api/v1/photo/scan', headers: bearer, payload: {} });
   const ruleTimeline = (
     await app.inject({ method: 'GET', url: '/api/v1/photo/timeline?limit=10', headers: bearer })
@@ -783,6 +785,155 @@ function buildJpegWithExif(dateStr) {
     'smart_rule_conditions_hit',
     sceneRule.items === 1 && personRule.items === 1 && placeRule.items === 1,
     `scene=${sceneRule.items} person=${personRule.items} place=${placeRule.items}`,
+  );
+
+  // ---------------------------------------------------------------- 同源目录复用
+  // u3 添加 u1 已经扫过的同一个物理目录：应直接共享来源，而不是重建库 / 重扫 / 复制照片行。
+  // 缩略图与 AI 结果（这里用场景 / 人脸行代表）必须立即可见，同时收藏 / 回收站互不影响。
+  const ownerTl0 = (
+    await app.inject({ method: 'GET', url: '/api/v1/photo/timeline?limit=10', headers: bearer })
+  ).json().items || [];
+  r = await app.inject({
+    method: 'POST',
+    url: '/api/v1/photo/libraries',
+    headers: other,
+    payload: { name: 'Shared', path: '/photos' },
+  });
+  const sharedLib = r.json();
+  check(
+    'shared_library_reuse',
+    r.statusCode === 200 &&
+      sharedLib.id === rulesLib.id &&
+      sharedLib.shared === true &&
+      sharedLib.items === ownerTl0.length,
+    `status=${r.statusCode} id=${sharedLib.id} shared=${sharedLib.shared} items=${sharedLib.items}/${ownerTl0.length}`,
+  );
+
+  const otherLibs = (
+    await app.inject({ method: 'GET', url: '/api/v1/photo/libraries', headers: other })
+  ).json().items || [];
+  check(
+    'shared_library_list',
+    otherLibs.length === 1 && otherLibs[0].id === rulesLib.id && otherLibs[0].shared === true,
+    JSON.stringify(otherLibs.map((x) => ({ id: x.id, shared: x.shared }))),
+  );
+
+  // 不调用 scan，直接看时间轴与派生数据
+  const otherTl = (
+    await app.inject({ method: 'GET', url: '/api/v1/photo/timeline?limit=10', headers: other })
+  ).json().items || [];
+  check(
+    'shared_timeline_immediate',
+    otherTl.length === ownerTl0.length &&
+      otherTl.every((x) => ownerTl0.some((y) => y.id === x.id)),
+    `n=${otherTl.length}/${ownerTl0.length}`,
+  );
+
+  const sharedScenes = (
+    await app.inject({
+      method: 'GET',
+      url: '/api/v1/photo/scenes?label=' + encodeURIComponent('beach'),
+      headers: other,
+    })
+  ).json().items || [];
+  check(
+    'shared_ai_scene_reused',
+    sharedScenes.some((x) => x.id === target.id),
+    `n=${sharedScenes.length}`,
+  );
+
+  const sharedFaces = (
+    await app.inject({
+      method: 'GET',
+      url: '/api/v1/photo/faces?id=c-smoke&limit=20',
+      headers: other,
+    })
+  ).json();
+  check(
+    'shared_ai_faces_reused',
+    (sharedFaces.items || []).some((x) => x.photoId === target.id),
+    `n=${(sharedFaces.items || []).length}`,
+  );
+
+  // 缩略图：u3 没有重扫，但同一物理路径的缩略图应能直接出图。
+  await k.config.set('accessPolicy.u3', {
+    apps: null,
+    paths: [{ path: '/', actions: ['view', 'download'] }],
+  });
+  const targetPath = target.path.startsWith('/') ? target.path : '/' + target.path;
+  r = await app.inject({
+    method: 'GET',
+    url: '/api/v1/files/thumb?path=' + encodeURIComponent(targetPath) + '&size=256',
+    headers: other,
+  });
+  check(
+    'shared_thumbnail_direct',
+    r.statusCode === 200 && String(r.headers['content-type']).startsWith('image/'),
+    `status=${r.statusCode} type=${r.headers['content-type']}`,
+  );
+
+  // 收藏隔离：u1 收藏，u3 不应看到
+  await app.inject({
+    method: 'POST',
+    url: '/api/v1/photo/favorite',
+    headers: bearer,
+    payload: { ids: [target.id], favorite: true },
+  });
+  const otherFavItem = (
+    await app.inject({ method: 'GET', url: '/api/v1/photo/timeline?limit=10', headers: other })
+  ).json().items.find((x) => x.id === target.id);
+  const otherFav = (
+    await app.inject({ method: 'GET', url: '/api/v1/photo/timeline?limit=10&favorite=true', headers: other })
+  ).json().items || [];
+  check(
+    'shared_favorite_isolated',
+    otherFavItem && otherFavItem.favorite === false && otherFav.length === 0,
+    `favorite=${otherFavItem && otherFavItem.favorite} favList=${otherFav.length}`,
+  );
+
+  // 回收站隔离：u1 删除，u3 仍能看到
+  const trashOpId = (
+    await app.inject({
+      method: 'POST',
+      url: '/api/v1/photo/trash/apply',
+      headers: bearer,
+      payload: { ids: [target.id] },
+    })
+  ).json().operationId;
+  const otherAfterTrash = (
+    await app.inject({ method: 'GET', url: '/api/v1/photo/timeline?limit=10', headers: other })
+  ).json().items || [];
+  check(
+    'shared_trash_isolated',
+    otherAfterTrash.length === ownerTl0.length && otherAfterTrash.some((x) => x.id === target.id),
+    `n=${otherAfterTrash.length}/${ownerTl0.length}`,
+  );
+  await app.inject({
+    method: 'POST',
+    url: '/api/v1/photo/operation/undo',
+    headers: bearer,
+    payload: { id: trashOpId },
+  });
+
+  // u3 移除共享来源：只解除自己的访问，u1 的库与照片不受影响
+  r = await app.inject({
+    method: 'POST',
+    url: '/api/v1/photo/libraries/remove',
+    headers: other,
+    payload: { id: rulesLib.id },
+  });
+  const otherAfterRemove = (
+    await app.inject({ method: 'GET', url: '/api/v1/photo/timeline?limit=10', headers: other })
+  ).json().items || [];
+  const ownerAfterRemove = (
+    await app.inject({ method: 'GET', url: '/api/v1/photo/timeline?limit=10', headers: bearer })
+  ).json().items || [];
+  check(
+    'shared_library_remove_scoped',
+    r.statusCode === 200 &&
+      otherAfterRemove.length === 0 &&
+      ownerAfterRemove.length === ownerTl0.length,
+    `other=${otherAfterRemove.length} owner=${ownerAfterRemove.length}/${ownerTl0.length}`,
   );
 
   r = await app.inject({

@@ -123,6 +123,33 @@ class ApiClient {
     return _asMap(_decode(res));
   }
 
+  /// 创建设备授权码（电视扫码登录）
+  Future<Map<String, dynamic>> authDeviceCode({required Map<String, dynamic> body}) async {
+    final res = await transport.send('POST', _uri('/api/v1/auth/device/code'), headers: await _headers(jsonBody: true), body: utf8.encode(jsonEncode(body)));
+    return _asMap(_decode(res));
+  }
+
+  /// 轮询设备授权状态（批准后带回 token，仅一次）
+  Future<Map<String, dynamic>> authDeviceStatus({required String code}) async {
+    final query = <String, String>{
+      'code': code,
+    };
+    final res = await transport.send('GET', _uri('/api/v1/auth/device/status', query), headers: await _headers());
+    return _asMap(_decode(res));
+  }
+
+  /// 已登录用户批准电视登录
+  Future<Map<String, dynamic>> authDeviceApprove({required Map<String, dynamic> body}) async {
+    final res = await transport.send('POST', _uri('/api/v1/auth/device/approve'), headers: await _headers(jsonBody: true), body: utf8.encode(jsonEncode(body)));
+    return _asMap(_decode(res));
+  }
+
+  /// 电视取消设备授权（关闭二维码时调用）
+  Future<Map<String, dynamic>> authDeviceCancel({required Map<String, dynamic> body}) async {
+    final res = await transport.send('POST', _uri('/api/v1/auth/device/cancel'), headers: await _headers(jsonBody: true), body: utf8.encode(jsonEncode(body)));
+    return _asMap(_decode(res));
+  }
+
   /// 首次安装状态（库里是否还没有任何账号）
   Future<Map<String, dynamic>> authBootstrapStatus() async {
     final res = await transport.send('GET', _uri('/api/v1/auth/bootstrap'), headers: await _headers());

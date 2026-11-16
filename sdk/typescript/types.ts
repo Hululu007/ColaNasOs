@@ -1146,6 +1146,7 @@ export type PhotoLibraryItem = {
   "items": number;
   "createdAt": number;
   "lastScanAt": number;
+  "shared": boolean;
 };
 
 export type PhotoLibraryListResponse = {

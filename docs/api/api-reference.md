@@ -1,11 +1,11 @@
 # API 参考
 
 > 由 `tool/gen-api-doc.js` 从 `contracts/openapi.json` 生成，**请勿手改**；改契约后执行 `npm run api:doc`。
-> 当前：**412 个路径 / 438 个操作 / 18 个域**。鉴权统一为 `Authorization: Bearer <jwt>`，媒体直链另支持 `?token=`（5 分钟）。
+> 当前：**416 个路径 / 442 个操作 / 18 个域**。鉴权统一为 `Authorization: Bearer <jwt>`，媒体直链另支持 `?token=`（5 分钟）。
 
 ## 域索引
 
-- **子账号与权限**（`accounts`）· 21 个操作 · [跳转](#accounts)
+- **子账号与权限**（`accounts`）· 25 个操作 · [跳转](#accounts)
 - **认证与账号**（`auth`）· 1 个操作 · [跳转](#auth)
 - **blog**（`blog`）· 23 个操作 · [跳转](#blog)
 - **discover**（`discover`）· 23 个操作 · [跳转](#discover)
@@ -144,6 +144,34 @@
 
 - 请求体：`username` string · **必填**<br>`password` string · **必填**
 - 响应：200 object · 错误 400 / 409
+
+#### `POST /api/v1/auth/device/approve`
+
+已登录用户批准电视登录 · `authDeviceApprove`
+
+- 请求体：`code` string · 可选<br>`userCode` string · 可选
+- 响应：200 object · 错误 401 / 403 / 404 / 410
+
+#### `POST /api/v1/auth/device/cancel`
+
+电视取消设备授权（关闭二维码时调用） · `authDeviceCancel`
+
+- 请求体：`code` string · **必填**
+- 响应：200 object
+
+#### `POST /api/v1/auth/device/code`
+
+创建设备授权码（电视扫码登录） · `authDeviceCode`
+
+- 请求体：`deviceName` string · 可选
+- 响应：200 object
+
+#### `GET /api/v1/auth/device/status`
+
+轮询设备授权状态（批准后带回 token，仅一次） · `authDeviceStatus`
+
+- 参数：`code` · 查询 · string · **必填**
+- 响应：200 object
 
 #### `POST /api/v1/auth/login`
 

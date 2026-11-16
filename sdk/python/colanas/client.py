@@ -71,6 +71,22 @@ class ColanasClient:
         """首次安装状态（库里是否还没有任何账号）"""
         return self._request("GET", "/api/v1/auth/bootstrap", params, "query")
 
+    def auth_device_approve(self, **params):
+        """已登录用户批准电视登录"""
+        return self._request("POST", "/api/v1/auth/device/approve", params, "body")
+
+    def auth_device_cancel(self, **params):
+        """电视取消设备授权（关闭二维码时调用）"""
+        return self._request("POST", "/api/v1/auth/device/cancel", params, "body")
+
+    def auth_device_code(self, **params):
+        """创建设备授权码（电视扫码登录）"""
+        return self._request("POST", "/api/v1/auth/device/code", params, "body")
+
+    def auth_device_status(self, **params):
+        """轮询设备授权状态（批准后带回 token，仅一次）"""
+        return self._request("GET", "/api/v1/auth/device/status", params, "query")
+
     def auth_dev_token(self, **params):
         """开发用临时令牌（仅当 COLANAS_DEV_TOKEN=1 且非 production 时可用）"""
         return self._request("POST", "/api/v1/auth/dev-token", params, "body")

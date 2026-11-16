@@ -3789,6 +3789,7 @@ class PhotoLibraryItem {
   final int items;
   final int createdAt;
   final int? lastScanAt;
+  final bool shared;
 
   const PhotoLibraryItem({
     required this.id,
@@ -3797,6 +3798,7 @@ class PhotoLibraryItem {
     required this.items,
     required this.createdAt,
     required this.lastScanAt,
+    required this.shared,
   });
 
   factory PhotoLibraryItem.fromJson(Map<String, dynamic> json) => PhotoLibraryItem(
@@ -3806,6 +3808,7 @@ class PhotoLibraryItem {
         items: json['items'] as int,
         createdAt: json['createdAt'] as int,
         lastScanAt: json['lastScanAt'] as int?,
+        shared: json['shared'] as bool,
       );
 
   Map<String, dynamic> toJson() => <String, dynamic>{
@@ -3815,6 +3818,7 @@ class PhotoLibraryItem {
         'items': items,
         'createdAt': createdAt,
         'lastScanAt': lastScanAt,
+        'shared': shared,
       };
 }
 

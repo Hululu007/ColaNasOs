@@ -290,6 +290,32 @@ function makeVideo(out, size, seconds, fps = 25) {
   const col = r.json();
   check('collection_create', r.statusCode === 200 && !!col.id, JSON.stringify(col).slice(0, 80));
 
+  // 空合集 / 不存在的 id / 缺 id：不能退化成「全库条目」
+  r = await app.inject({
+    method: 'GET',
+    url: '/api/v1/video/collections/items?id=' + encodeURIComponent(col.id),
+    headers: bearer,
+  });
+  check(
+    'collection_items_empty',
+    r.statusCode === 200 && r.json().items.length === 0,
+    `status=${r.statusCode} items=${r.json().items && r.json().items.length}`,
+  );
+
+  r = await app.inject({
+    method: 'GET',
+    url: '/api/v1/video/collections/items?id=no-such-collection',
+    headers: bearer,
+  });
+  check('collection_items_missing_404', r.statusCode === 404, 'status=' + r.statusCode);
+
+  r = await app.inject({
+    method: 'GET',
+    url: '/api/v1/video/collections/items',
+    headers: bearer,
+  });
+  check('collection_items_no_id_400', r.statusCode === 400, 'status=' + r.statusCode);
+
   r = await app.inject({
     method: 'POST',
     url: '/api/v1/video/collections/items',
