@@ -634,13 +634,37 @@ function videoCodecArgs(codec, allowHw, prefer = 'auto', hw = null, targetKbps =
     if (kbps > 0) {
       if (enc.endsWith('_nvenc')) {
         return {
-          args: [enc, '-preset', 'p4', '-rc', 'vbr', '-b:v', `${kbps}k`],
+          args: [
+            enc,
+            '-preset',
+            'p4',
+            '-tune',
+            'll',
+            '-bf',
+            '0',
+            '-rc',
+            'vbr',
+            '-b:v',
+            `${kbps}k`,
+          ],
           encoder: enc,
         };
       }
       if (enc.endsWith('_qsv')) {
         return {
-          args: [enc, '-preset', 'veryfast', '-b:v', `${kbps}k`],
+          args: [
+            enc,
+            '-preset',
+            'veryfast',
+            '-look_ahead',
+            '0',
+            '-async_depth',
+            '1',
+            '-bf',
+            '0',
+            '-b:v',
+            `${kbps}k`,
+          ],
           encoder: enc,
         };
       }
@@ -650,6 +674,10 @@ function videoCodecArgs(codec, allowHw, prefer = 'auto', hw = null, targetKbps =
       return {
         args: [
           enc,
+          // 780M 实测 lowlatency 可用（ultralowlatency 也支持，画质更差）；
+          // 只影响首帧/缓冲，不改变码率目标。
+          '-usage',
+          'lowlatency',
           '-quality',
           'speed',
           '-rc',
@@ -684,9 +712,37 @@ function videoCodecArgs(codec, allowHw, prefer = 'auto', hw = null, targetKbps =
   // CPU 路径同样按「边转边播」取舍：AV1 默认 preset=10 时 4K 源慢到 30 分钟都出不了片
   // （实测会话直接超时 1800000ms），这里取最快档；H.265 用 ultrafast 而不是 medium。
   if (kind === 'h265')
-    return { args: ['libx265', '-preset', 'ultrafast', '-crf', '28', '-tag:v', 'hvc1'], encoder: 'libx265' };
+    return {
+      args: [
+        'libx265',
+        '-preset',
+        'ultrafast',
+        '-tune',
+        'zerolatency',
+        '-x265-params',
+        'rc-lookahead=0:bframes=0:scenecut=0',
+        '-crf',
+        '28',
+        '-tag:v',
+        'hvc1',
+      ],
+      encoder: 'libx265',
+    };
   if (kind === 'av1') return { args: ['libsvtav1', '-preset', '12', '-crf', '32'], encoder: 'libsvtav1' };
-  return { args: ['libx264', '-preset', 'veryfast', '-crf', '23'], encoder: 'libx264' };
+  return {
+    args: [
+      'libx264',
+      '-preset',
+      'veryfast',
+      '-tune',
+      'zerolatency',
+      '-x264-params',
+      'rc-lookahead=0:sync-lookahead=0:bframes=0:scenecut=0',
+      '-crf',
+      '23',
+    ],
+    encoder: 'libx264',
+  };
 }
 
 /**
@@ -855,6 +911,13 @@ async function hls(params) {
       // `-ss` / `-t` 是输入选项，必须在 `-i` 之前；`-hwaccel*` 同样。
       ...rangeArgs,
       ...plan.inputArgs,
+      // 入库时已经 ffprobe 过；起流只要读头部就够。默认 5MB/5s 的探测在
+      // 4K 多音轨 MKV 上实测要 1~3s，是首片延迟的大头之一。
+      // 只认头部元数据，不靠它做流选择（下面 -map 是显式的）。
+      '-probesize',
+      '2M',
+      '-analyzeduration',
+      '0',
       '-i',
       src,
       // 显式选流：视频第 0 条、指定音轨（`?` 让越界时不选音轨而非整片失败）
@@ -862,6 +925,10 @@ async function hls(params) {
       '0:v:0',
       '-map',
       `0:a:${audioIndex}?`,
+      // 字幕由播放器侧渲染（外挂）或单独烧录，不走默认字幕流；
+      // 数据流（章节 / 时间码）更没用。MKV 里几十条轨会明显拖慢起流。
+      '-sn',
+      '-dn',
       ...(copyVideo ? ['-c:v', 'copy'] : ['-vf', vf, '-c:v', ...vCodec]),
       // 色彩标记：输出统一标为 BT.709 SDR，避免播放器按源元数据乱解
       ...(!copyVideo
@@ -878,6 +945,10 @@ async function hls(params) {
       '48',
       '-sc_threshold',
       '0',
+      // 强制每 2s 一个 IDR：-hls_time 2 才能真正切在 2s，而不是按帧率漂移。
+      // 24fps 下 -g 48 恰好 2s，但 30/60fps 片源会变成 1.6/0.8s，播放列表就错位。
+      '-force_key_frames',
+      'expr:gte(t,n_forced*2)',
       '-c:a',
       'aac',
       '-b:a',
@@ -886,9 +957,10 @@ async function hls(params) {
       '2',
       '-f',
       'hls',
+      // 2s 一片：首片只等 2s 内容。客户端播放列表按同一常量（SEG_MS=2000）
+      // 预列分片，两处必须一致，否则 seek 会漂。
       '-hls_time',
-      '6',
-      // 首片更短（2s）：让播放列表更早出现、起播更快；后续仍按 6s 切。
+      '2',
       '-hls_init_time',
       '2',
       // VOD 要等全片转完才写 index.m3u8：4K HDR 整片几十分钟，期间一个分片

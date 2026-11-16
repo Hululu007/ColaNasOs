@@ -215,6 +215,15 @@ const transcodedMsOf = (parts: PlaylistPart[]) =>
   parts.reduce((sum, p) => sum + playlistDurationMs(p.text), 0);
 
 /**
+ * HLS 分片时长（毫秒）。必须与 sidecar 的 `-hls_time` 完全一致，
+ * 否则静态播放列表的 EXTINF / 分片编号会和实际产物错位（seek 会漂）。
+ *
+ * 2026-11-16：6s → 2s。首片只等 2s 内容就能落盘，切换/起播少等 4s；
+ * 同机 / 局域网请求数不是瓶颈。GOP 由 sidecar 用 `force_key_frames` 对齐到 2s。
+ */
+const SEG_MS = 2000;
+
+/**
  * 静态点播播放列表：**按片源时长预列全部分片名**，`PLAYLIST-TYPE:VOD` + ENDLIST。
  *
  * 为什么不直接把 ffmpeg 边写边追加的 EVENT 列表丢给播放器：
@@ -224,7 +233,7 @@ const transcodedMsOf = (parts: PlaylistPart[]) =>
  * 点播列表让播放器从 seg00000 开始按序拉；某一片还没转出来时，由分片路由
  * 负责等待（见下），播放器不会碰到「空的 m3u8」。
  *
- * 分片名与 pump 的分段续转对齐：每段 leadMs/6s 片、各自独立编号，
+ * 分片名与 pump 的分段续转对齐：每段 leadMs/SEG_MS 片、各自独立编号，
  * 用 `?part=pN` 指到对应子目录；跨段插 DISCONTINUITY。
  * fMP4 只在开头声明一次 MAP（指向 p0 的 init.mp4，各段内容相同）。
  */
@@ -243,21 +252,21 @@ async function buildStaticVodPlaylist(
   const ext = fmp4 ? 'm4s' : 'ts';
   const leadMs = Math.max(0, Number(row.lead_ms) || 0);
   // 0 = 用户显式选「整片一次转完」，单目录不分段
-  const segPerPart = leadMs > 0 ? Math.max(1, Math.ceil(leadMs / 6000)) : 0;
+  const segPerPart = leadMs > 0 ? Math.max(1, Math.ceil(leadMs / SEG_MS)) : 0;
   const startMs = Math.max(0, Number(row.start_ms) || 0);
   const remainMs = Math.max(0, totalMs - startMs);
   // 片源时长还没入库（刚扫描完 / 探测失败）时也不能退回 EVENT 列表：
   // 用已转出的片数先给一个可播列表，后续分片由播放器按序拉取。
   const totalSegs =
     remainMs > 0
-      ? Math.max(1, Math.ceil(remainMs / 6000))
+      ? Math.max(1, Math.ceil(remainMs / SEG_MS))
       : Math.max(1, Number(row.segments) || 1);
   const t = encodeURIComponent(token);
 
   const lines = [
     '#EXTM3U',
     `#EXT-X-VERSION:${fmp4 ? 7 : 3}`,
-    '#EXT-X-TARGETDURATION:6',
+    `#EXT-X-TARGETDURATION:${SEG_MS / 1000}`,
     '#EXT-X-MEDIA-SEQUENCE:0',
     '#EXT-X-PLAYLIST-TYPE:VOD',
     '#EXT-X-START:TIME-OFFSET=0',
@@ -282,7 +291,9 @@ async function buildStaticVodPlaylist(
       if (lastPart !== null) lines.push('#EXT-X-DISCONTINUITY');
       lastPart = part;
     }
-    const dur = i === totalSegs - 1 ? Math.max(0.1, (remainMs - i * 6000) / 1000) : 6;
+    const dur = i === totalSegs - 1
+      ? Math.max(0.1, (remainMs - i * SEG_MS) / 1000)
+      : SEG_MS / 1000;
     lines.push(`#EXTINF:${dur.toFixed(3)},`);
     lines.push(`seg${String(local).padStart(5, '0')}.${ext}${q}`);
   }
@@ -1252,7 +1263,7 @@ export const videoPlayer: ServerModule = {
               .header('cache-control', 'no-store')
               .type('application/vnd.apple.mpegurl');
             return reply.send(
-              '#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:6\n' +
+              `#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:${SEG_MS / 1000}\n` +
                 '#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:EVENT\n' +
                 '#EXT-X-START:TIME-OFFSET=0\n',
             );

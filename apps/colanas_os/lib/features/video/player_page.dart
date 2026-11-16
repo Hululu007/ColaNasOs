@@ -843,7 +843,8 @@ class _PlayerPageState extends State<PlayerPage> {
       } catch (e) {
         last = 'err=$e';
       }
-      await Future<void>.delayed(const Duration(milliseconds: 500));
+      // 2s 分片下首片来得快，500ms 轮询会平白多等半拍
+      await Future<void>.delayed(const Duration(milliseconds: 200));
     }
     log('timeout');
   }
