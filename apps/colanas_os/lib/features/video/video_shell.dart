@@ -41,11 +41,18 @@ class _VideoShellPageState extends State<VideoShellPage> {
   int _epoch = 0;
   void Function()? _offSmb;
 
-  /// 上一次渲染的二级菜单 key：换菜单时把三级栈清掉
-  String _activeKey = '';
+  /// 上一次渲染的二级菜单 key：换菜单时把三级栈清掉。
+  ///
+  /// **静态**：手机转横屏会把整个外壳重建一遍（紧凑 ↔ 侧栏两套结构，
+  /// 见 `app_shell.dart#build` 的 LayoutBuilder 分支），State 会重新走 initState。
+  /// 放实例字段的话，转屏回来就等于「刚进首页」→ `_withDetail` 立刻 closeAll，
+  /// 三级详情被清掉。用户 2026-11-17 反馈的「横屏视频全屏后按返回，直接回到
+  /// 影视首页」就是这条链路：播放器锁横屏 → 外壳重建 → 详情与选中库一起丢。
+  static String _activeKey = '';
 
-  /// 二级菜单选中项：首页「来源」卡片点一下 = 切到对应库（不推整页）
-  final NavSelection _selection = NavSelection('home');
+  /// 二级菜单选中项：首页「来源」卡片点一下 = 切到对应库（不推整页）。
+  /// 同样要静态，否则转屏后连「在哪个库」都回到首页。
+  static final NavSelection _selection = NavSelection('home');
 
   @override
   void didChangeDependencies() {
@@ -74,7 +81,9 @@ class _VideoShellPageState extends State<VideoShellPage> {
     _offSmb?.call();
     VideoDetailRouter.instance.attached = false;
     VideoDetailRouter.instance.shellRoute = null;
-    VideoDetailRouter.instance.reset();
+    // 这里**不清三级栈**：转屏 / 窗口跨断点会重建整个外壳（见 [_activeKey] 的注释），
+    // 清了就等于「从播放器返回时回到影视首页」。真正离开影视 App 时栈会随
+    // 进程 / 模块销毁，`_activeKey` 也是静态的，不会串到别的页面。
     super.dispose();
   }
 

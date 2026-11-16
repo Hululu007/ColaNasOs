@@ -160,6 +160,15 @@ class _PlayerPageState extends State<PlayerPage> {
   bool _shuffle = false;
   bool _isTranscode = false;
   bool _preparing = false;
+
+  /// 准备页上的「试试原画」按钮什么时候才出现。
+  ///
+  /// 转码首片正常 1~3 秒就绪，4K + 色调映射也就 8 秒。一进播放页就把
+  /// 「解不了？试试原画」摆在加载动画下面，用户会以为播放器已经判定解不掉
+  /// （2026-11-17 用户反馈「没必要，起码等加载 1、2 分钟实在不行再出现」）。
+  static const _tryOriginalDelay = Duration(seconds: 90);
+  Timer? _tryOriginalTimer;
+  bool _canTryOriginal = false;
   bool _switching = false;
   bool _boosting = false;
   bool _controls = true;
@@ -682,6 +691,7 @@ class _PlayerPageState extends State<PlayerPage> {
     _seekHintTimer?.cancel();
     _noticeTimer?.cancel();
     _seekWatchdog?.cancel();
+    _tryOriginalTimer?.cancel();
     for (final sub in _logSubs) {
       sub.cancel();
     }
@@ -1384,6 +1394,7 @@ class _PlayerPageState extends State<PlayerPage> {
 
   Future<void> _prepareCompatible() async {
     setState(() => _preparing = true);
+    _armTryOriginal();
     // 显示能力探测（TV 走原生通道）要和渲染参数一起就绪，HDR 判定才不是猜的
     await _renderReady;
     if (!mounted) return;
@@ -1451,6 +1462,7 @@ class _PlayerPageState extends State<PlayerPage> {
         _isTranscode = !toDirect;
         _preset = effective;
       });
+      _disarmTryOriginal();
       // retries: 首片还没落盘时内核会「打不开」，不是转码失败，给五次重试
       await _openUrl(u, retries: toDirect ? 0 : 5);
     } catch (e) {
@@ -1461,7 +1473,24 @@ class _PlayerPageState extends State<PlayerPage> {
         _preparing = false;
         _error = tr('player.switchFailed', {'error': '$e'});
       });
+      _disarmTryOriginal();
     }
+  }
+
+  /// 准备页「试试原画」按钮的计时：90 秒还没起来才让它出现（见 [_tryOriginalDelay]）。
+  void _armTryOriginal() {
+    _tryOriginalTimer?.cancel();
+    _canTryOriginal = false;
+    _tryOriginalTimer = Timer(_tryOriginalDelay, () {
+      if (!mounted || !_preparing) return;
+      setState(() => _canTryOriginal = true);
+    });
+  }
+
+  void _disarmTryOriginal() {
+    _tryOriginalTimer?.cancel();
+    _tryOriginalTimer = null;
+    if (_canTryOriginal) setState(() => _canTryOriginal = false);
   }
 
   Future<void> _switchQuality(
@@ -3486,10 +3515,15 @@ class _PlayerPageState extends State<PlayerPage> {
                   // 这行「检测到 杜比视界 / HEVC…边转边播」以前常驻加载页，
                   // 用户看到的是一堆看不懂的术语。原因仍然可查：播放信息面板里
                   // 「HDR」那一行就是它。
-                  if (!_tvMode) ...[
+                  //
+                  // 「试试原画」只在真的卡住（90 秒还没起来）时才出现：
+                  // 一进来就摆一个「解不了？」的逃生口，会让人以为播放器
+                  // 已经判定这部片放不了。
+                  if (!_tvMode && _canTryOriginal) ...[
                     const SizedBox(height: NasTokens.spaceMd),
                     OutlinedButton(
                       onPressed: () {
+                        _disarmTryOriginal();
                         setState(() => _preparing = false);
                         _openUrl(_directUrl);
                       },
