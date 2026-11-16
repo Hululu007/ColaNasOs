@@ -124,8 +124,37 @@ export function partToken(text: string): string {
   return '';
 }
 
-/** 并查集（路径压缩 + 按秩合并） */
-function makeUnionFind(size: number) {
+/**
+ * 季集钥匙：`s01e04`。
+ *
+ * 电视剧每一集的 NFO 里 imdb / douban / 剧名**全是同一个**（实测「SEAL Team」
+ * 44 集共用一条 nfo_name，`最后生还者` 16 集也是），于是四把钥匙把整季并成
+ * 一组 —— 用户看到的就是「相同季、不同集全被判成重复」。
+ *
+ * 季集号是唯一能区分集的字段，必须参与**每一把**钥匙（imdb / douban / code /
+ * title），否则只改一把还是会被另一把并回去。
+ *
+ * 优先用扫描落库的 season/episode（season 缺省按第 1 季），没有就问文件名
+ * `S01E04` / `S1.E4`。两样都没有（电影、番号片）返回空串，行为与以前完全一致。
+ */
+export function seasonEpKey(
+  season: number | null | undefined,
+  episode: number | null | undefined,
+  relPath: string,
+): string {
+  const ep = Number(episode) || 0;
+  if (ep > 0) {
+    const se = Number(season) || 1;
+    return `s${String(se).padStart(2, '0')}e${String(ep).padStart(2, '0')}`;
+  }
+  const m = /(?:^|[^a-z0-9])s(\d{1,2})[.\s_-]*e(?:p)?(\d{1,4})(?![0-9])/i.exec(
+    String(relPath || ''),
+  );
+  if (!m) return '';
+  return `s${String(Number(m[1]) || 1).padStart(2, '0')}e${String(Number(m[2])).padStart(2, '0')}`;
+}
+
+/** 并查集（路径压缩 + 按秩合并） */function makeUnionFind(size: number) {
   const parent = new Array<number>(size);
   const rank = new Array<number>(size).fill(0);
   for (let i = 0; i < size; i += 1) parent[i] = i;
@@ -164,6 +193,9 @@ interface LightRow {
   code: string | null;
   nfo_year: number | null;
   rel_path: string;
+  /** 季 / 集号：电视剧靠它把「同剧不同集」分开 */
+  season: number | null;
+  episode: number | null;
 }
 
 interface FullRow {
@@ -230,7 +262,7 @@ export async function registerVideoDuplicates(
       const rows = (
         await sql<LightRow>`
           select id, title, nfo_name, nfo_original_name, nfo_imdb_id, nfo_douban_id,
-                 code, nfo_year, rel_path
+                 code, nfo_year, rel_path, season, episode
             from video_items
            where media_type = 'video'
              ${q.libraryId ? sql`and library_id = ${q.libraryId}` : sql``}
@@ -269,6 +301,8 @@ export async function registerVideoDuplicates(
           title: titleOk ? nfoTitle : '',
           titleOk,
           part,
+          // 季集号（电视剧）：拼进每一把钥匙，避免「同剧不同集」被并成一组
+          se: seasonEpKey(r.season, r.episode, r.rel_path),
           year: year > 1800 && year < 2200 ? year : 0,
         };
       });
@@ -295,16 +329,20 @@ export async function registerVideoDuplicates(
       };
       for (let i = 0; i < rows.length; i += 1) {
         const m = meta[i];
-        if (m.imdb) addKey(`imdb:${m.imdb}`, i);
-        if (m.douban) addKey(`douban:${m.douban}`, i);
-        if (m.code) addKey(`code:${m.code}`, i);
+        // 季集号进钥匙：同一集的两份（1080p / 4K）仍然同组，不同集不再合并。
+        // 电影 / 番号片 `se` 为空，拼上去就是 `#`，不影响原来的行为。
+        const se = m.se ? `#${m.se}` : '';
+        if (m.imdb) addKey(`imdb:${m.imdb}${se}`, i);
+        if (m.douban) addKey(`douban:${m.douban}${se}`, i);
+        if (m.code) addKey(`code:${m.code}${se}`, i);
       }
 
-      // ④ 标题 + 年份（只对 NFO 标题生效）
+      // ④ 标题 + 年份（只对 NFO 标题生效；电视剧还要按季集分开）
       const byTitle = new Map<string, number[]>();
       for (let i = 0; i < rows.length; i += 1) {
         if (!meta[i].titleOk) continue;
-        const key = meta[i].title;
+        // 电视剧带上季集号；电影 / 番号片不加后缀，免得界面里的 key 变成 `title:xx#`
+        const key = meta[i].se ? `${meta[i].title}#${meta[i].se}` : meta[i].title;
         const arr = byTitle.get(key);
         if (arr) arr.push(i);
         else byTitle.set(key, [i]);

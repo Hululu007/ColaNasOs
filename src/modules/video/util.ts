@@ -287,25 +287,38 @@ export function decodeTimeCursor(cursor?: string): { takenAt: number; id: string
  * 所以值原样存进 JSON，不做类型假设。`{t,i}` / `|` 两种老格式仍能被
  * `decodeCursor` / `decodeTimeCursor` 认出来，老客户端的分页不会因为这次扩展而失效。
  */
-export function encodeSortCursor(value: string | number, id: string): string {
-  return Buffer.from(JSON.stringify({ v: value, i: id })).toString('base64url');
+export function encodeSortCursor(
+  value: string | number,
+  id: string,
+  tiebreak?: number,
+): string {
+  const payload: { v: string | number; i: string; m?: number } = { v: value, i: id };
+  // 次键（「添加时间」排序时的 mtime）：批量扫描的入库时间常常是同一秒，
+  // 只靠 {v,i} 会让「同秒那一大坨」在翻页时重复或漏条。
+  if (typeof tiebreak === 'number' && Number.isFinite(tiebreak) && tiebreak !== 0) {
+    payload.m = tiebreak;
+  }
+  return Buffer.from(JSON.stringify(payload)).toString('base64url');
 }
 
 export function decodeSortCursor(
   cursor?: string,
-): { value: string | number; id: string } | null {
+): { value: string | number; id: string; tiebreak: number } | null {
   if (!cursor) return null;
   try {
     const parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as {
       v?: unknown;
       i?: unknown;
+      m?: unknown;
     };
     if (typeof parsed.i !== 'string' || parsed.i === '') return null;
+    // 老游标没有 m：当成 0，分页仍能继续（只是同秒那一段可能重复一两条）
+    const tiebreak = typeof parsed.m === 'number' && Number.isFinite(parsed.m) ? parsed.m : 0;
     if (typeof parsed.v === 'number' || typeof parsed.v === 'string') {
-      return { value: parsed.v, id: parsed.i };
+      return { value: parsed.v, id: parsed.i, tiebreak };
     }
     // 排序键可能是 NULL（比如没有 created_at），当成空串参与比较
-    return { value: '', id: parsed.i };
+    return { value: '', id: parsed.i, tiebreak };
   } catch {
     return null;
   }

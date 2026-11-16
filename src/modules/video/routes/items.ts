@@ -291,6 +291,10 @@ export async function registerVideoItems(app: FastifyInstance, k: KernelApi, h: 
               ? 'asc'
               : 'desc';
         const mediaCur = decodeSortCursor(q.cursor);
+        // 「添加时间」排序的第二键：批量扫描入库时间常是同一秒（实测整个 down 库
+        // 都是 1794355564），只按 created_at 排会让「同秒那一坨」按 id（=路径）排，
+        // 用户看到的就不是「最新在前」。同一秒内按文件 mtime 兜底才符合直觉。
+        const tieByMtime = mediaSortBy === 'createTime';
 
         type MediaSortRow = MediaRow & { sort_key: string | number | null; watched?: number | null };
 
@@ -311,8 +315,13 @@ export async function registerVideoItems(app: FastifyInstance, k: KernelApi, h: 
           if (libType === 'mixed') where = sql`${where} and ${hideSameNameImageCond('i')}`;
           if (mediaCur) {
             const cmp = mediaOrder === 'asc' ? sql`>` : sql`<`;
-            where = sql`${where} and (${expr} ${cmp} ${mediaCur.value}
-                        or (${expr} = ${mediaCur.value} and i.id > ${mediaCur.id}))`;
+            where = tieByMtime
+              ? sql`${where} and (${expr} ${cmp} ${mediaCur.value}
+                          or (${expr} = ${mediaCur.value}
+                              and (i.mtime ${cmp} ${mediaCur.tiebreak}
+                                   or (i.mtime = ${mediaCur.tiebreak} and i.id > ${mediaCur.id}))))`
+              : sql`${where} and (${expr} ${cmp} ${mediaCur.value}
+                          or (${expr} = ${mediaCur.value} and i.id > ${mediaCur.id}))`;
           }
           return (
             await sql<MediaSortRow>`
@@ -328,7 +337,7 @@ export async function registerVideoItems(app: FastifyInstance, k: KernelApi, h: 
                      ${expr} as sort_key
                 from image_items i
                where ${where}
-               order by ${expr} ${sql.raw(mediaOrder)}, i.id asc
+               order by ${expr} ${sql.raw(mediaOrder)}${tieByMtime ? sql`, i.mtime ${sql.raw(mediaOrder)}` : sql``}, i.id asc
                limit ${extra}
             `.execute(k.db)
           ).rows;
@@ -361,8 +370,13 @@ export async function registerVideoItems(app: FastifyInstance, k: KernelApi, h: 
           if (offline.length > 0) where = sql`${where} and ${offlineCond(offline, 'v.rel_path')}`;
           if (mediaCur) {
             const cmp = mediaOrder === 'asc' ? sql`>` : sql`<`;
-            where = sql`${where} and (${expr} ${cmp} ${mediaCur.value}
-                        or (${expr} = ${mediaCur.value} and v.id > ${mediaCur.id}))`;
+            where = tieByMtime
+              ? sql`${where} and (${expr} ${cmp} ${mediaCur.value}
+                          or (${expr} = ${mediaCur.value}
+                              and (v.mtime ${cmp} ${mediaCur.tiebreak}
+                                   or (v.mtime = ${mediaCur.tiebreak} and v.id > ${mediaCur.id}))))`
+              : sql`${where} and (${expr} ${cmp} ${mediaCur.value}
+                          or (${expr} = ${mediaCur.value} and v.id > ${mediaCur.id}))`;
           }
           return (
             await sql<MediaSortRow>`
@@ -372,7 +386,7 @@ export async function registerVideoItems(app: FastifyInstance, k: KernelApi, h: 
                              where w.item_id = v.id and w.owner_id = ${uid}) as watched
                 from video_items v
                where ${where}
-               order by ${expr} ${sql.raw(mediaOrder)}, v.id asc
+               order by ${expr} ${sql.raw(mediaOrder)}${tieByMtime ? sql`, v.mtime ${sql.raw(mediaOrder)}` : sql``}, v.id asc
                limit ${extra}
             `.execute(k.db)
           ).rows;
@@ -403,6 +417,14 @@ export async function registerVideoItems(app: FastifyInstance, k: KernelApi, h: 
                   : (sx < sy ? 1 : -1);
               }
             }
+            // 「添加时间」同秒（批量扫描）时按文件 mtime 兜底，与 SQL 的
+            // `order by created_at, mtime` 保持一致，不然混合库里图片和视频
+            // 各自内部有 mtime 顺序、合并时又被打回 id 顺序。
+            if (tieByMtime) {
+              const mx = Number(x.mtime) || 0;
+              const my = Number(y.mtime) || 0;
+              if (mx !== my) return mediaOrder === 'asc' ? mx - my : my - mx;
+            }
             return x.id < y.id ? -1 : x.id > y.id ? 1 : 0;
           });
           return out;
@@ -413,7 +435,14 @@ export async function registerVideoItems(app: FastifyInstance, k: KernelApi, h: 
           const { page, last } = sortPage(rows, limit);
           return put({
             items: await withRank(k, dropSharedArtwork(page).map(toItem)),
-            nextCursor: last ? encodeSortCursor(last.sort_key ?? '', last.id) : null,
+            nextCursor: last
+              ? encodeSortCursor(
+                  last.sort_key ?? '',
+                  last.id,
+                  // 「添加时间」排序要把 mtime 一起写进游标，否则同秒那一段翻页会错乱
+                  tieByMtime ? Number(last.mtime) || 0 : 0,
+                )
+              : null,
           });
         }
 
@@ -423,7 +452,14 @@ export async function registerVideoItems(app: FastifyInstance, k: KernelApi, h: 
           const { page, last } = sortPage(merged, limit);
           return put({
             items: await withRank(k, dropSharedArtwork(page).map(toItem)),
-            nextCursor: last ? encodeSortCursor(last.sort_key ?? '', last.id) : null,
+            nextCursor: last
+              ? encodeSortCursor(
+                  last.sort_key ?? '',
+                  last.id,
+                  // 「添加时间」排序要把 mtime 一起写进游标，否则同秒那一段翻页会错乱
+                  tieByMtime ? Number(last.mtime) || 0 : 0,
+                )
+              : null,
           });
         }
 
