@@ -617,6 +617,14 @@ type Handoff = { oldId: string; oldDir: string };
  * 「同一台机器还一直缓冲」的来源。现在旧流继续放，等新会话有可播列表再杀，
  * 切换期间画面不断。
  *
+ * **但最多等 5 秒**（2026-11-16 从 25s 收紧）：sidecar 的 GPU 零拷贝链路是
+ * **全局串行**的（`withGpuGate`，两路 AMF 并发会把编码器卡死），旧任务只要还在
+ * 跑，新会话的 ffmpeg 就排在闸外拿不到编码器 —— 而旧任务动辄要跑满一整段
+ * （3 分钟提前量，AV1 实测 33~38s）。两边互等：新的等闸、旧的等新的出首片。
+ * 实测安卓端「拖一下进度条卡十几秒」就是这么来的。
+ * 等 5 秒足够 H.264/H.265（首片 1~2s）无缝交接；AV1 本来就挤不进闸，早点把旧的
+ * 收掉反而更快出片（杀掉后新会话首片实测 ~1s）。
+ *
  * 新会话失败（编码器起不来 / 参数非法）时**不杀**旧会话：旧流还在，用户至少
  * 能继续看，不至于两头都黑。
  */
@@ -625,7 +633,7 @@ async function cancelWhenReplacementReady(
   handoff: Handoff,
   newId: string,
 ): Promise<void> {
-  const deadline = Date.now() + 25_000;
+  const deadline = Date.now() + 5_000;
   while (Date.now() < deadline) {
     await wait(350);
     const rows = (

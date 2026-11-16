@@ -1361,6 +1361,29 @@ async function handle(msg) {
   }
 }
 
+/**
+ * 空闲预热：用户点播放之前就把「硬件编码器 / hwaccel」探测做完（2026-11-16）。
+ *
+ * 实测冷进程第一次转码要额外付 ~6.8s：`detectHwAll` 里 4 次 ffmpeg 冷启动
+ * （`-encoders` + 逐个试编 h264_amf / hevc_amf / av1_amf）。安卓端那次
+ * 「首片 7852ms」正是它 —— 探测完写缓存的时间戳减去会话创建时间正好 6.85s，
+ * 而同一组参数在机器热起来之后首片只要 0.94s。用户感受就是「第一部片特别慢，
+ * 第二部就正常」，还容易误以为是手机没硬解。
+ *
+ * 这里趁 sidecar 刚起来、还没人等着看片的时候跑一遍；失败一律吞掉，
+ * 暖不起来最多回到原来那 7 秒。
+ */
+setTimeout(() => {
+  void (async () => {
+    try {
+      gpu.detectHwaccels(FFMPEG);
+      await detectHwAll();
+    } catch {
+      /* 预热失败不影响播放 */
+    }
+  })();
+}, 2000);
+
 process.stdin.on('data', (chunk) => {
   buf += chunk;
   let idx = buf.indexOf('\n');

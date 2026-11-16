@@ -714,6 +714,8 @@ class _PlayerPageState extends State<PlayerPage> {
         'open 完成 ${openSw.elapsedMilliseconds}ms',
         route: 'player.open/${_sessionId ?? 'direct'}',
       );
+      // 实际用的解码器：`hwdec=auto-safe` 到底选中了硬解还是软解，只有 mpv 自己知道
+      unawaited(_logDecodeInfo());
       // 字幕走控制层自绘；关掉内核自带字幕轨，避免内嵌字幕再叠一层。
       // 自绘的 cue 是 State 字段，重开 Media 不需要重新挂载。
       try {
@@ -758,6 +760,40 @@ class _PlayerPageState extends State<PlayerPage> {
       }
       if (mounted) setState(() => _error = e.toString());
       _renewIfTokenExpired(e.toString());
+    }
+  }
+
+  /// 打一条「实际用了什么解码」的日志（每次 open 一条）。
+  ///
+  /// 用户问「手机明明支持 AV1 硬解」时，只有 mpv 自己知道答案：
+  /// `hwdec-current` 是 `mediacodec` / `mediacodec-copy` 就是硬解，`no` 就是软解，
+  /// 空串表示还没解出第一帧。顺带记下 `video-codec` 与像素格式，
+  /// 「4K AV1 直连 8 秒只走 66ms」到底是解不动还是没数据一看便知。
+  Future<void> _logDecodeInfo() async {
+    if (kIsWeb) return;
+    for (var i = 0; i < 8; i += 1) {
+      await Future<void>.delayed(const Duration(milliseconds: 700));
+      if (!mounted) return;
+      try {
+        // ignore: avoid_dynamic_calls
+        final p = _player.platform as dynamic;
+        // ignore: avoid_dynamic_calls
+        final codec = '${await p.getProperty('video-codec')}';
+        // 还没解出第一帧时 video-codec 是 "no"
+        if (codec.isEmpty || codec == 'no') continue;
+        // ignore: avoid_dynamic_calls
+        final hwdec = '${await p.getProperty('hwdec-current')}';
+        // ignore: avoid_dynamic_calls
+        final pix = '${await p.getProperty('video-params/pixelformat')}';
+        ClientLogger.instance.info(
+          'decoder hwdec=${hwdec.isEmpty ? '?' : hwdec} codec=$codec pixfmt=$pix',
+          route: 'player.decode/${_sessionId ?? 'direct'}',
+        );
+        return;
+      } catch (_) {
+        // 拿不到就算了：这是诊断，不能影响播放
+        return;
+      }
     }
   }
 
@@ -966,6 +1002,17 @@ class _PlayerPageState extends State<PlayerPage> {
         reason = '解码跟不上 buffered=${ahead.inMilliseconds}ms';
         break;
       }
+      // 5 秒了连数据都没进来：这条链路撑不起片源码率（实测 4K 直连走外网，
+      // 片源 56Mbps，8 秒只走 66ms）。继续等对用户没有价值 —— 转码档码率低
+      // 一个数量级，切过去本来就更该做，所以这里不再死等满 10 秒。
+      if (!kIsWeb &&
+          w > 0 &&
+          ahead < const Duration(seconds: 1) &&
+          advanced < const Duration(milliseconds: 500) &&
+          i >= 4) {
+        reason = '链路没数据';
+        break;
+      }
     }
     if (!mounted || _isTranscode || _error != null) return;
     w = _player.state.width ?? 0;
@@ -973,6 +1020,7 @@ class _PlayerPageState extends State<PlayerPage> {
     if (w > 0 && advanced > const Duration(seconds: 2)) return;
     ClientLogger.instance.info(
       '直连检测 width=$w advanced=${advanced.inMilliseconds}ms '
+      'buffered=${(kIsWeb ? Duration.zero : _player.state.buffer).inMilliseconds}ms '
       'playing=${_player.state.playing} buffering=${_player.state.buffering} '
       '${reason.isEmpty ? '超时' : reason}',
       route: 'player.directGuard',
