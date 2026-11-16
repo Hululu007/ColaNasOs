@@ -1228,9 +1228,21 @@ export const videoPlayer: ServerModule = {
         // 会话当时什么状态」记全，排障完可删。
         const isInit = file === 'init.mp4';
         const waitStart = Date.now();
+        // 钉子：记下「等待开始时已经转出几片」。播放器超前多少片、等了多久，
+        // 是判断「转码跟不上」还是「播放器要了不该要的分片」的关键。
+        const producedOf = (p: string) => {
+          try {
+            return fs.readdirSync(p).filter((f) => /^seg\d{5}\.(m4s|ts)$/.test(f)).length;
+          } catch {
+            return -1;
+          }
+        };
+        const producedBefore = producedOf(scoped(path.join(hlsRootOf(k), session)));
+        const wantIndex = Number((file.match(/^seg(\d{5})\./) || [])[1] ?? -1);
+        let waitedMs = 0;
         if (body === null && isInit) {
           k.log.info(
-            { session, part, status: liveStatus },
+            { session, part, status: liveStatus, producedBefore },
             '[player] init 缺片，开始等待',
           );
         }
@@ -1262,6 +1274,7 @@ export const videoPlayer: ServerModule = {
             } catch {
               body = null;
             }
+            waitedMs = Date.now() - waitStart;
             const ready = isPlaylist
               ? body !== null && body.toString('utf8').includes('#EXTINF')
               : body !== null && body.length > 0;
@@ -1289,12 +1302,26 @@ export const videoPlayer: ServerModule = {
           );
         }
 
+        // 分片等了一秒以上才拿到：说明播放器跑到转码前面去了。
+        // 这个指标直接对应「播几秒停一下」，别只在超时时才记。
+        if (!isPlaylist && body !== null && waitedMs > 1000) {
+          k.log.info(
+            { session, file, part, waitedMs, wantIndex, producedBefore, status: liveStatus },
+            '[player] 分片慢交付（播放器超前）',
+          );
+        }
+
         if (body === null) {
           // 分片等不到：写一条日志，否则只能看到 404，判断不出是转码太慢、
           // 会话被取消，还是播放器要了一个根本不会产出的分片。
           if (!isPlaylist) {
             k.log.warn(
-              { session, file, part, status: sessionStatus },
+              {
+                session, file, part,
+                status: sessionStatus, liveStatus,
+                waitedMs, wantIndex, producedBefore,
+                producedNow: producedOf(scoped(path.join(hlsRootOf(k), session))),
+              },
               '[player] 分片等待超时',
             );
           }

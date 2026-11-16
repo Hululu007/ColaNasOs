@@ -1016,6 +1016,14 @@ async function hls(params) {
       String(PLAY_QUALITY.audioBitrateKbps) + 'k',
       '-ac',
       '2',
+      // 响度归一（dynaudnorm）会先扣住音频再吐：整片模式没有 `-t` 时 ffmpeg
+      // 不知道终点，视频已经写出两片、音频才带着原始 PTS 追上来，muxer 不能
+      // 往回写 → **前两片只剩视频**，音频从 0 重新开始。
+      // 浏览器侧（hls.js）表现为「播到 7 秒卡死、buffered 从 7.5 起」：
+      // 实测 4K DV + 电影库（audioNormalize=1）必现，关掉归一就正常。
+      // `-max_interleave_delta 0` 让 muxer 等两条流对齐再落片；只在开归一时加，
+      // 免得让普通片源的首片白等几秒。
+      ...(audioFilter ? ['-max_interleave_delta', '0'] : []),
       '-f',
       'hls',
       // 2s 一片：首片只等 2s 内容。客户端播放列表按同一常量（SEG_MS=2000）
@@ -1051,6 +1059,18 @@ async function hls(params) {
       args.push('-hls_segment_filename', nodePath.join(dir, 'seg%05d.ts'));
     }
     args.push(nodePath.join(dir, 'index.m3u8'));
+
+    // 钉子：把这一轮真正下发的 ffmpeg 参数落一份到会话目录里。
+    // 「同样的片源，浏览器里首片没有音轨」这种问题，光看 kernel.log 猜不出是
+    // 哪条滤镜/哪个候选跑出来的 —— 参数在手才能原样复跑。
+    try {
+      fs.writeFileSync(
+        nodePath.join(dir, '.ffmpeg-args.json'),
+        JSON.stringify({ container: fmp4 ? 'fmp4' : 'mpegts', codec, plan: plan.pipeline, args }, null, 1),
+      );
+    } catch {
+      /* 目录被清理 / 无权限都无所谓 */
+    }
 
     const started = process.hrtime.bigint();
     const exec = () =>

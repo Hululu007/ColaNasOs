@@ -77,10 +77,21 @@ process.chdir(root);
       'lavfi',
       '-i',
       'testsrc=size=320x240:rate=24',
+      '-f',
+      'lavfi',
+      '-i',
+      'sine=frequency=440:duration=2',
       '-t',
       '2',
       '-pix_fmt',
       'yuv420p',
+      // 带一条音轨：fMP4 首片「只有视频」的 bug 只有在有音频时才暴露
+      // （响度归一 + 整片模式，见 h264_normalize_first_seg_av）
+      '-c:a',
+      'aac',
+      '-ac',
+      '2',
+      '-shortest',
       path.join(filesRoot, 'media', 'demo.mp4'),
     ]);
     if (made.status !== 0) console.error('[warn] lavfi 生成测试视频失败');
@@ -446,6 +457,21 @@ process.chdir(root);
             Boolean(jobNorm) && jobNorm.status === 'done',
             `status=${jobNorm && jobNorm.status} err=${jobNorm && jobNorm.error}`,
           );
+          // 响度归一（dynaudnorm）会先扣住音频：整片模式（无 -t）下曾经导致
+          // **前两片只有视频、音频从 0 重来** → 浏览器播到 7 秒卡死、buffered 从 7.5 起。
+          // 首片必须同时含视频与音频（两个 tfdt）。
+          if (jobNorm && jobNorm.status === 'done') {
+            const plN = await inject('GET', jobNorm.url);
+            const segN = String(plN.body)
+              .split('\n')
+              .find((l) => l && !l.startsWith('#'));
+            const rSeg = await inject('GET', `/api/v1/player/hls/${idNorm}/${segN}`);
+            const rawN = rSeg.rawPayload;
+            const tfdtN = Buffer.isBuffer(rawN)
+              ? rawN.toString('latin1').split('tfdt').length - 1
+              : -1;
+            check('h264_normalize_first_seg_av', tfdtN === 2, `tfdt数=${tfdtN} seg=${segN}`);
+          }
           await inject('POST', '/api/v1/video/libraries/flags', admin, {
             id: libId,
             audioNormalize: false,
