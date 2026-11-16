@@ -67,6 +67,22 @@ curl -s -X POST "http://127.0.0.1:5174/hot-reload?token=colanas-dev-ctl"    # �
 - Flutter 3.47 默认会在 dart2js 之后额外跑一遍 dart2wasm 演练编译，本仓库不发 wasm，实测白花 25~30s（37s → 9s）。
 - 实测基线与说明见 `docs/进度与下一步.md` §66。
 
+### 2.1 Kotlin / AGP：现在**不要**开 `android.builtInKotlin=true`
+
+Flutter **3.47.8** 的 Gradle 校验会读 AGP 内置 Kotlin 的版本，而 AGP 9.x（含 9.4）
+把它固定绑在 **2.2.10**，低于 Flutter 要求的 2.2.20 → 构建在
+`dev.flutter.flutter-gradle-plugin` 应用阶段直接失败，且**无法单独升级**
+（flutter#192167；修复 PR #192206 进 3.50）。
+
+- 现状：`android.builtInKotlin=false` + `org.jetbrains.kotlin.android 2.4.21`（legacy KGP）。
+  构建会打一条「plugin applies KGP」警告，**只是警告**，不影响产物。
+- 已经做好的准备：`photo_manager ^3.12.0`（不再强制 apply KGP）、app 级
+  `build.gradle.kts` 早已是 `kotlin { compilerOptions {} }` 写法。
+- Flutter 升到 **3.50+** 后再切：删掉 settings 里的 KGP 声明、把
+  `android.builtInKotlin=true`，然后 `flutter build apk` 验证。
+- ⛔ 不要用 `skipDependencyChecks=true`（写进 gradle.properties）来“绕过”：
+  它等于关掉 Gradle / AGP / Java / Kotlin 全部版本校验，CI 会静默带上不兼容组合。
+
 ## 3. 端口与同源
 
 - 内核 **7788**（`PORT` 可改），`GET /health` 探活；`http://127.0.0.1:7788/` 由内核托管 `apps/colanas_os/build/web`。

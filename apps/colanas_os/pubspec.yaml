@@ -51,7 +51,9 @@ dependencies:
   # 播放器的音频会话（打断/焦点处理）按平台接线
   audio_session: ^0.2.4
   # 手机相册备份：枚举系统相册 / 取原文件（含实况视频分量）
-  photo_manager: ^3.9.0
+  # 3.12+ 已支持 AGP 9 内置 Kotlin（不再强制 apply KGP），
+  # 为将来切 android.builtInKotlin=true 做好准备。
+  photo_manager: ^3.12.0
   # 仅 WiFi 守卫与网络回切自动续跑
   connectivity_plus: ^7.3.2
   # 「不熄屏备份」
