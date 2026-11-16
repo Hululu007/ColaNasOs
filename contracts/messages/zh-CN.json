@@ -1554,6 +1554,7 @@
     "player.bitrate": "码率",
     "player.codecFallback": "{want} 不可用，已回落到 {actual}",
     "player.codecHintDirect": "原画直连不使用转码编码；选编码会自动转为转码播放",
+    "player.webTranscode": "浏览器不支持该片源的编码，已转为 {actual} 转码播放",
     "player.codecToTranscode": "已转为 {preset} 转码播放（{codec}）",
     "player.colorFallback": "本机无法正确显示{source}，已改用服务端色调映射播放（{actual}）",
     "player.directFailed": "原画直连没有画面，已切到 {actual} 转码播放",

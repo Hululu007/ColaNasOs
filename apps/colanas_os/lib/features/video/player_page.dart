@@ -245,8 +245,17 @@ class _PlayerPageState extends State<PlayerPage> {
   /// 正在按目标位置重建会话（跳到未转码区），期间忽略再次拖动。
   bool _jumping = false;
 
-  /// 上次重建会话的时刻：刚建完就再掐一次 ffmpeg 没有意义，2 秒冷却。
-  DateTime _lastJumpAt = DateTime.fromMillisecondsSinceEpoch(0);
+  /// 最近一次 seek / 重新 open 的时间。
+  ///
+  /// 浏览器换 src / seek 时会主动中断上一个 `play()`，抛
+  /// 「The play() request was interrupted because the media was removed...」。
+  /// 这是**我们自己换流造成的**，不是播放失败；以前它被当成良性错误去
+  /// `_openUrl` 重开，重开又中断新的 play() → 无限闪屏、跳转永远落不了地。
+  DateTime _lastSeekAt = DateTime.fromMillisecondsSinceEpoch(0);
+  DateTime _lastOpenAt = DateTime.fromMillisecondsSinceEpoch(0);
+
+  /// 跳转进行中又有新目标：只保留最后一个，等当前这次完成后再跳。
+  Duration? _pendingJump;
 
   /// 服务端回传的**实际**编码（降级后以它为准）；为空表示还没出片。
   String? _actualCodec;
@@ -391,6 +400,12 @@ class _PlayerPageState extends State<PlayerPage> {
         detail:
             'item=${widget.itemId} session=$_sessionId preset=$_preset codec=$_codec url=$_url',
       );
+      // 「play() 被新 load / 移除元素打断」是浏览器换 src 的正常副作用，
+      // 不是播放失败：既不重开（会再次打断新的 play()），也不显示错误页。
+      // 以前它走良性重试，4 次后把错误页摆上来 → 与视频交替出现，就是一直闪。
+      if (_isPlayInterrupted(message)) {
+        return;
+      }
       if (_isBenignPlaybackError(message)) {
         _retryAfterBenignError(message);
         return;
@@ -580,6 +595,7 @@ class _PlayerPageState extends State<PlayerPage> {
     bool resetBenignRetries = true,
   }) async {
     _url = u;
+    _lastOpenAt = DateTime.now();
     final openSw = Stopwatch()..start();
     // 色调映射 / dither 必须在 open 之前生效，否则第一个 HDR 帧就按 mpv 默认
     // （hdr-compute-peak=no）渲染，出现「开头几秒发灰、后面才对」。
@@ -641,6 +657,20 @@ class _PlayerPageState extends State<PlayerPage> {
     }
   }
 
+  /// 浏览器换 src / seek 时主动中断上一个 `play()` 的 DOMException。
+  ///
+  /// 典型文案：
+  /// - The play() request was interrupted by a new load request.
+  /// - The play() request was interrupted because the media was removed from the document.
+  ///
+  /// 这是我们自己换流造成的，播放器随后会继续，不能当错误处理。
+  bool _isPlayInterrupted(String message) {
+    final m = message.toLowerCase();
+    return m.contains('media was removed from the document') ||
+        m.contains('interrupted by a new load request') ||
+        (m.contains('play()') && m.contains('interrupt'));
+  }
+
   /// 「能自愈的错误」：不是真的播不了，重开一次（或等一两秒）就好。
   bool _isBenignPlaybackError(String message) {
     final m = message.toLowerCase();
@@ -674,6 +704,15 @@ class _PlayerPageState extends State<PlayerPage> {
 
   /// 良性中断 → 静默重开当前地址；重试四次仍没播起来才把错误显示出来。
   void _retryAfterBenignError(String message) {
+    // 跳转 / 换档 / 刚 open 或刚 seek 的 3 秒内，浏览器必然抛
+    // 「play() interrupted / media removed」——这是我们换流导致的，不能再
+    // `_openUrl` 重开：重开又会中断新的 play()，表现就是画面一直闪、位置不动。
+    if (_jumping ||
+        _switching ||
+        DateTime.now().difference(_lastSeekAt) < const Duration(seconds: 3) ||
+        DateTime.now().difference(_lastOpenAt) < const Duration(seconds: 3)) {
+      return;
+    }
     if (_benignRetries >= 4) {
       setState(() => _error = message);
       return;
@@ -1024,6 +1063,17 @@ class _PlayerPageState extends State<PlayerPage> {
           : (wantOriginal
                 ? _transcodeFallback()
                 : clampPresetForSource(_preset, _srcHeight, codec: _codec));
+      if (kIsWeb && wantOriginal && !toDirect && !colorBlocked) {
+        // 浏览器解不了 HEVC/10bit 时，「原画」实际是转码档；不说明的话
+        // 用户会以为「我选了原片为什么还在转」。
+        _showNotice(
+          tr('player.webTranscode', {
+            'actual':
+                playQualityPresetOf(effective)?.labelFor(_codec) ?? effective,
+          }),
+          log: 'Web 不支持源编码：原画 → $effective',
+        );
+      }
       if (colorBlocked && wantOriginal) {
         _showNotice(
           tr('player.colorFallback', {
@@ -1092,6 +1142,16 @@ class _PlayerPageState extends State<PlayerPage> {
     final effective = wanted == 'original' && !toDirect
         ? _transcodeFallback(codec: targetCodec)
         : wanted;
+    if (kIsWeb && wanted == 'original' && !toDirect && !colorBlocked) {
+      _showNotice(
+        tr('player.webTranscode', {
+          'actual':
+              playQualityPresetOf(effective)?.labelFor(targetCodec) ??
+              effective,
+        }),
+        log: 'Web 不支持源编码：原画 → $effective',
+      );
+    }
     if (wanted == 'original' && colorBlocked) {
       _showNotice(
         tr('player.colorFallback', {
@@ -1626,6 +1686,7 @@ class _PlayerPageState extends State<PlayerPage> {
   /// 区间内的实时跟随，跳出区间的等松手（`onChangeEnd`）再建会话，
   /// 否则一次拖动会掐掉好几轮 ffmpeg。
   Future<void> _seekTo(Duration target, {bool allowJump = true}) async {
+    _lastSeekAt = DateTime.now();
     final total = _timelineDuration(_player.state.duration);
     var t = target;
     if (t < Duration.zero) t = Duration.zero;
@@ -1669,13 +1730,14 @@ class _PlayerPageState extends State<PlayerPage> {
 
   /// 跳到还没转出来的位置：另建一条从 [target] 起转的会话。
   Future<void> _jumpTo(Duration target) async {
-    if (_jumping) return;
-    // 刚跳过来首片还没落盘，这时候再拖一次只是把 ffmpeg 掐掉重来
-    if (DateTime.now().difference(_lastJumpAt) < const Duration(seconds: 2)) {
+    _lastSeekAt = DateTime.now();
+    // 跳转中又有新目标（用户连续拖进度条）：只保留最后一个，
+    // 等当前会话起完再跳一次，别每一下拖拽都掐掉 ffmpeg 重来。
+    if (_jumping) {
+      _pendingJump = target;
       return;
     }
     final messenger = ScaffoldMessenger.maybeOf(context);
-    _lastJumpAt = DateTime.now();
     setState(() => _jumping = true);
     try {
       final u = await _ensureTranscode(
@@ -1694,6 +1756,13 @@ class _PlayerPageState extends State<PlayerPage> {
       }
     } finally {
       if (mounted) setState(() => _jumping = false);
+      final next = _pendingJump;
+      _pendingJump = null;
+      if (next != null && mounted) {
+        // 让当前这次 open 的 play() 中断先落地，再发起最后一次跳转
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+        if (mounted) unawaited(_jumpTo(next));
+      }
     }
   }
 

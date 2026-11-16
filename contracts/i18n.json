@@ -2171,6 +2171,9 @@
       "actual": {}
     },
     "player.codecHintDirect": {},
+    "player.webTranscode": {
+      "actual": {}
+    },
     "player.codecToTranscode": {
       "preset": {},
       "codec": {}
