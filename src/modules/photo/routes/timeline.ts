@@ -56,7 +56,7 @@ export async function registerPhotoTimeline(app: FastifyInstance, k: KernelApi, 
         if (cur) {
           // 游标方向必须与 ORDER BY 的次键同向：排序是 `taken_at <dir>, id asc`，
           // 所以两个方向在同秒内都是「取 id 更大的那些」。
-          // 这里原先把 asc 分支写成 `id <`，同一秒的照片跨页会重复 + 漏图。
+          // asc 分支若写成 `id <`，同一秒的照片跨页会重复 + 漏图。
           where = asc
             ? sql`${where} and (taken_at > ${cur.takenAt} or (taken_at = ${cur.takenAt} and id > ${cur.id}))`
             : sql`${where} and (taken_at < ${cur.takenAt} or (taken_at = ${cur.takenAt} and id > ${cur.id}))`;
@@ -253,7 +253,7 @@ export async function registerPhotoTimeline(app: FastifyInstance, k: KernelApi, 
         if (cur) {
           // 游标方向必须与 ORDER BY 的次键同向：排序是 `taken_at <dir>, id asc`，
           // 所以两个方向在同秒内都是「取 id 更大的那些」。
-          // 这里原先把 asc 分支写成 `id <`，同一秒的照片跨页会重复 + 漏图。
+          // asc 分支若写成 `id <`，同一秒的照片跨页会重复 + 漏图。
           where = asc
             ? sql`${where} and (taken_at > ${cur.takenAt} or (taken_at = ${cur.takenAt} and id > ${cur.id}))`
             : sql`${where} and (taken_at < ${cur.takenAt} or (taken_at = ${cur.takenAt} and id > ${cur.id}))`;
@@ -616,7 +616,7 @@ export async function registerPhotoTimeline(app: FastifyInstance, k: KernelApi, 
       const off = prefix.length;
 
       // 目录聚合下沉到 SQL。
-      // 原实现是 `select * ... limit 20000` 再在 JS 里切路径分组：进一个大目录就要
+      // `select * ... limit 20000` 再在 JS 里切路径分组：进一个大目录就要
       // 把整棵子树（含 30 多列）读进内存，十万张的库上是几十 MB 的分配 + 全量 GC 压力。
       // 现在三条聚合查询搞定，且只读 rel_path / taken_at 两列。
       const ownerPart = sql`${notTrashed('i.id', uid)}

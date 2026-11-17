@@ -47,21 +47,21 @@ import type { KernelApi } from '../../../../kernel/types';
 import type { MusicHelpers } from '../helpers';
 
 /**
- * 既有实现 音乐接口的**兼容适配层**。
+ * 音乐接口的**兼容适配层**。
  *
- * 为什么需要它：前端音乐模块是从 既有实现 整页搬过来的，它调的是 `/api/music/*`，
+ * 为什么需要它：前端音乐模块调的是 `/api/music/*`，
  * 拿到的是「int 曲目 id + page/pageSize 偏移分页 + snake_case 字段」这套形状；本项目的
  * `/api/v1/music/*` 是「uuid id + cursor 分页 + camelCase」。两边语义对得上但外形差很远。
  *
  * 把这层差异放在服务端而不是 Dart 里，理由：
  * - 30 多个字段的映射只写一遍，不用在客户端维护 cursor→page 的栈；
  * - 真出问题时改一处、跑个冒烟就能回归，不用重编 APK；
- * - 搬运过来的 Dart 源文件一个都不用改（`compat/api_ns.dart` 只做转发）。
+ * - 上层 Dart 源文件一个都不用改（`compat/api_ns.dart` 只做转发）。
  *
  * 约定：
  * - **对外 int id = SQLite 隐式 `rowid`**（曲目 / 歌单 / 合集 / 来源都这样）。内部 uuid 不变，
  *   两者靠 `rowid → id` 的小查询互转；
- * - 时长一律**秒**（既有实现 口径），本项目库里存毫秒；
+ * - 时长一律**秒**（兼容层口径），本项目库里存毫秒；
  * - 分页外壳 `{ items, pagination: { total, page, limit, totalPages, hasNextPage, hasPrevPage } }`；
  * - 全部 `schema.hide = true`：不进 OpenAPI、不生成客户端，纯内部适配口。
  */
@@ -124,7 +124,7 @@ const extOf = (p: string) => {
   return i < 0 ? '' : b.slice(i + 1).toLowerCase();
 };
 
-/** 毫秒 → 秒（既有实现 的 `duration` 是秒，客户端按秒格式化） */
+/** 毫秒 → 秒（兼容层的 `duration` 是秒，客户端按秒格式化） */
 const toSec = (ms: number | null | undefined) =>
   Math.max(0, Math.round(Number(ms ?? 0) / 1000));
 
@@ -164,7 +164,7 @@ const TRACK_SEARCH_COLS = ['t.title', 't.artist', 't.album', 't.rel_path'];
  */
 const COVER_NONE_MARK = 'v3';
 
-/** readLyrics 给的是结构化行，既有实现 前端要的是一整段 LRC 文本 */
+/** readLyrics 给的是结构化行，前端要的是一整段 LRC 文本 */
 function lrcTextOf(r: LyricsResult): string {
   if (r.lines.length === 0) return '';
   return r.lines
@@ -197,7 +197,7 @@ const SORT_EXPR: Record<string, string> = {
   favorite_time: 't.created_at',
 };
 
-/** 曲目行 → 既有实现 形状 */
+/** 曲目行 → 兼容层形状 */
 function toCompatTrack(
   row: CompatTrackRow,
   favorite: boolean,
@@ -216,7 +216,7 @@ function toCompatTrack(
   const mtime = Number(row.mtime ?? 0);
   return {
     id: Number(row.index_id),
-    // 既有实现 用「目录 + 文件名」两段，`fullPath` 再拼起来
+    // 兼容层用「目录 + 文件名」两段，`fullPath` 再拼起来
     path: dirOf(rel),
     filename: baseOf(rel),
     full_path: full,
@@ -348,7 +348,7 @@ function compareTracks(
   return desc ? -c : c;
 }
 
-/** 分页外壳（字段名对齐参考侧 `fromJson`） */
+/** 分页外壳（字段名对齐上层 `fromJson`） */
 function paginationOf(total: number, page: number, pageSize: number) {
   const size = pageSize > 0 ? pageSize : 30;
   const totalPages = total <= 0 ? 0 : Math.ceil(total / size);
@@ -440,7 +440,7 @@ export async function registerMusicCompat(
    * 按路径找曲目。客户端传过来的可能是：
    * - `music/sub/a.mp3`（相对 files 根，= 本项目的 `rel_path`）；
    * - `G:/nas/music/sub/a.mp3`（库根是绝对路径时，`rel_path` 本身就是绝对值）；
-   * - 库内相对路径 `sub/a.mp3`（既有实现 里最常见的形状）。
+   * - 库内相对路径 `sub/a.mp3`（最常见的形状）。
    * 三种都吃下：等值 → 传参是 rel_path 的后缀 → rel_path 是传参的后缀。
    */
   const findTrackRow = async (raw: string): Promise<CompatTrackRow | null> => {
@@ -666,7 +666,7 @@ export async function registerMusicCompat(
     if (!row) return {};
     const favs = await favoriteIds(req);
     const item = toCompatTrack(row, favs.has(row.id));
-    // 既有实现 的 detail/get 回 `{ item, lyrics }`，搬过来的播放控制器正是从
+    // detail/get 回 `{ item, lyrics }`，播放控制器正是从
     // data['lyrics'] 取词。以前这里只回平铺字段，旁挂 .lrc / 内嵌 LYRICS 一首都不显示。
     let lyrics = '';
     try {
@@ -1289,7 +1289,7 @@ p{margin:0;color:#5b5b66;line-height:1.7}</style></head><body><div class="card">
       let added = 0;
       if (uuids.length > 0) {
         // 先一次查已存在，再只插真正新增的 —— 顺带把 `added` 从「尝试次数」修正成「实际新增」。
-        // 原实现逐首 insert（500 次往返），且 `added` 恒等于尝试数。
+        // 逐首 insert 要 500 次往返，且 `added` 恒等于尝试数。
         const have = await sql<{ track_id: string }>`
           select track_id from music_playlist_items
            where playlist_id = ${playlist.id}
@@ -1584,7 +1584,7 @@ p{margin:0;color:#5b5b66;line-height:1.7}</style></head><body><div class="card">
     '/api/v1/music/compat/lyric/search',
     hidden('music:read'),
     async (req: FastifyRequest) => {
-      // 搬运壳本来就带整套「自动搜词 → 严格匹配 → 写旁挂 .lrc」链路，
+      // 兼容壳本来就带整套「自动搜词 → 严格匹配 → 写旁挂 .lrc」链路，
       // 以前这里写死返回 []，整条链从来没通过电。接上公开免 key 的 LRCLIB，
       // 只在本地没歌词时由客户端触发；源不可用就退化成空列表，不报错。
       const body = (req.body || {}) as Record<string, unknown>;
@@ -1923,7 +1923,7 @@ p{margin:0;color:#5b5b66;line-height:1.7}</style></head><body><div class="card">
 
   // ---------------------------------------------------------------- 封面 / 播放（按路径）
 
-  // 搬过来的音乐端**全程按文件路径**取封面和音频（`MusicListItem` 里虽然也有 int id，
+  // 音乐端**全程按文件路径**取封面和音频（`MusicListItem` 里虽然也有 int id，
   // 但音频地址和 `artUri` 都是用 `full_path` 拼的）。主模块那边是 `?id=<uuid>`，
   // 这里补两个按路径寻址的隐藏口，内部复用同一套缓存 / Range / 转码逻辑。
 

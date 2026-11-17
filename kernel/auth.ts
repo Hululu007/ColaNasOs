@@ -75,7 +75,7 @@ export function hasScope(payload: TokenPayload, scope: string): boolean {
  *
  * 优先级：环境变量 > `<dataDir>/jwt.secret` > 新生成并落盘。
  *
- * **必须持久化的原因**：旧实现不设环境变量就直接 `randomBytes` 随机生成，
+ * **必须持久化的原因**：不设环境变量就直接 `randomBytes` 随机生成，
  * 内核每重启一次密钥就变 —— 所有客户端手里的 token 全部作废，用户看到的现象是
  * 「明明勾了自动登录，每次打开客户端还是被踢回登录页，得重新输密码」。
  * 落盘后重启不再踢人；改密钥的需求（怀疑泄露）靠删掉 `jwt.secret` 即可。

@@ -172,7 +172,7 @@ process.chdir(root);
     insert into music_libraries (id, name, root_path, created_at, items)
     values ('lib1', 't', 'music', ${now}, 4)
   `.execute(k.db);
-  // 同一张专辑三首，音轨号故意乱序插入；外加一首同名重复（旧版本，用于 dedupe）
+  // 同一张专辑三首，音轨号故意乱序插入；外加一首同名重复（用于 dedupe）
   const rows = [
     ['t1', 'music/a1.mp3', '晴天', '周杰倫', '葉惠美', 1, 2003, now - 100],
     ['t2', 'music/a2.mp3', '七里香', '周杰倫', '葉惠美', 3, 2003, now - 100],

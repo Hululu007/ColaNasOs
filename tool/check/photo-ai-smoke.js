@@ -300,7 +300,7 @@ process.chdir(root);
   const held = claim(near(A, 0.04), 60);
   const held2 = claim(near(A, 0.04), 60);
   // 挂起语义（2026-11-07）：低质量 / 侧脸**不建簇**，cluster_id 保持 null 等 sweep 回捞。
-  // 旧实现「名字叫 hold 却 randomUUID 独立成组」，用例原来只检查两个 id 不同；
+  // 「名字叫 hold 却 randomUUID 独立成组」是历史坑，用例原来只检查两个 id 不同；
   // 现在改成检查两次都是 hold 且都没有 id，比旧断言更严。
   check(
     'claim_low_quality_hold',

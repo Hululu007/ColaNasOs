@@ -4,7 +4,7 @@
  *
  * 用法（跨平台，自动自举到 Electron 运行时）：
  *   node tool/check/abi-smoke.js
- *   # 或（在 electron_server 下）
+ *   # 或（在仓库根目录下）
  *   npm run smoke:abi
  *
  * 退出码：0 全部通过 / 1 有失败 / 2 环境问题（找不到 electron 或 node_modules）
@@ -41,7 +41,7 @@ if (!process.versions.electron) {
   const exe = resolveElectronExe();
   if (!exe) {
     console.error(
-      '[FATAL] 找不到 electron 可执行文件。请先在 electron_server 下执行 npm install。',
+      '[FATAL] 找不到 electron 可执行文件。请先在仓库根目录执行 npm install。',
     );
     process.exit(2);
   }
@@ -68,7 +68,7 @@ function resolveProjectRoot() {
 
 const PROJECT_ROOT = resolveProjectRoot();
 if (!PROJECT_ROOT) {
-  console.error('[FATAL] 找不到 electron_server/node_modules，请先在该目录执行 npm install。');
+  console.error('[FATAL] 找不到 node_modules，请先在仓库根目录执行 npm install。');
   process.exit(2);
 }
 

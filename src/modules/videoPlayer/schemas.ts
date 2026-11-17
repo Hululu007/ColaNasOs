@@ -54,7 +54,7 @@ export const SessionCreateBody = Type.Object(
     leadMinutes: Type.Optional(
       Type.Integer({
         // 故意不设 minimum：老客户端还会传 0（当年=整片），得让它进来再由
-        // handler 归到默认分段值，别在校验层直接 400 掉老版本。
+        // handler 归到默认分段值，别在校验层直接 400 掉老客户端。
         maximum: 60,
         default: 3,
         description: '提前转码时长（分钟，分段大小）；不传 / 0 / 负数一律按默认 3 分钟',

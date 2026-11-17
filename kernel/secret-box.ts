@@ -7,7 +7,7 @@ import crypto from 'node:crypto';
  * 都要「密文落库、密钥不落库」。salt 参与派生，使同一进程密钥在不同用途下得到不同子密钥，
  * 一类密文泄露不会牵连另一类。
  *
- * 密钥来源与 JWT 一致（`COLANAS_JWT_SECRET`），未配置时用固定开发值——与原先 mount 的行为
+ * 密钥来源与 JWT 一致（`COLANAS_JWT_SECRET`），未配置时用固定开发值——与 mount 的行为
  * 保持一致（密文可跨重启解密）。派生结果按 salt 缓存：scrypt 是刻意慢的函数，
  * 不能每次登录都付一遍 cost。
  *

@@ -1235,7 +1235,7 @@ function buildMemoryBase(
     .sort((a, b) => b.score - a.score);
   // 封面与那年今日 / 首页新记忆共用 6 级优先序：
   // 横屏+前5人脸 > 竖屏+前5人脸 > 横屏有人 > 竖屏有人 > 横屏 > 竖屏。
-  // 旧版只认「已命名的人脸」+ 构图分，会把横屏好图挤掉。
+  // 只认「已命名的人脸」+ 构图分，会把横屏好图挤掉。
   const cover = coverOf
     ? [...scored].sort(
         (a, b) => coverOf(b.row.id) - coverOf(a.row.id) || b.score - a.score,

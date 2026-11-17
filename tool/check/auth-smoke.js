@@ -153,7 +153,7 @@ process.chdir(root);
     String(storedSecret || '').slice(0, 24),
   );
 
-  // 旧版本数据（明文 secret）仍能登录；启用接口会把明文回写成密文
+  // 历史数据（明文 secret）仍能登录；启用接口会把明文回写成密文
   await sql`update auth_users set totp_secret = ${setup.secret} where id = ${alice.id}`.execute(k.db);
   r = await app.inject({
     method: 'POST',

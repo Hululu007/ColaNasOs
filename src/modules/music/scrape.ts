@@ -69,7 +69,7 @@ async function getJson(url: string): Promise<{ ok: boolean; data: unknown; statu
 
 // ---------------------------------------------------------------- 歌词
 
-/** 与搬运壳 `_LyricSearchItem.fromMap` 的字段一一对应；duration 是**毫秒** */
+/** 与兼容壳 `_LyricSearchItem.fromMap` 的字段一一对应；duration 是**毫秒** */
 export interface LyricHit {
   id: string;
   source: string;

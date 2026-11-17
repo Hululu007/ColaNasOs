@@ -129,7 +129,7 @@ export async function registerMusicPlaylists(app: FastifyInstance, k: KernelApi,
         if (!playlist) return reply.code(404).send({ error: Err.notFound, message: 'playlist not found' });
 
         const now = Math.floor(Date.now() / 1000);
-        // 去重后再批量写：原实现是「每首 1 次 SELECT + 1 次 INSERT」，
+        // 去重后再批量写：「每首 1 次 SELECT + 1 次 INSERT」，
         // 加 500 首要 1000 次往返；现在固定 3 次（查已存在 / 查最大位次 / multi-VALUES 插入）。
         const wantIds = [...new Set((body.trackIds || []).slice(0, 500))];
         await k.db.transaction().execute(async (trx: any) => {
@@ -188,7 +188,7 @@ export async function registerMusicPlaylists(app: FastifyInstance, k: KernelApi,
         if (!playlist) return reply.code(404).send({ error: Err.notFound, message: 'playlist not found' });
 
         const now = Math.floor(Date.now() / 1000);
-        // 一条 `in (...)` 删完。原实现逐首 delete，而且是 500 次**独立隐式事务**
+        // 一条 `in (...)` 删完。逐首 delete 会有 500 次**独立隐式事务**
         // （没有包 transaction），WAL 要落 500 次盘。
         const ids = [...new Set((body.trackIds || []).slice(0, 500))];
         await k.db.transaction().execute(async (trx: any) => {

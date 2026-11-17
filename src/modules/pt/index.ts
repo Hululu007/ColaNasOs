@@ -254,7 +254,7 @@ export const pt: ServerModule = {
       },
     },
     {
-      // 既有实现 1:1：预览候选 → 提交下载闭环需要幂等键与来源列
+      // 预览候选 → 提交下载闭环需要幂等键与来源列
       id: '153_pt_download_idem',
       async up(db) {
         const cols = (
@@ -608,7 +608,7 @@ export const pt: ServerModule = {
     const searchAll = async (
       media: PtMedia,
       season: number,
-      /** 出参：逐站点结果（参考页「站点异常」区块要 site_name + error） */
+      /** 出参：逐站点结果（上层「站点异常」区块要 site_name + error） */
       statuses?: Array<{ site_id: string; site_name: string; error: string }>,
     ): Promise<Array<PtCandidate & { siteId: string; siteName: string }>> => {
       const keywords = buildKeywordVariants(media, season).slice(0, 3);
@@ -1644,7 +1644,7 @@ export const pt: ServerModule = {
       }),
       async (req: FastifyRequest) => {
         // size / 分辨率从候选缓存补：下载表只存「提交那一刻」的信息，
-        // 参考页任务卡还要显示文件名与体积（size_bytes / torrent_name）。
+        // 任务卡还要显示文件名与体积（size_bytes / torrent_name）。
         const rows = (
           await sql<any>`
             select d.*, c.size_bytes, c.seeders, c.resolution
@@ -1870,7 +1870,7 @@ export const pt: ServerModule = {
               Type.Literal('pause'),
               Type.Literal('resume'),
               Type.Literal('remove'),
-              // 参考页有「重试」：失败/移除后重新加种
+              // 有「重试」：失败/移除后重新加种
               Type.Literal('retry'),
             ]),
           }),
@@ -2157,7 +2157,7 @@ export const pt: ServerModule = {
     );
 
 
-    // ------------------------------------------------ 既有实现 1:1：预览 → 提交 → 状态同步
+    // ------------------------------------------------ 预览 → 提交 → 状态同步
     /** 从榜单快照里补 title / 海报（收藏分区用；快照结构不固定，全部 try/catch） */
     const catalogMeta = async (): Promise<Map<string, any>> => {
       const out = new Map<string, any>();
@@ -2944,7 +2944,7 @@ export const pt: ServerModule = {
             }
           }),
         );
-        // 「已下载」卡要显示种子文件名 + 入库时间（参考页 _FavItemCard showDownloadInfo）
+        // 「已下载」卡要显示种子文件名 + 入库时间（_FavItemCard showDownloadInfo）
         const taskIds = all
           .map((r) => String(r.download_task_id || ''))
           .filter((v) => v.length > 0);

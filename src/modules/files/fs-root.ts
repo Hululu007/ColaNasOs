@@ -18,7 +18,7 @@ export function httpError(statusCode: number, message: string): Error & { status
 export function resolveInRoot(root: string, input?: string): string {
   const raw = (input || '.').trim();
   // 绝对路径（`D:/x`、`\\host\share\x`、被 URL 编码成 `/D:/x` 的盘符路径）
-  // 不能当相对路径拼到 root 下：旧实现会把 `\\host\share\a.jpg` 剥成
+  // 不能当相对路径拼到 root 下：否则会把 `\\host\share\a.jpg` 剥成
   // `host\share\a.jpg` 再拼到 root 里，随后 stat ENOENT —— 表现就是
   // 「SMB 共享里的海报明明在，页面却 404 / 显示占位图」（2026-11-04）。
   // 这里直接判越界，让 resolveAnyPath 的 catch 分支去走 extraRoots 白名单。
@@ -62,7 +62,7 @@ export function isAbsoluteInput(input?: string): boolean {
   if (!input) return false;
   const t = input.trim();
   // UNC 必须在剥前导斜杠**之前**判断：`\\host\share\x` 剥完只剩 `host\share\x`，
-  // 再判 `startsWith('\\\\')` 永远不会成立 —— 旧实现就是这个 bug，导致
+  // 再判 `startsWith('\\\\')` 永远不会成立 —— 这正是那个 bug，导致
   // SMB 来源根从不登记进 extraRoots，所有 SMB 图片都解析不到。
   if (/^\\\\[^\\]/.test(t)) return true;
   // POSIX 化后的 UNC（`list` 返回 `//host/share`，前端再传回来）

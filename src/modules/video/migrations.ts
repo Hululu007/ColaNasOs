@@ -293,7 +293,7 @@ export const VIDEO_MIGRATIONS: Migration[] = [
       // 媒体信息层（nfo_* 一组列）。
       //
       // 为什么一次补全而不是分批：SQLite 的 add column 极便宜，分批反而要写三次迁移、
-      // 三次改契约、三次重新生成 Dart 模型。列名与既有实现保持同义，
+      // 三次改契约、三次重新生成 Dart 模型。列名保持同义，
       // 便于将来对抄/迁移数据。
       id: '080_video_nfo',
       async up(db) {
@@ -371,7 +371,7 @@ export const VIDEO_MIGRATIONS: Migration[] = [
     },
     {
       // 库级设置：首页是否出现（show_in_home）、左栏排序（sort_order）、
-      // 响度归一（audio_normalize，既有实现同名开关）
+      // 响度归一（audio_normalize，同名开关）
       id: '082_video_library_settings',
       async up(db) {
         const cols = (

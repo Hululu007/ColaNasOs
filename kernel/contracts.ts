@@ -5,7 +5,7 @@ import path from 'node:path';
  * 契约文件定位（安装包形态修复，SP4-03）。
  *
  * 开发态契约在仓库根 `contracts/`；安装包里它在 `resources/contracts/`。
- * 旧实现只认 `process.cwd()/contracts` —— 打包后 cwd 是 exe 所在目录，
+ * 只认 `process.cwd()/contracts` 不行 —— 打包后 cwd 是 exe 所在目录，
  * 内核启动即 `ENOENT`（安装包完全起不来，只有跑过运行冒烟才能发现）。
  *
  * 查找顺序：

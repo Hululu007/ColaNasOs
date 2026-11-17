@@ -729,7 +729,7 @@ export const PHOTO_MIGRATIONS: Migration[] = [
       // - quality：0..100，= 检测置信度 × 100。老行按 score 回填；
       //   sidecar 早已按 0.55 过滤，所以 55 以下都是历史遗留，重建时会踢出分组。
       // - pose_*：从 faceLandMark 的 5 点 kpss 算的姿态代理量。老数据没有关键点，
-      //   留空即「放行」（与既有实现 `yaw 缺失时不判姿态门` 同一口径），不重跑模型。
+      //   留空即「放行」（`yaw 缺失时不判姿态门`），不重跑模型。
       id: '147_photo_faces_claim_guard',
       async up(db) {
         const cols = (
@@ -1031,7 +1031,7 @@ export const PHOTO_MIGRATIONS: Migration[] = [
       //     所有既有的 `library_id in (select id from photo_libraries where owner_id = ?)`
       //     只改表名即可自动支持共享，不用把照片 / 缩略图 / 人脸 / 场景复制两份。
       //
-      // 个人状态（收藏 / 回收站 / 永久移出）原先是 photo_items 上的列，行共享后两个人会互相串。
+      // 个人状态（收藏 / 回收站 / 永久移出）曾是 photo_items 上的列，行共享后两个人会互相串。
       // 这里把它们迁到按账号的 photo_item_user_state：同一张照片，A 收藏 / 删除不影响 B。
       id: '177_photo_shared_source',
       async up(db) {

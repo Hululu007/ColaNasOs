@@ -920,7 +920,7 @@ async function hls(params) {
     );
   }
   // 「原画（copy）」= 不转码，所以输出编码必须**等于片源编码**，不能一律当 h264。
-  // 旧实现只允许 H.264 直通，理由是「AV1 / HEVC 复制进 MPEG-TS 解不出来」——
+  // 只允许 H.264 直通，理由是「AV1 / HEVC 复制进 MPEG-TS 解不出来」——
   // 容器统一 fMP4（带 EXT-X-MAP）之后这条不再成立：实测 hls.js 1.4.10 + Chrome 157
   // 播 HEVC/AV1 的 fMP4 正常（buffered 连续、seek 正常、powerEfficient=true 硬解）。
   //

@@ -207,7 +207,7 @@ export async function ensureDaemon(opts: {
         if (await isOurInstance(port)) {
           const pid = pidOnPort(port);
           adoptedPid = pid;
-          // 补写标记：旧版本内核留下的 daemon 没有 daemon.json，
+          // 补写标记：历史内核留下的 daemon 没有 daemon.json，
           // 认回来的这一步顺便把它补上，之后「退出应用」才停得掉。
           if (pid) writeDaemonInfo(pid, port);
         } else {

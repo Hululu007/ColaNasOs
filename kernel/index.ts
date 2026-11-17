@@ -94,7 +94,7 @@ const PUBLIC_PATHS = new Set([
 const QUERY_TOKEN_PATHS = new Set([
   '/api/v1/video/stream',
   '/api/v1/music/stream',
-  // 音乐壳（搬运过来的播放器）走的是 compat 直链：media_kit 只能拿到 URL，
+  // 音乐壳（兼容播放器）走的是 compat 直链：media_kit 只能拿到 URL，
   // 带不了 Authorization 头，token 只能放 query。漏了这条 → 手机端点歌 401、
   // 播放条出来了却不播放、时长也解析不到（2026-11-08）。
   '/api/v1/music/compat/stream',
@@ -242,7 +242,7 @@ export async function startKernel(opts: KernelOptions) {
   const baseApplied = await migrator.run(BASE_MIGRATIONS, MIGRATION_ORDER);
 
   const config = await createConfig(db);
-  // 旧版本落库的模型名可能是 2026-07-24 下线的 deepseek-chat：改掉并写回，
+  // 历史落库的模型名可能是 2026-07-24 下线的 deepseek-chat：改掉并写回，
   // 否则每期新闻仍拿废弃名去请求（400）。必须在读 systemSettings 之前做。
   if (await migrateDeprecatedLlmModel(config)) {
     app.log.info('[settings] 已把下线的 DeepSeek 模型名迁移到当前默认模型');

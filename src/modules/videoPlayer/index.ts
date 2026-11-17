@@ -22,7 +22,7 @@ import {
 import { Err } from '../../../kernel/errors';
 
 /**
- * videoPlayer（旧工程 `videoPlayer` 模块）：HLS 转码会话 + 字幕烧录。
+ * videoPlayer 模块：HLS 转码会话 + 字幕烧录。
  *
  *   POST /api/v1/player/sessions       建会话（后台 ffmpeg → HLS）
  *   GET  /api/v1/player/sessions?id=   查状态（含播放地址）
@@ -838,7 +838,7 @@ async function sweepHls(k: KernelApi): Promise<number> {
     await sql`delete from player_sessions where id = ${row.id}`.execute(k.db);
   }
 
-  // 孤儿目录：会话行已经不在了（手工删过库 / 旧版本从没清理过），按最后修改时间收
+  // 孤儿目录：会话行已经不在了（手工删过库 / 从没清理过），按最后修改时间收
   try {
     const alive = new Set(
       (await sql<{ id: string }>`select id from player_sessions`.execute(k.db)).rows.map(

@@ -629,7 +629,7 @@ function makeVideo(out, size, seconds, fps = 25) {
 
   // ================================================================ 媒体信息层（V1-V4）
   // 16.1 事后补 nfo：文件没变，增量扫描也必须把元数据吃进来。
-  //      这条是「搜刮/显示全不对」的根因回归：旧实现只按 size+mtime 跳过，
+  //      这条是「搜刮/显示全不对」的根因回归：只按 size+mtime 跳过会漏掉，
   //      用户补了 nfo 界面永远不更新。
   fs.writeFileSync(
     path.join(movies, 'Alpha.nfo'),

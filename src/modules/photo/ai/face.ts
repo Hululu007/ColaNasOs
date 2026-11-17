@@ -586,7 +586,7 @@ export class FaceVectorIndex {
    * 认领一张脸。只做决策 + 返回组 id，**不写库、不往索引里加脸**；
    * 调用方落库后必须再 `add()`，否则后续邻居看不到这张脸。
    *
-   * 对齐既有实现的四道门：
+   * 四道门：
    *   MIN_QUALITY 丢弃 / 低质量与极端侧脸只独立成组 / 邻居质量过滤 /
    *   组中心一致性（只对成型组）/ 冷启动只允许目标组本身还没成型。
    */
@@ -603,7 +603,7 @@ export class FaceVectorIndex {
       yaw <= FACE_CLAIM_MAX_ABS_YAW;
     const canClaim = q >= FACE_CLAIM_MIN_QUALITY && poseOk;
     // 质量不够 / 极端侧脸：**不建簇**、也不参与投票，先挂起（cluster_id = null）。
-    // 旧实现这里直接 randomUUID 建簇 —— 名字叫 hold，行为却是「独立成组」，
+    // 这里直接 randomUUID 建簇 —— 名字叫 hold，行为却是「独立成组」，
     // 于是每张糊脸、每张侧脸都变成一个人物，碎片簇越滚越多
     //（用户「儿子 900 多张」之外的几十张就是这么散掉的）。挂起后由 sweep 用
     // 成型簇的成员级证据回捞，既不丢也不污染。
@@ -942,7 +942,7 @@ export interface SweepReport {
  * 二轮收割：把「首轮挂起」和「历史碎片簇」的脸重新归位。
  *
  * 为什么必须有这一轮：「准」和「全」在单轮里是矛盾的。首轮为了不认错，会把侧脸、
- * 糊脸、跟主力簇不那么像的脸全拒掉；旧实现给它们各建一个簇（碎片爆炸），
+ * 糊脸、跟主力簇不那么像的脸全拒掉；给它们各建一个簇会碎片爆炸，
  * 现在改成挂起 —— 挂起就必须有人来捞，否则等于换了个方式丢人。
  *
  * 这一轮只看「这个组里有没有一张脸和你足够像」，**不看组中心**：
@@ -1259,7 +1259,7 @@ export async function registerPhotoFaces(app: any, k: KernelApi): Promise<void> 
   /**
    * 人脸裁剪图（簇头像 / 照片里的人脸角标）。
    *
-   * 构图照既有实现：以人脸框中心为基准，按最长边外扩 `FACE_IMAGE_EXTEND`（默认 20%），
+   * 构图：以人脸框中心为基准，按最长边外扩 `FACE_IMAGE_EXTEND`（默认 20%），
    * 再向上偏移 `FACE_IMAGE_TOP_EXTRA`（默认 12%）—— 人脸在头像里偏下一点才自然，
    * 否则头顶被切一半。裁剪结果落文件缓存，key 带 box 与 size，box 变了自然失效。
    */
@@ -1334,7 +1334,7 @@ export async function registerPhotoFaces(app: any, k: KernelApi): Promise<void> 
         }
         const bw = Number(row.box_width);
         const bh = Number(row.box_height);
-        // 构图对齐既有实现：最长边外扩 20%、再向上偏移 12%。
+        // 构图：最长边外扩 20%、再向上偏移 12%。
         // 之前写死 30% 会把肩膀/背景一起裁进来，头像墙看起来像「碎图」。
         const extend = Number(process.env.COLANAS_FACE_IMAGE_EXTEND ?? 0.2);
         const topExtra = Number(process.env.COLANAS_FACE_IMAGE_TOP_EXTRA ?? 0.12);

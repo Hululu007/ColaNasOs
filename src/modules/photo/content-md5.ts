@@ -14,7 +14,7 @@ import { absoluteInput, filesRoot, isAbsoluteInput, resolveInRoot } from '../fil
  * 和文件大小），若跟着改写后的文件重算，手机再备份同一张原图就会被判成新照片，
  * 于是重复上传一份。
  *
- * 参考口径：既有实现 的 `photoSourceService.computeContentMd5` 与
+ * 参考口径：`photoSourceService.computeContentMd5` 与
  * `gpsSupplementService._preserveOriginalFingerprint`。
  *
  * ⚠️ 算法必须与客户端 `crypto.md5.bind(file.openRead()).first` 逐字节一致：

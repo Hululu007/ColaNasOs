@@ -229,7 +229,7 @@ const OPTIONAL_PARAMS: OptionalParam[] = [
 ];
 
 /**
- * 进程内记住服务端不认的参数。老实现是「每次调用都先带齐三个可选项 → 吃 400 →
+ * 进程内记住服务端不认的参数。若「每次调用都先带齐三个可选项 → 吃 400 →
  * 剥一个再发」，8 个分类就是 8 次白请求；现在只第一次会撞，之后直接不带。
  */
 const unsupportedParams = new Set<OptionalParam>();

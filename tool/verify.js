@@ -12,7 +12,7 @@
  *   node tool/verify.js --jobs=2    限制并发（默认 min(6, cpus-2)）
  *   node tool/verify.js --fail-fast 首个失败即停止派发
  *
- * 与旧版的差别（2026-11 性能改造，见 AGENTS.md §4）：
+ * 2026-11 性能改造的要点（见 AGENTS.md §4）：
  *   1. 直接执行 package.json 里的命令，不再套一层 `npm run`（省 ~0.4s/步）；
  *   2. 构建之后并行执行，长任务先派发（LPT），每步独立 dataDir + port:0；
  *   3. 打印每步耗时并把结果写 `dist/verify-report.json`；
@@ -114,7 +114,7 @@ const STEPS = [
   { script: 'smoke:https', label: 'HTTPS 入口（用户上传证书）', est: 8000 },
   { script: 'smoke:terminal', label: '交互式终端（PTY / 鉴权 / 会话回收）', est: 11980 },
   { script: 'smoke:rss', label: 'RSS 订阅 / 解析', est: 4090 },
-  { script: 'smoke:discover-shell', label: '影视发现移植（评分体系 / 站点测试 / 规则 / 订阅）', est: 4500 },
+  { script: 'smoke:discover-shell', label: '影视发现（评分体系 / 站点测试 / 规则 / 订阅）', est: 4500 },
   { script: 'smoke:catalog', label: '榜单快照（TMDB / 日系共用落库 + 清理）', est: 5200 },
   { script: 'smoke:catalog-live', label: '榜单链路（假上游：抓取 → 落库 → 降级 / 回退）', est: 6500 },
   { script: 'smoke:sync', label: '同步 / 冲突策略', est: 4170 },
@@ -131,7 +131,7 @@ const STEPS = [
   { script: 'smoke:video-progress', label: '观看进度（隔离 / 排序）', est: 4420 },
   { script: 'smoke:subtitles', label: '外挂字幕（发现 / srt·ass·vtt / WebVTT）', est: 4440 },
   { script: 'smoke:music', label: '音乐库 / tags / 封面 / 歌单', est: 5740 },
-  { script: 'smoke:music-compat', label: '音乐兼容层（既有实现 形状 / int id / 偏移分页）', est: 3200 },
+  { script: 'smoke:music-compat', label: '音乐兼容层（兼容形状 / int id / 偏移分页）', est: 3200 },
   { script: 'smoke:music-detail', label: '专辑/歌手详情 + Last.fm（热度 / 绑定 / Scrobble 签名）', est: 5200 },
   { script: 'smoke:lyrics', label: '歌词（LRC / ID3 / Vorbis / MP4）', est: 5650 },
   { script: 'smoke:blog', label: 'AI 播客（设置 / 文案 / 试听缓存降级）', est: 4200 },

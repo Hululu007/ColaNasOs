@@ -2,7 +2,7 @@
 /**
  * 首次安装引导 + 开发令牌关闭 的验收（安全回归）：
  *   1. 空库里 `/auth/bootstrap` 报 `needsSetup: true`
- *   2. **未设 `COLANAS_DEV_TOKEN` 时 `/auth/dev-token` 必须 404**（旧实现默认就开放 `*` scope 令牌）
+ *   2. **未设 `COLANAS_DEV_TOKEN` 时 `/auth/dev-token` 必须 404**（默认开放 `*` scope 令牌等于开门揖盗）
  *   3. 弱密码被拒；正常密码创建出 `*` scope 管理员
  *   4. 初始化后再次 bootstrap → 409（不会出现第二个管理员）
  *   5. 新管理员能登录、能建子账号
@@ -14,7 +14,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const { spawnSync } = require('node:child_process');
 
-// 关键：显式清掉开发令牌开关，并保持「非 production」—— 复现旧实现会误开的环境
+// 关键：显式清掉开发令牌开关，并保持「非 production」—— 复现开关误开的环境
 delete process.env.COLANAS_DEV_TOKEN;
 process.env.NODE_ENV = 'development';
 process.env.COLANAS_LOG_FILE = '0';

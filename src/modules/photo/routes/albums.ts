@@ -56,8 +56,8 @@ export async function registerPhotoAlbums(app: FastifyInstance, k: KernelApi, h:
             values (${id}, ${name}, ${owner}, ${now}, ${now}, ${coverItemId}, ${serializeAlbumRules(rules)})
           `.execute(trx);
 
-          // 分块 multi-VALUES，每块 200 行 × 3 参数 = 600，低于旧版 SQLite 的 999 参数上限。
-          // 原实现逐张 insert：一次「新建相册并加入 500 张」要 500 次语句往返。
+          // 分块 multi-VALUES，每块 200 行 × 3 参数 = 600，低于 SQLite 的 999 参数上限。
+          // 逐张 insert：一次「新建相册并加入 500 张」要 500 次语句往返。
           for (let i = 0; i < itemIds.length; i += 200) {
             const values = itemIds
               .slice(i, i + 200)
@@ -349,7 +349,7 @@ export async function registerPhotoAlbums(app: FastifyInstance, k: KernelApi, h:
         if (!album) return reply.code(404).send({ error: Err.notFound, message: 'album not found' });
 
         const now = Math.floor(Date.now() / 1000);
-        // 一条 `in (...)` 删完并包进事务。原实现逐张 delete，且没有事务 ——
+        // 一条 `in (...)` 删完并包进事务。逐张 delete，且没有事务 ——
         // 500 张就是 500 次独立隐式提交，WAL 落盘 500 次。
         const removeIds = [...new Set((body.itemIds || []).slice(0, 500))];
         await k.db.transaction().execute(async (trx: any) => {

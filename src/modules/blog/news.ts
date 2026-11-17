@@ -539,7 +539,7 @@ export async function fetchNews(
         const last = i === ALL_WINDOWS.length - 1;
         let list = datedWithin(pool, nowSec, windowDays);
         // 没有发布时间的条目判不了时效：只在最宽窗口仍不够时垫底（排序后自然落到最后，
-        // 不会顶掉真·新新闻）。原实现把它们整批丢掉了，和「不要因为没 pubDate 就丢掉」自相矛盾。
+        // 不会顶掉真·新新闻）。把它们整批丢掉了，和「不要因为没 pubDate 就丢掉」自相矛盾。
         if (last && list.length < want) {
           const undated = pool.filter((e) => e.published === null);
           if (undated.length) list = [...list, ...undated];

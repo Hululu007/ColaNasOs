@@ -12,7 +12,7 @@ import {
 /**
  * SMB（UNC）路径解析的回归测试。
  *
- * 背景：`isAbsoluteInput` 旧实现先 `replace(/^[/\\]+/, '')` 剥掉前导斜杠，再判
+ * 背景：`isAbsoluteInput` 先 `replace(/^[/\\]+/, '')` 剥掉前导斜杠，再判
  * `startsWith('\\\\')` —— 剥完永远不成立，UNC 一律被当成相对路径。后果是
  * 影视来源根从不登记进 extraRoots，`\\host\share\x.jpg` 被拼到 filesRoot 下面，
  * stat 直接 ENOENT，表现为「SMB 里的海报明明在，页面全是占位图」（2026-11-04）。

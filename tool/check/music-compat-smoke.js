@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 /**
- * 既有实现 音乐兼容层（`/api/v1/music/compat/*`）验收：
+ * 音乐兼容层（`/api/v1/music/compat/*`）验收：
  *   来源增删扫 → 列表（排序 / 分页 / 搜索 / 过滤 / 收藏 / 历史）
  *   → 详情 → 专辑艺人聚合 → 歌单增删查 → 合集增删查
  *   → 歌词读写 → 曲目删除 → 时长单位（秒）
  *
- * 这层是给「从 既有实现 整页搬过来的音乐前端」用的：int id（= rowid）、
+ * 这层是给「音乐前端」用的：int id（= rowid）、
  * page/pageSize 偏移分页、snake_case。这里只验它的外形与语义，不验播放。
  *
  * ffmpeg 不在时自动降级（跳过 tags / 聚合严格断言），只验结构与增删改链路。
@@ -197,7 +197,7 @@ function makeAudio(out, opts) {
     if (ffmpeg) makeAudio(out, { freq: 660, sec: 1, meta: f.meta });
     if (!fs.existsSync(out)) fs.writeFileSync(out, Buffer.alloc(4096, 3));
   }
-  // 旁挂 LRC：验证 detail 会把歌词回给搬运过来的播放器
+  // 旁挂 LRC：验证 detail 会把歌词回给播放器
   fs.writeFileSync(path.join(cnSongs, '鮮花.lrc'), '[00:00.00]鲜花\n[00:12.34]回春丹乐队\n', 'utf8');
 
   process.env.COLANAS_DEV_TOKEN = '1';
@@ -284,7 +284,7 @@ function makeAudio(out, opts) {
     (list.items || []).map((x) => x.title).join(','),
   );
 
-  // 关键字段外形（既有实现 的 fromJson 靠这些字段）
+  // 关键字段外形（fromJson 靠这些字段）
   check(
     'track_fields',
     !!alpha &&

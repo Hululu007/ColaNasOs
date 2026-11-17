@@ -139,7 +139,7 @@ type ContentRow = FingerprintRow & { root_path: string };
 /**
  * 跨全部相册源的内容级去重。
  *
- * 三段式（与既有实现同口径）：
+ * 三段式：
  *  1. size 粗筛：`size` 或 `orig_size` 命中即「可能有候选」。orig_size 是关键——
  *     NAS 上的照片补充 GPS / 旋转 / 重编码后真实 size 会变，手机手里仍是原图 size；
  *     只查 size 会把原图判成 absent，然后重复上传一份。
@@ -276,7 +276,7 @@ export async function registerPhotoBackup(app: any, k: KernelApi): Promise<void>
         files: Array<{ name: string; size: number; md5?: string }>;
       };
       const files = body.files.slice(0, 2000);
-      // 旧实现没做用户隔离：会把别人的照片判成「已存在」，比多传一份更糟。
+      // 没做用户隔离：会把别人的照片判成「已存在」，比多传一份更糟。
       const uid = String(req.user?.sub || '');
 
       const md5Set = new Set<string>();

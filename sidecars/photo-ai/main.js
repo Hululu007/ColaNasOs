@@ -239,7 +239,7 @@ function rawRgb(src, size) {
  * 而且三路输出与单路输出**逐字节一致** —— 走的是同一套 swscale 参数，不是我们自己缩的，
  * 所以人脸框、embedding、OCR 文本都不会有像素级漂移。
  *
- * 失败（个别文件的 filtergraph 不兼容）时由调用方退回逐路 spawn，行为与旧版一致。
+ * 失败（个别文件的 filtergraph 不兼容）时由调用方退回逐路 spawn，行为与逐路 spawn 一致。
  */
 function decodeMany(src, jobs) {
   const n = jobs.length;
@@ -383,7 +383,7 @@ function probeSize(src) {
  * 检测输入边长：**跟随原图**而不是固定 640。
  *
  * 固定 640 的代价是实测出来的：4000px 原图缩到 640，占画面 1/10 宽的脸只剩 64px，
- * 合影后排直接漏检。这里按最长边向上取 32 的倍数，上限 960（与既有实现同口径）。
+ * 合影后排直接漏检。这里按最长边向上取 32 的倍数，上限 960。
  */
 function detectSize(ow, oh) {
   const maxSide = Math.max(ow, oh);
@@ -486,7 +486,7 @@ function numOf(v) {
   return typeof v === 'bigint' ? Number(v) : Number(v) || 0;
 }
 
-/** 亮度归一化开关（对齐既有实现的 EdgeFace 预处理） */
+/** 亮度归一化开关（对齐 EdgeFace 预处理） */
 const FACE_LUMA_NORM = String(process.env.COLANAS_FACE_LUMA_NORM ?? '1') !== '0';
 
 /**
@@ -508,7 +508,7 @@ const FACE_MIN_BOX_WIDTH_RATIO_LOOSE = Number(
 const FACE_MAX_FACES_PER_IMAGE = Number(process.env.COLANAS_FACE_MAX_PER_IMAGE ?? 20);
 
 /**
- * 从 faceLandMark 的 5 点关键点算姿态代理量（对齐既有实现 _computePoseFromKps）。
+ * 从 faceLandMark 的 5 点关键点算姿态代理量（对齐 _computePoseFromKps）。
  *
  * 为什么需要：极端侧脸的**检测置信度往往很高**（模型很确定"这是一张脸"），
  * 只靠 quality 拦不住；而这些脸的 embedding 互相之间反而更像，是"侧脸槽"大杂烩组的原料。
@@ -552,7 +552,7 @@ function computePoseFromKps(kpss, faceIndex, affine) {
   };
 }
 
-/** 检测框是否可信（宽度占比用原图宽度，和既有实现同一口径） */
+/** 检测框是否可信（宽度占比用原图宽度，同一口径） */
 function faceBoxAcceptable(box, score, imgWidth) {
   if (score < FACE_DET_SCORE_THRESH) return false;
   if (!box) return true;
@@ -632,7 +632,7 @@ async function faces(src, pre) {
 
     result.push({
       score,
-      // 0..100 质量分：服务端护栏（<55 丢弃 / <70 不认领）与既有实现同一量纲
+      // 0..100 质量分：服务端护栏（<55 丢弃 / <70 不认领），同一量纲
       quality: Math.round(score * 100),
       pose: computePoseFromKps(kpss, i, affine),
       emb: l2normalize(Array.from(emb.embedding.data)),
@@ -718,7 +718,7 @@ async function analyze(params) {
   // 旧做法：faces/scene/activity/ocr 各自 spawn 一次 ffmpeg，每次都把整张 JPEG
   // 从头解码一遍（实测单张 388~445ms，其中推理只占 ~15ms）。
   // 现在：算好各路需要的尺度，一次 split 出 4 路，共用同一次解码（~130ms）。
-  // 各路滤镜参数与旧版逐字节一致（已验证），所以检测框 / embedding / 文字都不漂移。
+  // 各路滤镜参数逐字节一致（已验证），所以检测框 / embedding / 文字都不漂移。
   const size0 = await probeSize(src);
   const ow = size0 ? size0.w : 0;
   const oh = size0 ? size0.h : 0;
@@ -760,7 +760,7 @@ async function analyze(params) {
     try {
       frames = await decodeMany(src, jobs);
     } catch (err) {
-      // 个别文件的 filtergraph 不兼容（如部分 HEIC）：退回逐路解码，行为与旧版一致
+      // 个别文件的 filtergraph 不兼容（如部分 HEIC）：退回逐路解码，行为与逐路 spawn 一致
       console.error('[photo-ai] multi-decode failed, fallback:', String((err && err.message) || err));
       frames = null;
     }

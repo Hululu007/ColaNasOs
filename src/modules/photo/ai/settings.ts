@@ -319,7 +319,7 @@ export async function registerPhotoAiSettings(app: FastifyInstance, k: KernelApi
       ).rows[0];
       if (rebuild) {
         rebuildRunning = rebuild.finished_at == null;
-        // coverage 存的是百分数（97.74），不是 0~1 的比率：老代码乘 100 会得到 9774%
+        // coverage 存的是百分数（97.74），不是 0~1 的比率：乘 100 会得到 9774%
         const rawCov = Number(rebuild.coverage) || 0;
         const cov = Math.round(rawCov > 1 ? rawCov : rawCov * 100);
         const clustered = n0(row?.clustered);

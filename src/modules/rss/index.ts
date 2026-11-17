@@ -53,9 +53,9 @@ const FeedItem = Type.Object({
   lastFetch: Type.Union([Type.Integer(), Type.Null()]),
   createdAt: Type.Integer(),
   autoDownload: Type.Boolean(),
-  /** 参考页卡片标题用 name（没有就用 title） */
+  /** 卡片标题用 name（没有就用 title） */
   name: Type.String(),
-  /** 打码地址（只露域名 + 前几位），参考页副标题显示这个 */
+  /** 打码地址（只露域名 + 前几位），副标题显示这个 */
   urlMasked: Type.String(),
   /** 最近一次抓取是否成功（lastFetch 有值即视为 ok） */
   lastFetchStatus: Type.String(),
@@ -127,7 +127,7 @@ const RuleRunResponse = Type.Object({
 const IdBody = Type.Object({ id: Type.String({ minLength: 1 }) });
 const OkResponse = Type.Object({ ok: Type.Boolean() });
 
-// ---- 既有实现 影视发现 1:1 兼容：条目状态 / 下载台账 / feed 自动下载
+// ---- 影视发现 1:1 兼容：条目状态 / 下载台账 / feed 自动下载
 const EntryActionBody = Type.Object({
   id: Type.String({ minLength: 1 }),
   action: Type.Union([Type.Literal('confirm'), Type.Literal('reject')]),
@@ -821,7 +821,7 @@ export const rss: ServerModule = {
       },
     );
 
-    // ------------------------------------------------ 既有实现 影视发现兼容
+    // ------------------------------------------------ 影视发现兼容
     app.post(
       '/api/v1/rss/entries/action',
       secured('rss:write', {

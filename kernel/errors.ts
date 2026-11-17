@@ -2,7 +2,7 @@
 // source: contracts/errors.json
 // regenerate: npm run gen:errors
 
-/** 统一错误码：值就是 API 返回里的 `error` 字段（与旧版裸字符串完全兼容） */
+/** 统一错误码：值就是 API 返回里的 `error` 字段（与裸字符串完全兼容） */
 export const Err = {
   badRequest: 'badRequest',
   unauthorized: 'unauthorized',

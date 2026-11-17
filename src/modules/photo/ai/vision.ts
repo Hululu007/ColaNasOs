@@ -262,7 +262,7 @@ export async function runAnalyzeBatch(
         const usedClusterIds = new Set<string>();
         for (const face of out.faces) {
           // 小脸门：面积占比过小的脸多半是背景路人，进了库只会把簇搅浑。
-          // 阈值按既有实现的口径（box_width / photo_width），可用环境变量覆盖。
+          // 阈值按 box_width / photo_width 口径，可用环境变量覆盖。
           const iw = face.imgWidth ?? 0;
           if (face.box && iw > 0 && face.box.width / iw < FACE_MIN_WIDTH_RATIO) {
             smallFacesSkipped += 1;

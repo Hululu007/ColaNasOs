@@ -109,7 +109,7 @@ export const music: ServerModule = {
     await registerMusicPlaylists(app, k, h);
     await registerMusicAutoPlaylists(app, k, h);
     await registerMusicCollections(app, k, h);
-    // 既有实现 形状的兼容适配层（前端音乐模块整页搬过来，只认这套形状）
+    // 音乐兼容层（前端音乐模块只认这套形状）
     await registerMusicCompat(app, k, h);
   },
 };

@@ -44,7 +44,7 @@ export const AI_DEFAULTS: PhotoAiConfig = {
   // 默认关：词表里「猫」的最近邻是「地下墓穴 0.97」这类噪声，
   // 宠物类标签放进来会污染语义检索；用户显式打开才召回。
   petEnabled: false,
-  // 默认 3：对齐既有实现（1~2 张的碎片组是路人 / 噪声，全部铺出来正是「人脸不好用」的主因）
+  // 默认 3（1~2 张的碎片组是路人 / 噪声，全部铺出来正是「人脸不好用」的主因）
   faceMinShowCount: 3,
   // 默认 CPU。实测 DirectML 在这几个模型上更慢（全量 1193ms vs 919ms，
   // OCR 尤其 715 vs 394——算子覆盖不全、逐层回落 CPU 再拷回来）。
@@ -98,14 +98,14 @@ function envNum(name: string, fallback: number): number {
 }
 export const FACE_MIN_QUALITY = envNum('COLANAS_FACE_MIN_QUALITY', 55);
 export const FACE_CLAIM_MIN_QUALITY = envNum('COLANAS_FACE_CLAIM_MIN_QUALITY', 70);
-/** 设 0 = 关闭姿态门（既有实现同口径） */
+/** 设 0 = 关闭姿态门 */
 export const FACE_CLAIM_MAX_ABS_YAW = envNum('COLANAS_FACE_CLAIM_MAX_ABS_YAW', 0.4);
 
 /**
  * 大组绝对上限（纯保险丝）。默认 0 = 完全不限制，正常吸纳没有上限。
  *
  * 2026-11-06 定案：不设软冻结、不设大组阈值。
- * 旧实现的两版都试过，都不对：
+ * 两版写法都试过，都不对：
  *   - 硬冻结（到 1000 就停吸）→ 同一个人被劈成「1000 张主组 + 一堆碎组」；
  *   - 软冻结（过阈值只收高置信）→ 准了但开始丢人（侧脸、糊脸全被推出主组）。
  * 真正的病根不是「组太大」，而是**按票数选簇**：大组人多，近邻 top-K 被它占满，
@@ -171,7 +171,7 @@ export function aiJobRunning(key: string): boolean {
  *
  * 为什么用「宽度占比」而不是绝对像素：绝对阈值在不同分辨率下行为完全不同
  * （4000px 的合影里 40px 是小脸，800px 的图里 40px 是正常脸）。
- * 默认 0.015 = 占画面宽度 1.5% 以下视为背景路人（与既有实现同一口径）。
+ * 默认 0.015 = 占画面宽度 1.5% 以下视为背景路人。
  */
 export const FACE_MIN_WIDTH_RATIO =
   Number(process.env.COLANAS_FACE_MIN_WIDTH_RATIO) > 0

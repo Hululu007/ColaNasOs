@@ -119,7 +119,7 @@ export const MUSIC_MIGRATIONS: Migration[] = [
     {
       id: '107_music_collections',
       async up(db) {
-        // 音乐合集：**用户自建**的一组音乐目录（对齐既有实现的「音乐合集」）。
+        // 音乐合集：**用户自建**的一组音乐目录。
         // 曲库是全局共享的（music_libraries / music_tracks 没有 owner），
         // 合集跟歌单、收藏一样按 owner 隔离 —— 每个人整理自己的那一套。
         await sql`

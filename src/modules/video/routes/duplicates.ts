@@ -35,7 +35,7 @@ import type { VideoHelpers } from '../helpers';
  *     否则挂到最早那一年 —— 绝不能挂到每一年，否则会通过「无年份」这条边把 2020 和 2022 连起来。
  *
  * 性能：先只捞 7 个轻列在内存里分组，命中的 id 再回表补封面 / 大小 / 时长。
- * 不做 limit 截断（旧实现 `limit 20000` 会静默漏掉后面的片子）。
+ * 不做 limit 截断（`limit 20000` 会静默漏掉后面的片子）。
  */
 export function duplicateKey(title: string): string {
   let s = String(title || '').toLowerCase();

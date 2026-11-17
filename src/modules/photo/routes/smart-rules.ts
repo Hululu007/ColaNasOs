@@ -118,7 +118,7 @@ function whereOf(owner: string, c: Conditions) {
 /**
  * 批量算「每条规则的命中数」。
  *
- * 原实现是一条规则发两条查询（count + 取封面），200 条规则 = 400 次全表扫，
+ * 一条规则发两条查询（count + 取封面），200 条规则 = 400 次全表扫，
  * 十万张的库上单次请求就是分钟级。现在：
  * - 命中数用一条 `sum(case when <条件> then 1 else 0 end)` 聚合算完（一次扫描）；
  * - 封面仍逐条取，但 `order by taken_at desc limit 1` 沿索引倒序、命中即停，很便宜。

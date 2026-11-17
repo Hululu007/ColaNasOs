@@ -81,7 +81,7 @@ export async function registerPhotoHome(
       `.execute(k.db);
 
       // 首页人物同样跟随「AI 设置 → 人脸显示下限」：1~2 张的碎片组不占卡片位。
-      // 旧实现写死兜底 10，用户把下限设成 0/3 时首页与列表口径不一致。
+      // 写死兜底 10，用户把下限设成 0/3 时首页与列表口径不一致。
       const minShowCount = Math.max(1, aiConfig(k).faceMinShowCount);
       const people = await sql<{
         id: string;
@@ -104,7 +104,7 @@ export async function registerPhotoHome(
 
       // 那年今日：最近 3 年同月同日，每年最多 3 张（照片级返回，用于卡片缩略图）
       //
-      // 原实现是 `strftime('%m-%d', taken_at, ...) = 'MM-DD'`：函数包住了列，
+      // 不能写成 `strftime('%m-%d', taken_at, ...) = 'MM-DD'`：函数包住了列，
       // 完全用不上 taken_at 索引 —— 每次进相册首页都要全表扫一遍。
       // 改成「每年一个 [当天 00:00, 次日 00:00) 的区间」，三个区间都能走索引，
       // 语义完全等价（都是本地时区的这一天，`new Date` 的月末/跨年进位由 JS 处理）。

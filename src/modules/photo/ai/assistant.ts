@@ -16,7 +16,7 @@ import { notTrashed } from '../state';
 /**
  * 相册 AI 助手 + 模型 API：单轮问答与掩码配置项。
  *
- * 与既有实现的两点不同（刻意）：
+ * 两点刻意差异：
  * 1. Key 不另存 `agent_model_api`，直接复用 `system.settings#llm` —— 全局设置页和
  *    相册 AI 设置页写的是同一份，不会出现「这里填了、那边还是空」的两套真源。
  * 2. 读取只回 `hasKey` / `keyTail`（尾 4 位），不回明文；明文只在提交的那一刻经手。
@@ -296,7 +296,7 @@ export async function registerPhotoAssistant(
             }
             ok = true;
           } else {
-            // 有些网关不开放 /models：按既有实现兜底打一次最小 chat 请求
+            // 有些网关不开放 /models：兜底打一次最小 chat 请求
             const chat = await proxyFetch(chatUrl(base), {
               method: 'POST',
               headers,
