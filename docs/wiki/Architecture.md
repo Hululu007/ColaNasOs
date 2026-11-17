@@ -6,14 +6,14 @@
 
 本项目**没有老用户、没有覆盖升级包袱**，所以能一开始就定死后来的很多东西：
 
-| 原本被锁死 | ColaNasOs 的做法 |
-| --- | --- |
-| `name` / `appId` / `bundleName` 不能改 | 自由定标识，**一次定死**（见下方「标识与命名」） |
-| Express 4 不能升（OpenAPI 抓 `_router`） | 换 **Fastify**，route schema 即契约 |
-| asar 原地重写热更 | **版本目录式更新器**（`versions/D<NNN>` + 指针） |
-| 纯 ESM 包不可用 | 服务端 TS + 规范模块，没有 CJS/ESM 撕裂 |
-| 必须逐字兼容 553 条旧路径 | API 可以重新设计（功能覆盖即可） |
-| `ensureColumns` 手写迁移 | 正式**迁移框架**（Kysely migration，可回滚） |
+| 决策点 | 选型 | 理由 |
+| --- | --- | --- |
+| 标识 | `name` / `appId` / `bundleName` 自由定 | **一次定死**（见下方「标识与命名」） |
+| HTTP | **Fastify** | route schema 即契约，OpenAPI 直接生成 |
+| 应用更新 | **版本目录式更新器** | `versions/D<NNN>` + 指针，原子切换、可回滚 |
+| 服务端模块 | TS + 规范模块 | 没有 CJS/ESM 撕裂，编译产物一致 |
+| API 设计 | 可重新设计 | 功能覆盖即可，不背逐字兼容负担 |
+| 数据迁移 | 正式**迁移框架**（Kysely migration） | 版本化、可回滚 |
 
 仍然要背的工程约束：Electron ABI 原生模块、ONNX 版本回归、SQLite 999 变量上限、单实例锁。
 
@@ -29,7 +29,7 @@
 
 收益：API 与 UI 互不拖累；内核崩溃可独立重启；外壳先起、服务并行就绪。
 
-> 反面教材写在文档里：**不要在 `main` 里直接 `require` 内核** —— 那是「单进程巨石」的根因之一。
+> 铁律：**不要在 `main` 里直接 `require` 内核** —— 那样外壳与内核就无法独立重启。
 
 ## 三条主线
 
@@ -45,7 +45,7 @@
 | HTTP | **Fastify** + `@fastify/swagger` + `@fastify/websocket` | 性能、schema 校验、原生 OpenAPI |
 | 契约 | **TypeBox**（与 Fastify route schema 同源） | 单一真源，一路生成 OpenAPI → Dart |
 | DB | **better-sqlite3** + **Kysely** | 类型安全；`node:sqlite` 是可选优化项 |
-| 迁移 | **Kysely migration**（版本化、可回滚） | 替代手写 `ensureColumns` |
+| 迁移 | **Kysely migration**（版本化、可回滚） | 新增表不再整包重打 |
 | 向量 | **sqlite-vec** | ANN 索引，告别全量余弦 |
 | 队列 | 自建 **SQLite 持久化队列** | 优先级 / 限流 / 暂停 / 进度 / 重试 / 撤销；不引 Redis |
 | 日志 | **pino** | Fastify 原生，结构化 |
