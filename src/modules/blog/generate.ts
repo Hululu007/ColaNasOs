@@ -7,6 +7,7 @@ import { TtsEngine } from '../../../kernel/tts/engine';
 import { resolveTtsPaths } from '../../../kernel/tts/paths';
 import { defaultVoiceId, listVoices, resolveVoice, type TtsVoice } from '../../../kernel/tts/voices';
 import { llmApiKey, readSystemSettings } from '../../../kernel/system-settings';
+import { activeProxyInfo } from '../../../kernel/proxy-fetch';
 import { cleanVoice, DEFAULT_VOICE } from './settings';
 import { fetchNews, type NewsItem } from './news';
 import { composeScript, todayLabel } from './script';
@@ -167,6 +168,15 @@ async function run(k: KernelApi, id: string, params: GenerateParams): Promise<vo
     // 模型配置来自系统设置（与设置页同一份），决定抓 1 倍还是 2 倍素材
     const cfg = await readCfg(k);
     const useLlm = Boolean(cfg.apiKey) && cfg.llmEnabled;
+    // 出站代理先说清楚：境外源全挂时，第一个要排除的就是「压根没走代理」
+    const px = activeProxyInfo();
+    k.log.info(
+      `[blog] 出站代理：${
+        px.source === 'direct'
+          ? '直连（设置页未填代理）'
+          : `${px.proxy}（${px.source === 'env' ? '环境变量' : '设置页'}）`
+      }`,
+    );
     // 有模型就多抓一倍素材让它筛，没有就按条数抓（拼接稿用不上备选）
     const { items, failed } = await fetchNews(
       params.counts,

@@ -11,19 +11,20 @@ let agent: ProxyAgent | null = null;
 let active = '';
 /** 环境变量代理（HTTP_PROXY / HTTPS_PROXY）：设置页没填时兜底，抓国外 RSS 靠它 */
 let envAgent: ProxyAgent | null = null;
+let envUrl = '';
 let envChecked = false;
 
 function envProxyAgent(): ProxyAgent | null {
   if (envChecked) return envAgent;
   envChecked = true;
-  const url = (
+  envUrl = (
     process.env.HTTPS_PROXY ||
     process.env.https_proxy ||
     process.env.HTTP_PROXY ||
     process.env.http_proxy ||
     ''
   ).trim();
-  if (url) envAgent = new ProxyAgent(url);
+  if (envUrl) envAgent = new ProxyAgent(envUrl);
   return envAgent;
 }
 
@@ -36,6 +37,22 @@ export function configureProxy(url: string): void {
 
 export function activeProxy(): string {
   return active;
+}
+
+/**
+ * 当前出站走的到底是哪条路：设置页代理 / 环境变量 / 直连。
+ *
+ * 排查「境外源全失败」时必须一眼看出是不是压根没代理（2026-11-17 那次
+ * 13 个源同时 fetch failed，先怀疑的就是这个）。`activeProxy()` 只说设置页
+ * 填了什么，环境变量兜底与直连它区分不出来，所以单独给一个带来源的版本。
+ */
+export function activeProxyInfo(): {
+  proxy: string;
+  source: 'settings' | 'env' | 'direct';
+} {
+  if (agent) return { proxy: active, source: 'settings' };
+  if (envProxyAgent()) return { proxy: envUrl, source: 'env' };
+  return { proxy: '', source: 'direct' };
 }
 
 /** 与全局 `fetch` 同签名，带代理时自动走 dispatcher */
