@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:nas_core/nas_core.dart';
@@ -20,6 +21,7 @@ import 'video_series_widgets.dart';
 import 'video_series_actions.dart';
 import 'short_play_page.dart';
 import 'library_types.dart';
+import 'offline/offline_entry.dart';
 import 'detail/video_detail_kit.dart';
 import 'detail/video_detail_router.dart';
 
@@ -133,6 +135,23 @@ class VideoDetailPageState extends State<VideoDetailPage> {
     _loadProgress();
     _loadEpisodes();
     _loadActorInfo();
+    // 离线下载：进页面就把本地库读起来，下载按钮才能显示「已下载」而不是「下载」
+    offlineEnsureLoaded();
+    _offlineRevision = offlineRevision;
+    _offlineRevision?.addListener(_onOfflineChanged);
+  }
+
+  ValueListenable<int>? _offlineRevision;
+
+  void _onOfflineChanged() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    _offlineRevision?.removeListener(_onOfflineChanged);
+    _offlineRevision = null;
+    super.dispose();
   }
 
   Future<void> _loadActorInfo() async {
@@ -995,6 +1014,7 @@ class VideoDetailPageState extends State<VideoDetailPage> {
               active: item.watched,
               onTap: _busy ? null : _toggleWatched,
             ),
+            _downloadAction(context, item),
             _circleAction(
               context,
               icon: Icons.more_horiz,
@@ -1053,6 +1073,80 @@ class VideoDetailPageState extends State<VideoDetailPage> {
           ),
         ),
       ),
+    );
+  }
+
+  /// 下载按钮（五态）。Web / TV 上 `offlineStateOf` 恒为 unsupported，这里直接不画。
+  ///
+  /// 放在动作条上而不是「更多」里：下载是高频动作，藏两层菜单等于没有这个功能。
+  Widget _downloadAction(BuildContext context, VideoItem item) {
+    switch (offlineStateOf(item.id)) {
+      case OfflineBadgeState.unsupported:
+        return const SizedBox.shrink();
+      case OfflineBadgeState.none:
+        return _circleAction(
+          context,
+          icon: Icons.download_outlined,
+          tooltip: tr('video.offline.download'),
+          onTap: _busy ? null : _openDownload,
+        );
+      case OfflineBadgeState.preparing:
+        return _circleAction(
+          context,
+          icon: Icons.hourglass_top,
+          tooltip: tr('video.offline.preparing'),
+          onTap: () => _toast(tr('video.offline.preparing')),
+        );
+      case OfflineBadgeState.downloading:
+        return _circleAction(
+          context,
+          icon: Icons.downloading,
+          tooltip: tr('video.offline.downloading'),
+          active: true,
+          onTap: () => _toast(tr('video.offline.downloading')),
+        );
+      case OfflineBadgeState.downloaded:
+        return _circleAction(
+          context,
+          icon: Icons.download_done,
+          tooltip: tr('video.offline.downloaded'),
+          active: true,
+          onTap: _busy ? null : _openDownload,
+        );
+      case OfflineBadgeState.failed:
+        return _circleAction(
+          context,
+          icon: Icons.refresh,
+          tooltip: tr('video.offline.retry'),
+          onTap: _busy ? null : _openDownload,
+        );
+    }
+  }
+
+  /// 打开下载弹窗。库名要现查：本地库列表是外壳级的，详情页只带 libraryId，
+  /// 而「本地视频」页的分组 chip 要显示可读的库名。
+  Future<void> _openDownload() async {
+    var libraryName = '';
+    try {
+      final res = await ApiSession.instance.client.videoLibraryList();
+      for (final lib in res.items) {
+        if (lib.id == _item.libraryId) {
+          libraryName = lib.name;
+          break;
+        }
+      }
+    } catch (_) {
+      // 拿不到库名就退回 libraryId，不影响下载
+    }
+    if (!mounted) return;
+    final target = _selected;
+    final series = (_item.series ?? '').trim();
+    await openOfflineDownloadDialog(
+      context,
+      target,
+      libraryName: libraryName,
+      seriesTitle: series.isEmpty ? null : series,
+      totalEpisodes: _item.seriesInfo?.episodes ?? 0,
     );
   }
 

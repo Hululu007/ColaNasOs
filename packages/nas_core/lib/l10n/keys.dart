@@ -2807,6 +2807,43 @@ class I18nKeys {
   static const videoNavSettingsHint = 'video.nav.settingsHint';
   static const videoNavSourceSettings = 'video.nav.sourceSettings';
   static const videoOpenFailed = 'video.openFailed';
+  static const videoOfflineTitle = 'video.offline.title';
+  static const videoOfflineHint = 'video.offline.hint';
+  static const videoOfflineEmpty = 'video.offline.empty';
+  static const videoOfflineDownload = 'video.offline.download';
+  static const videoOfflineDownloading = 'video.offline.downloading';
+  static const videoOfflineDownloaded = 'video.offline.downloaded';
+  static const videoOfflinePreparing = 'video.offline.preparing';
+  static const videoOfflineFailed = 'video.offline.failed';
+  static const videoOfflineRetry = 'video.offline.retry';
+  static const videoOfflineCancel = 'video.offline.cancel';
+  static const videoOfflineDialogTitle = 'video.offline.dialogTitle';
+  static const videoOfflineCodec = 'video.offline.codec';
+  static const videoOfflineResolution = 'video.offline.resolution';
+  static const videoOfflineQuality = 'video.offline.quality';
+  static const videoOfflineQualitySaver = 'video.offline.qualitySaver';
+  static const videoOfflineQualityStandard = 'video.offline.qualityStandard';
+  static const videoOfflineQualityHigh = 'video.offline.qualityHigh';
+  static const videoOfflineBitrate = 'video.offline.bitrate';
+  static const videoOfflineBitrateUnit = 'video.offline.bitrateUnit';
+  static const videoOfflineEstimated = 'video.offline.estimated';
+  static const videoOfflineAudio = 'video.offline.audio';
+  static const videoOfflineAudioDefault = 'video.offline.audioDefault';
+  static const videoOfflineSourceInfo = 'video.offline.sourceInfo';
+  static const videoOfflineStart = 'video.offline.start';
+  static const videoOfflineOriginal = 'video.offline.original';
+  static const videoOfflineOriginalHint = 'video.offline.originalHint';
+  static const videoOfflineEpisodes = 'video.offline.episodes';
+  static const videoOfflineEpisodeLabel = 'video.offline.episodeLabel';
+  static const videoOfflineReplaceTitle = 'video.offline.replaceTitle';
+  static const videoOfflineReplaceBody = 'video.offline.replaceBody';
+  static const videoOfflineReplaceConfirm = 'video.offline.replaceConfirm';
+  static const videoOfflineDeleteTitle = 'video.offline.deleteTitle';
+  static const videoOfflineDeleteBody = 'video.offline.deleteBody';
+  static const videoOfflineDeleteSelected = 'video.offline.deleteSelected';
+  static const videoOfflineSelectedSpace = 'video.offline.selectedSpace';
+  static const videoOfflineSpec = 'video.offline.spec';
+  static const videoOfflineUnsupported = 'video.offline.unsupported';
   static const videoPlayUrlFailed = 'video.playUrlFailed';
   static const videoPruneConfirm = 'video.pruneConfirm';
   static const videoScanDone = 'video.scanDone';
@@ -2969,4 +3006,4 @@ class I18nKeys {
 }
 
 /// 契约键总数（生成时确定），供完整性自检使用。
-const int i18nKeyCount = 2920;
+const int i18nKeyCount = 2957;

@@ -3663,6 +3663,60 @@
     "video.openFailed": {
       "error": {}
     },
+    "video.offline.title": {},
+    "video.offline.hint": {},
+    "video.offline.empty": {},
+    "video.offline.download": {},
+    "video.offline.downloading": {},
+    "video.offline.downloaded": {},
+    "video.offline.preparing": {},
+    "video.offline.failed": {},
+    "video.offline.retry": {},
+    "video.offline.cancel": {},
+    "video.offline.dialogTitle": {},
+    "video.offline.codec": {},
+    "video.offline.resolution": {},
+    "video.offline.quality": {},
+    "video.offline.qualitySaver": {},
+    "video.offline.qualityStandard": {},
+    "video.offline.qualityHigh": {},
+    "video.offline.bitrate": {},
+    "video.offline.bitrateUnit": {},
+    "video.offline.estimated": {},
+    "video.offline.audio": {},
+    "video.offline.audioDefault": {},
+    "video.offline.sourceInfo": {},
+    "video.offline.start": {},
+    "video.offline.original": {},
+    "video.offline.originalHint": {},
+    "video.offline.episodes": {
+      "done": {},
+      "total": {}
+    },
+    "video.offline.episodeLabel": {
+      "n": {}
+    },
+    "video.offline.replaceTitle": {},
+    "video.offline.replaceBody": {
+      "old": {},
+      "new": {}
+    },
+    "video.offline.replaceConfirm": {},
+    "video.offline.deleteTitle": {},
+    "video.offline.deleteBody": {},
+    "video.offline.deleteSelected": {
+      "n": {}
+    },
+    "video.offline.selectedSpace": {
+      "n": {},
+      "size": {}
+    },
+    "video.offline.spec": {
+      "height": {},
+      "codec": {},
+      "kbps": {}
+    },
+    "video.offline.unsupported": {},
     "video.playUrlFailed": {
       "error": {}
     },

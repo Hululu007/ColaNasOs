@@ -7,6 +7,7 @@ import 'package:nas_ui/nas_ui.dart';
 
 import '../../core/session.dart';
 import 'cola_video_detail_page.dart';
+import 'offline/offline_entry.dart';
 import 'video_collection_picker.dart';
 import 'video_scrape_dialogs.dart';
 
@@ -18,6 +19,8 @@ import 'video_scrape_dialogs.dart';
 
 class VideoItemAction {
   static const detail = 'detail';
+  /// 下载到本机（离线副本；Web / TV 不出现这一项）
+  static const download = 'download';
   static const watched = 'watched';
   static const addToCollection = 'addToCollection';
   static const copyPath = 'copyPath';
@@ -63,6 +66,12 @@ List<VideoItemActionSpec> videoItemActionSpecs(
     ),
     item.watched ? Icons.remove_done : Icons.done_all,
   ),
+  if (offlineSupported)
+    VideoItemActionSpec(
+      VideoItemAction.download,
+      tr('video.offline.download'),
+      Icons.download_outlined,
+    ),
   VideoItemActionSpec(
     VideoItemAction.addToCollection,
     tr('video.collection.addTo'),
@@ -138,6 +147,10 @@ List<NasMenuEntry> videoItemMenuEntries(
         danger: s.danger,
         onSelected: () {
           // 「加入合集」自带弹窗，不需要每个页面各写一套分发。
+          if (s.id == VideoItemAction.download && context != null) {
+            unawaited(openOfflineDownloadDialog(context, item));
+            return;
+          }
           if (s.id == VideoItemAction.addToCollection && context != null) {
             unawaited(
               showAddToCollectionDialog(context, itemIds: [item.id]),
@@ -179,6 +192,11 @@ Future<String?> showVideoItemActionSheet(
                 leading: Icon(s.icon, size: 20),
                 title: Text(s.label),
                 onTap: () {
+                  if (s.id == VideoItemAction.download) {
+                    Navigator.pop(ctx);
+                    unawaited(openOfflineDownloadDialog(context, item));
+                    return;
+                  }
                   if (s.id == VideoItemAction.addToCollection) {
                     Navigator.pop(ctx);
                     unawaited(

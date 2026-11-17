@@ -20,6 +20,7 @@ import 'video_app_settings_page.dart';
 import 'video_client_settings_page.dart';
 import 'video_settings_pages.dart';
 import 'video_series_grid_page.dart';
+import 'offline/offline_entry.dart';
 
 /// 影视主页：左侧二级导航 + 内容区。
 ///
@@ -257,6 +258,9 @@ class _VideoShellPageState extends State<VideoShellPage> {
         );
       case 'collections':
         return const VideoCollectionsPage();
+      case 'local':
+        // Web / TV 的 `buildOfflinePage()` 是不支持提示页（离线下载要写本地文件）
+        return buildOfflinePage();
       case 'settings.library':
         return VideoLibrarySettingsPage(onLibrariesChanged: _loadLibraries);
       case 'settings.app':

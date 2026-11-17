@@ -317,6 +317,11 @@
                 "icon": "collections_bookmark_outlined"
               },
               {
+                "id": "local",
+                "labelKey": "video.offline.title",
+                "icon": "download_for_offline"
+              },
+              {
                 "id": "duplicates",
                 "labelKey": "video.duplicate.title",
                 "icon": "content_copy_outlined"
