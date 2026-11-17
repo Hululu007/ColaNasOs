@@ -59,3 +59,18 @@ void ensureLoaded() {
 Widget buildPage() => const VideoOfflinePage();
 
 Future<void> cancel(String itemId) => OfflineDownloadManager.instance.cancel(itemId);
+
+Future<String?> rootPath() async =>
+    (await OfflineDownloadManager.instance.ensureStore()).root;
+
+Future<int> usedBytes() async =>
+    (await OfflineDownloadManager.instance.ensureStore()).totalBytes;
+
+Future<int> itemCount() async =>
+    (await OfflineDownloadManager.instance.ensureStore()).items.length;
+
+Future<void> clearAll() async {
+  final manager = OfflineDownloadManager.instance;
+  final store = await manager.ensureStore();
+  await manager.deleteItems(store.items.keys.toList());
+}

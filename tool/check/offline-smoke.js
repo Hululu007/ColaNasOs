@@ -77,10 +77,11 @@ async function main() {
       path.join(mediaRoot, 'demo.mp4'),
     ]);
     if (small.status !== 0) console.error('[warn] lavfi 生成 720p 测试片失败');
-    // 60 s / 1080p：取消用例要保证「取消时还在编码」
+    // 60 s / 720p：取消用例要保证「取消时还在编码」；分辨率压在 720p
+    // 是因为生成素材本身也吃 CPU，1080p 的 1440 帧会让并行门禁更拥挤
     const big = spawnSync(ffmpeg, [
       '-hide_banner', '-loglevel', 'error', '-y',
-      '-f', 'lavfi', '-i', 'testsrc=size=1920x1080:rate=24:duration=60',
+      '-f', 'lavfi', '-i', 'testsrc=size=1280x720:rate=24:duration=60',
       '-f', 'lavfi', '-i', 'sine=frequency=330:duration=60',
       '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p',
       '-c:a', 'aac', '-shortest',

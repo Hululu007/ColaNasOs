@@ -4,6 +4,7 @@ import 'package:nas_ui/nas_ui.dart';
 import '../../core/codec_support.dart';
 import '../../core/play_quality.dart';
 import '../../core/play_preferences.dart';
+import 'offline/offline_entry.dart';
 
 /// 客户端设置：**只影响当前这台机器 / 这个浏览器**。
 ///
@@ -27,6 +28,13 @@ class VideoClientSettingsPage extends StatefulWidget {
 }
 
 class _VideoClientSettingsPageState extends State<VideoClientSettingsPage> {
+  @override
+  void initState() {
+    super.initState();
+    // 只有 PC / Android 有本地库；Web 上 `offlineRootPath()` 返回 null，段整块隐藏
+    _loadOffline();
+  }
+
   late String _preset = PlayPreferences.preset;
 
   /// 存的值在本机解不出来时显示成 H.264，避免下拉框的 value 不在 items 里。
@@ -38,6 +46,10 @@ class _VideoClientSettingsPageState extends State<VideoClientSettingsPage> {
   late bool _normalize = PlayPreferences.audioNormalize;
   late bool _downmix = PlayPreferences.audioDownmix;
   late int _lead = PlayPreferences.leadMinutes;
+
+  String? _offlinePath;
+  int _offlineUsed = 0;
+  int _offlineCount = 0;
 
   /// 提前转码时长的可选档；默认选中 [PlayPreferences.defaultLeadMinutes]（3 分钟）。
   /// 2026-11-16 起不再提供「整片一次转完」（0）：整片模式没有 `-t` 终点，
@@ -176,8 +188,97 @@ class _VideoClientSettingsPageState extends State<VideoClientSettingsPage> {
             await PlayPreferences.saveAudio(downmix: v);
           },
         ),
+        if (offlineSupported) ..._offlineSection(),
       ],
     );
+  }
+
+  /// 离线下载：存储位置 / 占用 / 一键清空。
+  ///
+  /// 这里只读展示路径，不做「换目录」—— 换目录必然要迁移已有文件（几 GB 起），
+  /// 迁移中途失败还得能回退，属于存储管理单独一版的事（P7），
+  /// 给一个半成品按钮比不给更糟。
+  List<Widget> _offlineSection() {
+    final path = _offlinePath;
+    final used = _offlineUsed;
+    final count = _offlineCount;
+    return [
+      _section(tr('video.offline.title')),
+      _setting(
+        title: tr('video.offline.storage'),
+        hint: path == null
+            ? tr('video.offline.storageHint')
+            : '$path\n${tr('video.offline.storageHint')}',
+        trailing: TextButton(
+          onPressed: _clearOffline,
+          style: TextButton.styleFrom(
+            foregroundColor: Theme.of(context).colorScheme.error,
+          ),
+          child: Text(tr('video.offline.clearAll')),
+        ),
+      ),
+      Padding(
+        padding: const EdgeInsets.only(top: 2),
+        child: Text(
+          tr('video.offline.usage', {
+            'size': formatBytes(used),
+            'n': '$count',
+          }),
+          style: TextStyle(fontSize: NasTokens.fontCaption, color: context.nasTextSecondary),
+        ),
+      ),
+      Padding(
+        padding: const EdgeInsets.only(top: 4),
+        child: Text(
+          tr('video.offline.settingsHint'),
+          style: TextStyle(fontSize: NasTokens.fontCaption, color: context.nasTextSecondary),
+        ),
+      ),
+    ];
+  }
+
+  Future<void> _loadOffline() async {
+    try {
+      final path = await offlineRootPath();
+      final used = await offlineUsedBytes();
+      final count = await offlineItemCount();
+      if (!mounted) return;
+      setState(() {
+        _offlinePath = path;
+        _offlineUsed = used;
+        _offlineCount = count;
+      });
+    } catch (_) {
+      // 读不到本地库：按空显示，不影响其它设置项
+    }
+  }
+
+  Future<void> _clearOffline() async {
+    final count = _offlineCount;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(tr('video.offline.deleteTitle')),
+        content: Text(tr('video.offline.deleteBody')),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(tr('common.cancel')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(tr('video.offline.clearAll')),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    await offlineClearAll();
+    if (!mounted) return;
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      SnackBar(content: Text(tr('video.offline.clearDone', {'n': '$count'}))),
+    );
+    await _loadOffline();
   }
 
   Widget _section(String title) => Padding(

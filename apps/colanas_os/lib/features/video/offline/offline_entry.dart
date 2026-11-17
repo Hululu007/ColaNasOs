@@ -44,3 +44,15 @@ Widget buildOfflinePage() => impl.buildPage();
 
 /// 取消某个下载任务
 Future<void> offlineCancel(String itemId) => impl.cancel(itemId);
+
+/// 本地库根目录（Web 为 null）
+Future<String?> offlineRootPath() => impl.rootPath();
+
+/// 已占用字节数
+Future<int> offlineUsedBytes() => impl.usedBytes();
+
+/// 已下载条目数
+Future<int> offlineItemCount() => impl.itemCount();
+
+/// 清空本机所有离线副本（不动服务器）
+Future<void> offlineClearAll() => impl.clearAll();

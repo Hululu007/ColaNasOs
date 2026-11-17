@@ -30,6 +30,14 @@ void ensureLoaded() {}
 
 Future<void> cancel(String itemId) async {}
 
+Future<String?> rootPath() async => null;
+
+Future<int> usedBytes() async => 0;
+
+Future<int> itemCount() async => 0;
+
+Future<void> clearAll() async {}
+
 Widget buildPage() => const _UnsupportedPage();
 
 class _UnsupportedPage extends StatelessWidget {
