@@ -476,6 +476,11 @@
             "icon": "library_music_outlined",
             "items": [
               {
+                "id": "search",
+                "labelKey": "music.search.title",
+                "icon": "search"
+              },
+              {
                 "id": "songs",
                 "labelKey": "music.nav.songs",
                 "icon": "music_note_outlined"

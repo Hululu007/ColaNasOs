@@ -152,6 +152,20 @@ class I18nKeys {
   // ---- files ----
   static const filesNoDirGranted = 'files.noDirGranted';
   static const filesNoDirGrantedHint = 'files.noDirGrantedHint';
+  // ---- music ----
+  static const musicSearchBackspace = 'music.search.backspace';
+  static const musicSearchEmpty = 'music.search.empty';
+  static const musicSearchHint = 'music.search.hint';
+  static const musicSearchPlaceholder = 'music.search.placeholder';
+  static const musicSearchRecent = 'music.search.recent';
+  static const musicSearchRecentClear = 'music.search.recentClear';
+  static const musicSearchSearching = 'music.search.searching';
+  static const musicSearchSectionAlbums = 'music.search.sectionAlbums';
+  static const musicSearchSectionArtists = 'music.search.sectionArtists';
+  static const musicSearchSectionCollections = 'music.search.sectionCollections';
+  static const musicSearchSectionPlaylists = 'music.search.sectionPlaylists';
+  static const musicSearchSectionSongs = 'music.search.sectionSongs';
+  static const musicSearchTitle = 'music.search.title';
   // ---- photo ----
   static const photoMemoryConfirmAll = 'photo.memory.confirmAll';
   static const photoMemoryConfirmAllBody = 'photo.memory.confirmAllBody';
@@ -3036,4 +3050,4 @@ class I18nKeys {
 }
 
 /// 契约键总数（生成时确定），供完整性自检使用。
-const int i18nKeyCount = 2987;
+const int i18nKeyCount = 3000;

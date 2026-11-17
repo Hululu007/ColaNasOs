@@ -259,6 +259,7 @@ const Map<String, AppNavSpec> kAppNavSpecs = <String, AppNavSpec>{
         titleKey: 'music.nav.library',
         icon: 'library_music_outlined',
         items: <NavItemSpec>[
+          NavItemSpec(id: 'search', labelKey: 'music.search.title', icon: 'search'),
           NavItemSpec(id: 'songs', labelKey: 'music.nav.songs', icon: 'music_note_outlined'),
           NavItemSpec(id: 'favorites', labelKey: 'nav.favorites', icon: 'favorite_outline'),
           NavItemSpec(id: 'history', labelKey: 'music.nav.history', icon: 'history_outlined'),

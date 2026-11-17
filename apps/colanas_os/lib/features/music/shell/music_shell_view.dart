@@ -25,6 +25,7 @@ import 'play_service/play_ctrl_fullscreen/cola_stage_sheet.dart';
 import 'playlist/view/cola_playlist_view.dart';
 import 'source_setting/view/cola_source_settings_view.dart';
 import 'sub_list/view/cola_sub_list_overlay.dart';
+import '../music_search_page.dart' show MusicSearchPage;
 
 /// 是否启用音乐的 兼容适配版。
 /// 置 false 可一行回退到 `MusicShellPage`（实现文件全部保留）。
@@ -98,6 +99,9 @@ class _MusicShellViewState extends State<MusicShellView> {
     }
     final Widget page;
     switch (key) {
+      case 'search':
+        page = const MusicSearchPage();
+        break;
       case 'favorites':
         page = const MusicListPage(
           key: ValueKey('shell-music-favorites'),
@@ -178,9 +182,17 @@ class _MusicShellViewState extends State<MusicShellView> {
           // 少了这一层就会直接看到黑底/漏出后面的东西。
           Positioned.fill(child: context.nasStyle.background),
           Positioned.fill(
-            child: KeyedSubtree(
-              key: ValueKey<String>('shell-music-page-$key'),
-              child: page,
+            // 顶栏（NasMobileAppBar）已经吃掉了状态栏高度，内容区若再被页面
+            // 里的 `SafeArea` 补一次，顶上就会多出一条空白 —— 「我的歌单」
+            // 和「播放历史」正是这么来的（它们的头部是独立页组件，自带 SafeArea）。
+            // 在壳这一层统一摘掉 top padding，比逐个页面删 SafeArea 稳。
+            child: MediaQuery.removePadding(
+              context: context,
+              removeTop: true,
+              child: KeyedSubtree(
+                key: ValueKey<String>('shell-music-page-$key'),
+                child: page,
+              ),
             ),
           ),
           // 三级页面：只盖内容区，左侧一二级栏与底部播放条都在它外面。

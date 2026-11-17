@@ -5,6 +5,7 @@ import '../../shell/app_nav_shell.dart';
 import 'music_library_pages.dart';
 import 'music_page.dart';
 import 'music_playlists_page.dart';
+import 'music_search_page.dart';
 import 'music_settings_pages.dart';
 import 'music_source_page.dart';
 
@@ -31,6 +32,8 @@ class _MusicShellPageState extends State<MusicShellPage> {
       key = 'songs';
     }
     switch (key) {
+      case 'search':
+        return const MusicSearchPage();
       case 'favorites':
         return const MusicFavoritesPage();
       case 'history':

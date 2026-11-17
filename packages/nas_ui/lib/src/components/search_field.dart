@@ -9,6 +9,7 @@ class NasSearchField extends StatefulWidget {
     this.onSubmitted,
     this.onClear,
     this.autofocus = false,
+    this.focusNode,
   });
 
   final TextEditingController controller;
@@ -16,6 +17,10 @@ class NasSearchField extends StatefulWidget {
   final ValueChanged<String>? onSubmitted;
   final VoidCallback? onClear;
   final bool autofocus;
+
+  /// 外部传入的焦点节点：TV 端要在「屏上键盘」和输入框之间来回切焦点，
+  /// 不接管这个节点就没法把焦点送回来。
+  final FocusNode? focusNode;
 
   @override
   State<NasSearchField> createState() => _NasSearchFieldState();
@@ -53,6 +58,7 @@ class _NasSearchFieldState extends State<NasSearchField> {
     return TextField(
       controller: widget.controller,
       autofocus: widget.autofocus,
+      focusNode: widget.focusNode,
       decoration: InputDecoration(
         isDense: true,
         prefixIcon: const Icon(Icons.search),
