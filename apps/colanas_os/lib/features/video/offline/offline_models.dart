@@ -257,15 +257,22 @@ class OfflineTaskRecord {
   int nextTryAt;
   final int createdAt;
 
-  bool get active =>
+  /// 调度器可以接手的状态（重启后 transcoding / downloading 也要重新接手）
+  bool get canRun =>
       state == OfflineTaskState.queued ||
       state == OfflineTaskState.transcoding ||
       state == OfflineTaskState.downloading ||
-      state == OfflineTaskState.verifying;
+      state == OfflineTaskState.verifying ||
+      state == OfflineTaskState.replacing;
+
+  /// 界面上的「进行中」：暂停与等 WiFi 也算，否则用户会以为任务没了
+  bool get active => canRun || state == OfflineTaskState.paused || state == OfflineTaskState.waitingWifi;
 
   /// 排队中但还在退避等待：调度器要跳过它，界面仍算「进行中」
   bool get readyToRun =>
-      active && (nextTryAt == 0 || DateTime.now().millisecondsSinceEpoch >= nextTryAt);
+      canRun &&
+      state != OfflineTaskState.paused &&
+      (nextTryAt == 0 || DateTime.now().millisecondsSinceEpoch >= nextTryAt);
 
   /// 0~1 的整体进度：编码阶段按编码进度折算前 30%，传输占后 70%
   double get overall {
@@ -280,6 +287,10 @@ class OfflineTaskRecord {
         return 0.3 + done.clamp(0.0, 1.0).toDouble() * 0.7;
       case OfflineTaskState.replacing:
         return 0.98;
+      case OfflineTaskState.paused:
+      case OfflineTaskState.waitingWifi:
+        final done = totalBytes > 0 ? downloadedBytes / totalBytes : 0.0;
+        return 0.3 + done.clamp(0.0, 1.0).toDouble() * 0.7;
       case OfflineTaskState.done:
         return 1;
       case OfflineTaskState.failed:
@@ -342,6 +353,12 @@ enum OfflineTaskState {
   downloading,
   verifying,
   replacing,
+
+  /// 用户暂停（只对传输阶段生效：编码是服务端在跑，暂停只会让进度白等）
+  paused,
+
+  /// 仅 WiFi 策略下等网络
+  waitingWifi,
   done,
   failed,
   canceled,

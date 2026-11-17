@@ -205,6 +205,7 @@ const Map<String, AppNavSpec> kAppNavSpecs = <String, AppNavSpec>{
         items: <NavItemSpec>[
           NavItemSpec(id: 'collections', labelKey: 'video.collection.title', icon: 'collections_bookmark_outlined'),
           NavItemSpec(id: 'local', labelKey: 'video.offline.title', icon: 'download_for_offline'),
+          NavItemSpec(id: 'downloads', labelKey: 'video.offline.manage', icon: 'downloading'),
           NavItemSpec(id: 'duplicates', labelKey: 'video.duplicate.title', icon: 'content_copy_outlined'),
         ],
       ),

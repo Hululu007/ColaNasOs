@@ -7,6 +7,7 @@ import 'offline_badge.dart';
 import 'offline_download_dialog.dart' as dialog;
 import 'offline_download_manager.dart';
 import 'offline_models.dart';
+import 'video_offline_downloads_page.dart';
 import 'video_offline_page.dart';
 
 /// 桌面 / Android 的真实实现（`dart:io` 允许使用）。
@@ -38,6 +39,8 @@ OfflineBadgeState stateOf(String itemId) {
   switch (task.state) {
     case OfflineTaskState.queued:
     case OfflineTaskState.transcoding:
+    case OfflineTaskState.waitingWifi:
+    case OfflineTaskState.paused:
       return OfflineBadgeState.preparing;
     case OfflineTaskState.downloading:
     case OfflineTaskState.verifying:
@@ -58,6 +61,12 @@ void ensureLoaded() {
 }
 
 Widget buildPage() => const VideoOfflinePage();
+
+Widget buildDownloadsPage() => const VideoOfflineDownloadsPage();
+
+Future<void> pause(String itemId) => OfflineDownloadManager.instance.pause(itemId);
+
+Future<void> resume(String itemId) => OfflineDownloadManager.instance.resume(itemId);
 
 Future<void> cancel(String itemId) => OfflineDownloadManager.instance.cancel(itemId);
 

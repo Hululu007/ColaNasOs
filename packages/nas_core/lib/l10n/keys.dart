@@ -2810,13 +2810,24 @@ class I18nKeys {
   static const videoOfflineChangeRoot = 'video.offline.changeRoot';
   static const videoOfflineChangeRootBody = 'video.offline.changeRootBody';
   static const videoOfflineChangeRootTitle = 'video.offline.changeRootTitle';
+  static const videoOfflineManage = 'video.offline.manage';
   static const videoOfflineMigrateDone = 'video.offline.migrateDone';
   static const videoOfflineMigrateFailed = 'video.offline.migrateFailed';
   static const videoOfflineMigrating = 'video.offline.migrating';
+  static const videoOfflinePause = 'video.offline.pause';
+  static const videoOfflinePausedState = 'video.offline.pausedState';
+  static const videoOfflineRemoveTask = 'video.offline.removeTask';
+  static const videoOfflineResume = 'video.offline.resume';
+  static const videoOfflineSpeedHint = 'video.offline.speedHint';
+  static const videoOfflineSpeedLimit = 'video.offline.speedLimit';
+  static const videoOfflineSpeedUnlimited = 'video.offline.speedUnlimited';
   static const videoOfflineSubtitle = 'video.offline.subtitle';
   static const videoOfflineSubtitleEmbed = 'video.offline.subtitleEmbed';
   static const videoOfflineSubtitleExternal = 'video.offline.subtitleExternal';
   static const videoOfflineSubtitleNone = 'video.offline.subtitleNone';
+  static const videoOfflineTabActive = 'video.offline.tabActive';
+  static const videoOfflineTabDone = 'video.offline.tabDone';
+  static const videoOfflineTabFailed = 'video.offline.tabFailed';
   static const videoOfflineTitle = 'video.offline.title';
   static const videoOfflineHint = 'video.offline.hint';
   static const videoOfflineEmpty = 'video.offline.empty';
@@ -2860,6 +2871,9 @@ class I18nKeys {
   static const videoOfflineClearAll = 'video.offline.clearAll';
   static const videoOfflineClearDone = 'video.offline.clearDone';
   static const videoOfflineSettingsHint = 'video.offline.settingsHint';
+  static const videoOfflineWaitingWifi = 'video.offline.waitingWifi';
+  static const videoOfflineWifiOnly = 'video.offline.wifiOnly';
+  static const videoOfflineWifiOnlyHint = 'video.offline.wifiOnlyHint';
   static const videoPlayUrlFailed = 'video.playUrlFailed';
   static const videoPruneConfirm = 'video.pruneConfirm';
   static const videoScanDone = 'video.scanDone';
@@ -3022,4 +3036,4 @@ class I18nKeys {
 }
 
 /// 契约键总数（生成时确定），供完整性自检使用。
-const int i18nKeyCount = 2973;
+const int i18nKeyCount = 2987;

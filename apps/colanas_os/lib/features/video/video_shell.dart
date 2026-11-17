@@ -261,6 +261,8 @@ class _VideoShellPageState extends State<VideoShellPage> {
       case 'local':
         // Web / TV 的 `buildOfflinePage()` 是不支持提示页（离线下载要写本地文件）
         return buildOfflinePage();
+      case 'downloads':
+        return buildOfflineDownloadsPage();
       case 'settings.library':
         return VideoLibrarySettingsPage(onLibrariesChanged: _loadLibraries);
       case 'settings.app':

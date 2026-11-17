@@ -47,6 +47,12 @@ Future<String?> migrateRoot(
 
 Widget buildPage() => const _UnsupportedPage();
 
+Widget buildDownloadsPage() => const _UnsupportedPage();
+
+Future<void> pause(String itemId) async {}
+
+Future<void> resume(String itemId) async {}
+
 class _UnsupportedPage extends StatelessWidget {
   const _UnsupportedPage();
 

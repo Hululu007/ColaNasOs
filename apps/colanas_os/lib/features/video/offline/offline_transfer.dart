@@ -23,6 +23,8 @@ class OfflineTransfer {
     required String etag,
     required int expectedBytes,
     int resumeFrom = 0,
+    /// 限速（字节/秒）；0 = 不限。只压下载这一段，不影响服务端转码。
+    int maxBytesPerSecond = 0,
     bool Function()? isCanceled,
     void Function(int received)? onProgress,
   }) async {
@@ -70,6 +72,8 @@ class OfflineTransfer {
 
       sink = target.openWrite(mode: startAt > 0 ? FileMode.append : FileMode.write);
       var received = startAt;
+      // 限速按「本次实际下载的字节」记账：续传时已存在的那部分不该算进配额
+      final clock = Stopwatch()..start();
 
       await for (final chunk in response.stream) {
         if (isCanceled?.call() == true) {
@@ -79,6 +83,19 @@ class OfflineTransfer {
         hasher.add(chunk);
         received += chunk.length;
         onProgress?.call(received);
+
+        if (maxBytesPerSecond > 0) {
+          // 落后于配额就睡一会儿。睡够 1s 封顶：网络本身有抖动，
+          // 用「总额补偿」比「每块固定 sleep」稳得多，也不会把一帧卡成几秒。
+          final downloaded = received - startAt;
+          final expectedMs = downloaded / maxBytesPerSecond * 1000;
+          final ahead = expectedMs - clock.elapsedMilliseconds;
+          if (ahead > 0) {
+            await Future<void>.delayed(
+              Duration(milliseconds: ahead.clamp(0, 1000).round()),
+            );
+          }
+        }
       }
       await sink.flush();
       await sink.close();

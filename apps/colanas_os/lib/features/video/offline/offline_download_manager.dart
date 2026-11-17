@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutter/foundation.dart';
@@ -13,6 +14,7 @@ import '../../../core/session.dart';
 import '../../../core/settings_store.dart';
 import 'offline_background.dart';
 import 'offline_models.dart';
+import 'offline_preferences.dart';
 import 'offline_storage.dart';
 import 'offline_store.dart';
 import 'offline_transfer.dart';
@@ -146,6 +148,13 @@ class OfflineDownloadManager {
 
   int _inflight = 0;
   final Set<String> _running = <String>{};
+
+  /// 暂停原因：`user`（用户点的）/ `wifi`（仅 WiFi 策略下网络切走）
+  final Map<String, String> _pauseReasons = <String, String>{};
+
+  /// 最近一次已知的网络状态。拿不到就按「不是 WiFi」处理，绝不猜成 WiFi。
+  bool _wifi = false;
+  StreamSubscription<List<ConnectivityResult>>? _connSub;
   final Set<String> _canceled = <String>{};
   int _lastProgressAt = 0;
   int _lastNotifyAt = 0;
@@ -184,6 +193,7 @@ class OfflineDownloadManager {
     await store.reconcile();
     _store = store;
     _publishTasks();
+    _watchNetwork();
     // 上次没下完的任务：重开后自动接着跑（不等用户点）
     _schedulePump();
     return store;
@@ -297,6 +307,88 @@ class OfflineDownloadManager {
     _publishTasks();
     _schedulePump();
     return record;
+  }
+
+  /// 监听网络切换。只在「仅 WiFi」开关打开时才影响调度。
+  void _watchNetwork() {
+    if (_connSub != null) return;
+    try {
+      _connSub = Connectivity().onConnectivityChanged.listen(_applyConnectivity);
+    } catch (_) {
+      // 桌面 / 单测里插件可能没实现：退化成「不知道」，不拦下载
+    }
+    unawaited(_refreshNetwork());
+  }
+
+  Future<void> _refreshNetwork() async {
+    try {
+      _applyConnectivity(await Connectivity().checkConnectivity());
+    } catch (_) {
+      // 拿不到就保持上一次的判断
+    }
+  }
+
+  void _applyConnectivity(List<ConnectivityResult> results) {
+    final wifi =
+        results.contains(ConnectivityResult.wifi) || results.contains(ConnectivityResult.ethernet);
+    final was = _wifi;
+    _wifi = wifi;
+    if (wifi == was) return;
+
+    final store = _store;
+    if (store == null) return;
+    if (wifi) {
+      // WiFi 回来：把等网络的任务重新排队，并叫醒调度器
+      var changed = false;
+      for (final task in store.tasks.values) {
+        if (task.state != OfflineTaskState.waitingWifi) continue;
+        task.state = OfflineTaskState.queued;
+        task.nextTryAt = 0;
+        _pauseReasons.remove(task.itemId);
+        changed = true;
+      }
+      if (changed) {
+        unawaited(store.saveTasks());
+        _publishTasks();
+      }
+      _schedulePump();
+    } else if (OfflinePreferences.wifiOnly) {
+      // WiFi 掉了且开了「仅 WiFi」：正在传的在下一个数据块收手
+      for (final task in store.tasks.values) {
+        if (!task.canRun) continue;
+        _pauseReasons[task.itemId] = 'wifi';
+      }
+    }
+  }
+
+  /// 暂停一条任务（编码阶段也支持：服务端会把这一片转完，产物缓存着，
+  /// 继续时直接下载，不重编）
+  Future<void> pause(String itemId) async {
+    final store = await ensureStore();
+    final task = store.tasks[itemId];
+    if (task == null || !task.canRun) return;
+    _pauseReasons[itemId] = 'user';
+    task.state = OfflineTaskState.paused;
+    await store.saveTasks();
+    _publishTasks();
+  }
+
+  /// 继续一条被暂停 / 等网络的任务
+  Future<void> resume(String itemId) async {
+    final store = await ensureStore();
+    final task = store.tasks[itemId];
+    if (task == null) return;
+    if (task.state != OfflineTaskState.paused &&
+        task.state != OfflineTaskState.waitingWifi) {
+      return;
+    }
+    _pauseReasons.remove(itemId);
+    task.state = OfflineTaskState.queued;
+    task.nextTryAt = 0;
+    task.error = null;
+    await store.saveTasks();
+    _publishTasks();
+    _schedulePump();
   }
 
   /// 手动重试一条失败的任务（编码失败也走这里：用户点重试 = 新的一次机会）
@@ -446,7 +538,7 @@ class OfflineDownloadManager {
 
         if (pending.isEmpty) {
           // 还有在跑的 / 在退避等待的就等一等；都没有了就收工
-          final waiting = store.tasks.values.any((t) => t.active);
+          final waiting = store.tasks.values.any((t) => t.canRun);
           if (_inflight == 0 && !waiting) break;
           await Future<void>.delayed(const Duration(milliseconds: 300));
           continue;
@@ -503,6 +595,8 @@ class OfflineDownloadManager {
     switch (task.state) {
       case OfflineTaskState.queued:
       case OfflineTaskState.transcoding:
+      case OfflineTaskState.paused:
+      case OfflineTaskState.waitingWifi:
         unawaited(
           OfflineBackground.update(
             '${task.title} · ${tr('video.offline.preparing')}',
@@ -530,6 +624,15 @@ class OfflineDownloadManager {
     final req = OfflineRequest.fromTask(task);
     final client = ApiSession.instance.client;
     try {
+      // 仅 WiFi：移动网络下干脆不开工，界面显示「等待 WiFi」。
+      // 不报错也不用退避 —— 网络一回来 _applyConnectivity 会把状态翻回 queued。
+      if (OfflinePreferences.wifiOnly && !_wifi) {
+        task.state = OfflineTaskState.waitingWifi;
+        task.nextTryAt = 0;
+        await store.saveTasks();
+        _publishTasks();
+        return;
+      }
       // 1) 建任务（幂等键把「同一次下载」钉死，重试不会翻倍）
       if (task.jobId.isEmpty) {
         final job = await client.offlineJobCreate(
@@ -552,7 +655,10 @@ class OfflineDownloadManager {
 
       // 2) 等编码（服务端进度是 ffmpeg 的 out_time，不是估的）
       while (true) {
-        if (_canceled.contains(req.itemId)) throw const TransferCanceled();
+        // 暂停 / 取消在轮询边界收手：编码是服务端跑的，这里只是不再盯着
+        if (_canceled.contains(req.itemId) || _pauseReasons.containsKey(req.itemId)) {
+          throw const TransferCanceled();
+        }
         final job = await client.offlineJobGet(id: task.jobId);
         final state = '${job.state}';
         if (state == 'failed') throw TransferFailed(job.error ?? '服务端编码失败');
@@ -598,7 +704,10 @@ class OfflineDownloadManager {
         etag: task.etag,
         expectedBytes: artifact.size,
         resumeFrom: resumeFrom,
-        isCanceled: () => _canceled.contains(req.itemId),
+        // 限速按用户设置；0 = 不限
+        maxBytesPerSecond: OfflinePreferences.maxKbps * 1000 ~/ 8,
+        isCanceled: () =>
+            _canceled.contains(req.itemId) || _pauseReasons.containsKey(req.itemId),
         onProgress: (received) {
           task.downloadedBytes = received;
           final now = DateTime.now().millisecondsSinceEpoch;
@@ -621,7 +730,14 @@ class OfflineDownloadManager {
       _publishTasks();
       await _commit(store, req, task, part, artifact);
     } catch (err) {
-      if (err is TransferCanceled || _canceled.contains(req.itemId)) {
+      if (_pauseReasons.containsKey(req.itemId)) {
+        // 暂停不是失败：任务和已下的临时文件都留着，继续时按 Range 接着下
+        final reason = _pauseReasons.remove(req.itemId);
+        task.state = reason == 'wifi'
+            ? OfflineTaskState.waitingWifi
+            : OfflineTaskState.paused;
+        await store.saveTasks();
+      } else if (err is TransferCanceled || _canceled.contains(req.itemId)) {
         store.removeTask(req.itemId);
         await store.saveTasks();
         _canceled.remove(req.itemId);

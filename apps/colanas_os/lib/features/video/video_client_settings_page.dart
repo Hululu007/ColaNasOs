@@ -6,6 +6,7 @@ import '../../core/codec_support.dart';
 import '../../core/play_quality.dart';
 import '../../core/play_preferences.dart';
 import 'offline/offline_entry.dart';
+import 'offline/offline_preferences.dart';
 
 /// 客户端设置：**只影响当前这台机器 / 这个浏览器**。
 ///
@@ -53,6 +54,8 @@ class _VideoClientSettingsPageState extends State<VideoClientSettingsPage> {
   int _offlineCount = 0;
   bool _migrating = false;
   String _migrateLabel = '';
+  bool _wifiOnly = OfflinePreferences.wifiOnly;
+  int _maxKbps = OfflinePreferences.maxKbps;
 
   /// 提前转码时长的可选档；默认选中 [PlayPreferences.defaultLeadMinutes]（3 分钟）。
   /// 2026-11-16 起不再提供「整片一次转完」（0）：整片模式没有 `-t` 终点，
@@ -235,6 +238,36 @@ class _VideoClientSettingsPageState extends State<VideoClientSettingsPage> {
             foregroundColor: Theme.of(context).colorScheme.error,
           ),
           child: Text(tr('video.offline.clearAll')),
+        ),
+      ),
+      _setting(
+        title: tr('video.offline.wifiOnly'),
+        hint: tr('video.offline.wifiOnlyHint'),
+        trailing: Switch(
+          value: _wifiOnly,
+          onChanged: (v) async {
+            setState(() => _wifiOnly = v);
+            await OfflinePreferences.setWifiOnly(v);
+          },
+        ),
+      ),
+      _setting(
+        title: tr('video.offline.speedLimit'),
+        hint: tr('video.offline.speedHint'),
+        trailing: NasDropdown<int>(
+          value: _maxKbps,
+          isDense: true,
+          underline: const SizedBox.shrink(),
+          items: [
+            DropdownMenuItem(value: 0, child: Text(tr('video.offline.speedUnlimited'))),
+            for (final kbps in <int>[2000, 5000, 10000, 20000])
+              DropdownMenuItem(value: kbps, child: Text('${kbps ~/ 1000} Mbps')),
+          ],
+          onChanged: (v) async {
+            if (v == null) return;
+            setState(() => _maxKbps = v);
+            await OfflinePreferences.setMaxKbps(v);
+          },
         ),
       ),
     ];

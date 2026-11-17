@@ -322,6 +322,11 @@
                 "icon": "download_for_offline"
               },
               {
+                "id": "downloads",
+                "labelKey": "video.offline.manage",
+                "icon": "downloading"
+              },
+              {
                 "id": "duplicates",
                 "labelKey": "video.duplicate.title",
                 "icon": "content_copy_outlined"

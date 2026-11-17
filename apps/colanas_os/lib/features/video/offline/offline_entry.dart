@@ -42,6 +42,13 @@ void offlineEnsureLoaded() => impl.ensureLoaded();
 /// 影视 → 合集 → 本地视频 的页面
 Widget buildOfflinePage() => impl.buildPage();
 
+/// 影视 → 合集 → 下载管理 的页面
+Widget buildOfflineDownloadsPage() => impl.buildDownloadsPage();
+
+/// 暂停 / 继续一条下载任务
+Future<void> offlinePause(String itemId) => impl.pause(itemId);
+Future<void> offlineResume(String itemId) => impl.resume(itemId);
+
 /// 取消某个下载任务
 Future<void> offlineCancel(String itemId) => impl.cancel(itemId);
 

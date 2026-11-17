@@ -305,4 +305,62 @@ void main() {
     await Directory(target).create(recursive: true);
     expect(await store.copyLibraryTo(target), 0);
   });
+
+  // ---------------------------------------------------------------- 任务状态机
+  //
+  // 调度器只看 `readyToRun`，界面只看 `active`。两个口径搞混的后果很具体：
+  // 暂停的任务被重新捡起来跑，或者「等 WiFi」的任务被当成消失了。
+
+  OfflineTaskRecord taskWith(OfflineTaskState state, {int nextTryAt = 0}) => OfflineTaskRecord(
+    itemId: 'a',
+    jobId: 'j',
+    title: 't',
+    libraryId: 'lib',
+    spec: const <String, dynamic>{},
+    state: state,
+    nextTryAt: nextTryAt,
+  );
+
+  test('运行类状态可以跑；暂停 / 等 WiFi / 终态都不跑', () {
+    for (final s in [
+      OfflineTaskState.queued,
+      OfflineTaskState.transcoding,
+      OfflineTaskState.downloading,
+      OfflineTaskState.verifying,
+      OfflineTaskState.replacing,
+    ]) {
+      expect(taskWith(s).readyToRun, isTrue, reason: s.name);
+    }
+    for (final s in [
+      OfflineTaskState.paused,
+      OfflineTaskState.waitingWifi,
+      OfflineTaskState.done,
+      OfflineTaskState.failed,
+      OfflineTaskState.canceled,
+    ]) {
+      expect(taskWith(s).readyToRun, isFalse, reason: s.name);
+    }
+  });
+
+  test('暂停与等 WiFi 仍算「进行中」（否则用户以为任务没了）', () {
+    expect(taskWith(OfflineTaskState.paused).active, isTrue);
+    expect(taskWith(OfflineTaskState.waitingWifi).active, isTrue);
+    expect(taskWith(OfflineTaskState.failed).active, isFalse);
+    expect(taskWith(OfflineTaskState.done).active, isFalse);
+  });
+
+  test('退避未到点的任务不跑，到点就跑', () {
+    final future = DateTime.now().millisecondsSinceEpoch + 60_000;
+    expect(taskWith(OfflineTaskState.queued, nextTryAt: future).readyToRun, isFalse);
+    final past = DateTime.now().millisecondsSinceEpoch - 1;
+    expect(taskWith(OfflineTaskState.queued, nextTryAt: past).readyToRun, isTrue);
+  });
+
+  test('任务记录带重试字段往返', () {
+    final task = taskWith(OfflineTaskState.failed)..attempts = 2..nextTryAt = 12345;
+    final back = OfflineTaskRecord.fromJson(task.toJson());
+    expect(back.attempts, 2);
+    expect(back.nextTryAt, 12345);
+    expect(back.state, OfflineTaskState.failed);
+  });
 }

@@ -30,6 +30,7 @@ class AppVisuals {
     'confirmation_number_outlined': Icons.confirmation_number_outlined,
     'content_copy_outlined': Icons.content_copy_outlined,
     'download_for_offline': Icons.download_for_offline,
+    'downloading': Icons.downloading,
     'delete_sweep_outlined': Icons.delete_sweep_outlined,
     'download': Icons.download_outlined,
     'download_outlined': Icons.download_outlined,

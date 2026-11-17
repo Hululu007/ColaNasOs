@@ -3669,6 +3669,7 @@
       "size": {}
     },
     "video.offline.changeRootTitle": {},
+    "video.offline.manage": {},
     "video.offline.migrateDone": {},
     "video.offline.migrateFailed": {
       "error": {}
@@ -3677,10 +3678,20 @@
       "done": {},
       "total": {}
     },
+    "video.offline.pause": {},
+    "video.offline.pausedState": {},
+    "video.offline.removeTask": {},
+    "video.offline.resume": {},
+    "video.offline.speedHint": {},
+    "video.offline.speedLimit": {},
+    "video.offline.speedUnlimited": {},
     "video.offline.subtitle": {},
     "video.offline.subtitleEmbed": {},
     "video.offline.subtitleExternal": {},
     "video.offline.subtitleNone": {},
+    "video.offline.tabActive": {},
+    "video.offline.tabDone": {},
+    "video.offline.tabFailed": {},
     "video.offline.title": {},
     "video.offline.hint": {},
     "video.offline.empty": {},
@@ -3800,6 +3811,9 @@
       "n": {}
     },
     "video.offline.settingsHint": {},
+    "video.offline.waitingWifi": {},
+    "video.offline.wifiOnly": {},
+    "video.offline.wifiOnlyHint": {},
     "video.playUrlFailed": {
       "error": {}
     },
