@@ -15,7 +15,7 @@ dev.bat
 ### 1.1 「按 R」不用人敲（`tool/dev/flutter-dev.js`）
 
 `flutter run` 的命令（`r`/`R`/`q`）只从**它自己的 stdin** 读，所以以前改完 `packages/**`
-（`nas_core` / `nas_ui` 这类 path 依赖）必须人到窗口里敲 R，否则一直跑旧代码 ——
+（`nas_core` / `nas_ui` 这类 path 依赖）必须人到窗口里敲 R，否则一直跑着上一次的构建 ——
 表现成「前端还是旧的」。现在由 `flutter-dev.js` 接管 flutter 的 stdin：
 
 - **自动**：监听 `packages/**` 与 `apps/colanas_os/pubspec.yaml`，变化后 1.2s 去抖自动发 `R`；
