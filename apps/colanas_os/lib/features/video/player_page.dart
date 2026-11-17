@@ -303,6 +303,9 @@ class _PlayerPageState extends State<PlayerPage> {
   /// 2026-11-17 出过一次「看门狗被 seek 回显骗过、整场冻死」的事故。
   final PlayStallDetector _stall = PlayStallDetector();
 
+  /// 看门狗每次「重建会话」的时间戳（见 [_armStallWatch] 末尾的防抖）。
+  final List<DateTime> _stallRebuiltAt = [];
+
   /// 第几次 `open()`。同一个 open 只允许「首片没到就补开」一次 ——
   /// 没有这个计数的话，失败→重开→再失败会把画面刷成闪烁（早期线上问题）。
   int _openGen = 0;
@@ -2302,7 +2305,22 @@ class _PlayerPageState extends State<PlayerPage> {
         unawaited(_stallRecover(at));
         return;
       }
+      // 防「卡 → 重建 → 又卡」的死循环：那种情况每 16 秒起一次 ffmpeg，
+      // 比冻住还糟（CPU 打满、别的会话全排队）。5 分钟内最多重开 5 次，
+      // 超了就收手，只留日志 —— 这时候需要的是换画质 / 换编码，不是再重开。
+      final now = DateTime.now();
+      _stallRebuiltAt.removeWhere(
+        (t) => now.difference(t) > const Duration(minutes: 5),
+      );
       timer.cancel();
+      if (_stallRebuiltAt.length >= 5) {
+        ClientLogger.instance.error(
+          '反复卡住（5 分钟内已重建 5 次）→ 停止自动重建（$detail）',
+          route: 'player.stall/${_sessionId ?? 'direct'}',
+        );
+        return;
+      }
+      _stallRebuiltAt.add(now);
       ClientLogger.instance.warn(
         '播放停滞 ${_stall.limitSeconds * 2}s 仍未恢复 → 重建会话 target=${at.inMilliseconds}ms（$detail）',
         route: 'player.stall/${_sessionId ?? 'direct'}',
