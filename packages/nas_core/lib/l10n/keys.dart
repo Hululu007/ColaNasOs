@@ -2807,6 +2807,9 @@ class I18nKeys {
   static const videoNavSettingsHint = 'video.nav.settingsHint';
   static const videoNavSourceSettings = 'video.nav.sourceSettings';
   static const videoOpenFailed = 'video.openFailed';
+  static const videoOfflineSubtitle = 'video.offline.subtitle';
+  static const videoOfflineSubtitleEmbed = 'video.offline.subtitleEmbed';
+  static const videoOfflineSubtitleNone = 'video.offline.subtitleNone';
   static const videoOfflineTitle = 'video.offline.title';
   static const videoOfflineHint = 'video.offline.hint';
   static const videoOfflineEmpty = 'video.offline.empty';
@@ -3012,4 +3015,4 @@ class I18nKeys {
 }
 
 /// 契约键总数（生成时确定），供完整性自检使用。
-const int i18nKeyCount = 2963;
+const int i18nKeyCount = 2966;

@@ -3663,6 +3663,9 @@
     "video.openFailed": {
       "error": {}
     },
+    "video.offline.subtitle": {},
+    "video.offline.subtitleEmbed": {},
+    "video.offline.subtitleNone": {},
     "video.offline.title": {},
     "video.offline.hint": {},
     "video.offline.empty": {},

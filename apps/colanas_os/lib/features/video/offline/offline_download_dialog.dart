@@ -98,6 +98,10 @@ class _DownloadSheetState extends State<_DownloadSheet> {
   late String _codec = 'original';
   late int _height = 0;
   late String _quality = 'standard';
+
+  /// 默认内挂：剧集没字幕基本没法看；源片没有字幕轨时服务端 `-map 0:s?` 是空操作。
+  /// 原画档由服务端强制走 `none`（`-c copy` 本来就把字幕带过去了）。
+  String _subtitleMode = 'embed';
   final TextEditingController _kbps = TextEditingController();
 
   /// 手填值（空 = 用服务端推荐）
@@ -136,6 +140,7 @@ class _DownloadSheetState extends State<_DownloadSheet> {
           codec: _codec,
           height: _height,
           qualityMode: _quality,
+          subtitleMode: _subtitleMode,
           videoKbps: _manualKbps ? (int.tryParse(_kbps.text.trim()) ?? 0) : null,
         ),
       );
@@ -326,6 +331,7 @@ class _DownloadSheetState extends State<_DownloadSheet> {
             _qualityField(),
             const SizedBox(height: 10),
             _bitrateField(quote),
+            _subtitleField(),
           ] else
             Text(
               tr('video.offline.originalHint'),
@@ -495,6 +501,27 @@ class _DownloadSheetState extends State<_DownloadSheet> {
       onChanged: (v) {
         if (v == null || v == _quality) return;
         setState(() => _quality = v);
+        _scheduleQuote();
+      },
+    );
+  }
+
+  /// 字幕只有「内挂 / 不内挂」两个选项：
+  /// 烧录要重编码一遍视频（等于再挖一次坑），外挂 srt 依赖客户端再下一份文件，
+  /// 第一版只给最稳的内挂。
+  Widget _subtitleField() {
+    final embed = _subtitleMode == 'embed';
+    return SwitchListTile(
+      contentPadding: EdgeInsets.zero,
+      dense: true,
+      value: embed,
+      title: Text(tr('video.offline.subtitle')),
+      subtitle: Text(
+        embed ? tr('video.offline.subtitleEmbed') : tr('video.offline.subtitleNone'),
+        style: TextStyle(fontSize: NasTokens.fontCaption, color: context.nasTextSecondary),
+      ),
+      onChanged: (v) {
+        setState(() => _subtitleMode = v ? 'embed' : 'none');
         _scheduleQuote();
       },
     );

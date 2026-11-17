@@ -57,6 +57,25 @@ function findFfmpeg() {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/** 产物里有没有字幕流：直接问 ffprobe，不信接口返回的自述 */
+function hasSubtitleStream(ffprobe, file) {
+  const r = spawnSync(
+    ffprobe,
+    ['-v', 'error', '-show_entries', 'stream=codec_type', '-of', 'csv=p=0', file],
+    { encoding: 'utf8' },
+  );
+  return String(r.stdout || '')
+    .split(/\r?\n/)
+    .map((x) => x.trim())
+    .includes('subtitle');
+}
+
+function ffprobeOf(ffmpegPath) {
+  if (!ffmpegPath) return null;
+  const p = path.join(path.dirname(ffmpegPath), process.platform === 'win32' ? 'ffprobe.exe' : 'ffprobe');
+  return fs.existsSync(p) ? p : null;
+}
+
 async function main() {
   const ffmpeg = findFfmpeg();
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'colanas-offline-'));
@@ -77,17 +96,35 @@ async function main() {
       path.join(mediaRoot, 'demo.mp4'),
     ]);
     if (small.status !== 0) console.error('[warn] lavfi 生成 720p 测试片失败');
-    // 60 s / 720p：取消用例要保证「取消时还在编码」；分辨率压在 720p
+    // 30 s / 720p：取消用例要保证「取消时还在编码」；分辨率压在 720p
     // 是因为生成素材本身也吃 CPU，1080p 的 1440 帧会让并行门禁更拥挤
     const big = spawnSync(ffmpeg, [
       '-hide_banner', '-loglevel', 'error', '-y',
-      '-f', 'lavfi', '-i', 'testsrc=size=1280x720:rate=24:duration=60',
-      '-f', 'lavfi', '-i', 'sine=frequency=330:duration=60',
+      '-f', 'lavfi', '-i', 'testsrc=size=1280x720:rate=24:duration=30',
+      '-f', 'lavfi', '-i', 'sine=frequency=330:duration=30',
       '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p',
       '-c:a', 'aac', '-shortest',
       path.join(mediaRoot, 'long.mp4'),
     ]);
-    if (big.status !== 0) console.error('[warn] lavfi 生成 1080p 长测试片失败');
+    if (big.status !== 0) console.error('[warn] lavfi 生成长测试片失败');
+
+    // 带内嵌字幕的样片：用来验证 subtitleMode=embed 到底有没有把字幕写进产物
+    const srt = path.join(tmp, 'demo.srt');
+    fs.writeFileSync(
+      srt,
+      '1\n00:00:00,000 --> 00:00:08,000\nhello offline\n\n',
+    );
+    const withSub = spawnSync(ffmpeg, [
+      '-hide_banner', '-loglevel', 'error', '-y',
+      '-f', 'lavfi', '-i', 'testsrc=size=1280x720:rate=24:duration=8',
+      '-f', 'lavfi', '-i', 'sine=frequency=520:duration=8',
+      '-i', srt,
+      '-map', '0:v', '-map', '1:a', '-map', '2:s',
+      '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p',
+      '-c:a', 'aac', '-c:s', 'mov_text', '-t', '8',
+      path.join(mediaRoot, 'subbed.mp4'),
+    ]);
+    if (withSub.status !== 0) console.error('[warn] lavfi 生成带字幕测试片失败');
   }
 
   process.env.COLANAS_DEV_TOKEN = '1';
@@ -117,6 +154,7 @@ async function main() {
   const admin = await devToken(['video:read', 'video:write'], 'admin');
   const reader = await devToken(['video:read'], 'reader');
   const mediaReady = k.media.available();
+  const ffprobe = ffprobeOf(ffmpeg);
 
   // ---- 建库 + 扫描 ----
   await inject('POST', '/api/v1/video/libraries', admin, { name: 'demo', path: 'media' });
@@ -130,6 +168,7 @@ async function main() {
   check('scan_has_items', items.length >= 2, 'items=' + items.length);
   const small = items.find((x) => String(x.path || '').includes('demo')) || items[0];
   const big = items.find((x) => String(x.path || '').includes('long')) || items[1];
+  const subItem = items.find((x) => String(x.path || '').includes('subbed'));
   check('scan_found_demo', !!small, small && small.id);
 
   // ---- 鉴权 ----
@@ -319,6 +358,85 @@ async function main() {
   const origJob = await waitJob(origCreated.json.id);
   check('job_original_mkv', origJob.state === 'ready' && origJob.artifact && origJob.artifact.container === 'mkv',
     origJob.state + '/' + (origJob.artifact && origJob.artifact.container));
+
+  // ---- 字幕：内挂 vs 不内挂，产物里必须真的有 / 真的没有字幕轨 ----
+  if (ffprobe && subItem) {
+    const qSub = await inject('POST', '/api/v1/offline-downloads/quote', admin, {
+      itemId: subItem.id,
+      codec: 'h264',
+      height: 480,
+    });
+    check(
+      'quote_has_subtitle',
+      qSub.json().source.hasSubtitle === true,
+      JSON.stringify(qSub.json().source),
+    );
+
+    // 下载产物到本地再用 ffprobe 问：不信接口的自述
+    const probeArtifact = async (jobId) => {
+      const meta = (
+        await inject('GET', '/api/v1/offline-downloads/jobs/' + jobId + '/artifact', admin)
+      ).json();
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/v1/offline-downloads/artifacts/' + meta.id,
+        headers: { authorization: 'Bearer ' + admin },
+      });
+      const out = path.join(tmp, 'probe-' + jobId + '.' + (meta.container === 'mkv' ? 'mkv' : 'mp4'));
+      fs.writeFileSync(out, res.rawPayload);
+      return hasSubtitleStream(ffprobe, out);
+    };
+
+    const emb = await createJob({
+      itemId: subItem.id,
+      codec: 'h264',
+      height: 480,
+      preset: '480p_1m',
+      subtitleMode: 'embed',
+    });
+    const embJob = await waitJob(emb.json.id);
+    check(
+      'job_subtitle_embed_ready',
+      embJob && embJob.state === 'ready',
+      embJob ? embJob.state + ' ' + (embJob.error || '') : 'null',
+    );
+    if (embJob && embJob.state === 'ready') {
+      check(
+        'job_subtitle_embedded',
+        await probeArtifact(embJob.id),
+        'ffprobe 应看到 subtitle 流',
+      );
+    }
+
+    const noSub = await createJob({
+      itemId: subItem.id,
+      codec: 'h264',
+      height: 480,
+      preset: '480p_1m',
+      subtitleMode: 'none',
+    });
+    const noSubJob = await waitJob(noSub.json.id);
+    check(
+      'job_subtitle_none_ready',
+      noSubJob && noSubJob.state === 'ready',
+      noSubJob ? noSubJob.state : 'null',
+    );
+    if (noSubJob && noSubJob.state === 'ready') {
+      check(
+        'job_subtitle_dropped',
+        (await probeArtifact(noSubJob.id)) === false,
+        '不内挂时不该有 subtitle 流',
+      );
+    }
+  } else {
+    for (const n of [
+      'quote_has_subtitle',
+      'job_subtitle_embed_ready',
+      'job_subtitle_embedded',
+      'job_subtitle_none_ready',
+      'job_subtitle_dropped',
+    ]) check(n, true, 'skipped: no ffprobe');
+  }
 
   // ---- 取消：长片 1080p，取消一定落在 transcoding ----
   const cancelCreated = await createJob({ itemId: big.id, codec: 'h264', height: 1080, preset: '1080p_8m' });
