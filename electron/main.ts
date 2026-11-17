@@ -53,6 +53,23 @@ let crashes = 0;
 /** 内核是否已经回传监听端口：没就绪时点「打开 Web 页面」只提示，不打开空白页 */
 let kernelReady = false;
 
+/**
+ * 版本号（`package.json#version`，由 `tool/version.js` 同步）。
+ *
+ * 托盘菜单第一行和悬停提示都要用：用户报问题时第一句就是「你装的哪个版本」，
+ * 以前只能去安装目录看文件名或者翻设置页。
+ * 写成函数而不是模块级常量：`app.getVersion()` 在 `whenReady` 之前不保证拿到
+ * 应用版本（可能回落到 Electron 自身的版本），托盘/菜单都是 ready 之后才建的。
+ */
+function appVer(): string {
+  return `v${app.getVersion()}`;
+}
+
+/** 托盘悬停提示统一带上版本号，省得用户来回找 */
+function trayTip(status: string): string {
+  return `ColaNasOs 服务端 ${appVer()} — ${status}`;
+}
+
 // userData 固定成历史路径：产品名从 `ColaNasOs` 改成 `ColaNasOs 服务端` 后，
 // Electron 默认会跟着换目录 —— 数据（SQLite）在 APPDATA\colanas_os_server 不受影响，
 // 但单实例锁与 Chromium 缓存按 userData 区分，换了就会和已装的旧实例同时跑。
@@ -145,7 +162,7 @@ function startKernel(): void {
       kernelReady = true;
       trace(`kernel listening port=${kernelPort}`);
       // 托盘提示里直接给地址：用户鼠标悬停就知道服务在哪
-      tray?.setToolTip(`ColaNasOs 服务端 — ${kernelUrl()}`);
+      tray?.setToolTip(trayTip(kernelUrl()));
       return;
     }
     if (payload && payload.type === 'heartbeat') {
@@ -157,14 +174,14 @@ function startKernel(): void {
     trace(`kernel exit code=${code}`);
     kernel = null;
     kernelReady = false;
-    tray?.setToolTip('ColaNasOs 服务端 — 内核重启中');
+    tray?.setToolTip(trayTip('内核重启中'));
     if (quitting) return;
 
     crashes += 1;
     if (crashes > MAX_RESTARTS) {
       const msg = `内核连续退出 ${crashes} 次（最后一次退出码 ${code}），已停止自动重启。`;
       console.error('[shell]', msg);
-      tray?.setToolTip('ColaNasOs 服务端 — 内核已停止');
+      tray?.setToolTip(trayTip('内核已停止'));
       dialog.showErrorBox('ColaNasOs', msg);
       return;
     }
@@ -260,7 +277,7 @@ function createTray(): void {
     return img;
   })();
   tray = new Tray(trayIcon);
-  tray.setToolTip('ColaNasOs 服务端 — 启动中');
+  tray.setToolTip(trayTip('启动中'));
   rebuildTrayMenu();
   // 左键单击 = 打开 Web 页面（托盘程序的习惯动作）
   tray.on('click', () => openWeb());
@@ -273,6 +290,10 @@ function rebuildTrayMenu(): void {
   const startOnBoot = isAutostartEnabled();
   tray.setContextMenu(
     Menu.buildFromTemplate([
+      // 第一行直接给版本号：用户排查问题 / 报 bug 时第一句就要问「你是哪个版本」，
+      // 以前只能去安装目录看文件名，或者翻设置页。
+      { label: `ColaNasOs 服务端 ${appVer()}`, enabled: false },
+      { type: 'separator' },
       { label: '打开 Web 页面', click: () => openWeb() },
       {
         label: '开机自动启动',

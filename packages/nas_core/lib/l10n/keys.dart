@@ -1783,6 +1783,7 @@ class I18nKeys {
   static const settingsLogsLevelWarn = 'settings.logsLevelWarn';
   static const settingsLogsTruncated = 'settings.logsTruncated';
   static const settingsMediaSection = 'settings.mediaSection';
+  static const settingsNavAbout = 'settings.nav.about';
   static const settingsNavAppearance = 'settings.nav.appearance';
   static const settingsNavLogs = 'settings.nav.logs';
   static const settingsNavOther = 'settings.nav.other';
@@ -1801,6 +1802,8 @@ class I18nKeys {
   static const settingsPerfSmoothHint = 'settings.perf.smoothHint';
   static const settingsPerfTitle = 'settings.perf.title';
   static const settingsPort = 'settings.port';
+  static const settingsProjectHome = 'settings.projectHome';
+  static const settingsProjectHomeHint = 'settings.projectHomeHint';
   static const settingsProxy = 'settings.proxy';
   static const settingsProxyActive = 'settings.proxyActive';
   static const settingsProxyHint = 'settings.proxyHint';
@@ -2091,6 +2094,7 @@ class I18nKeys {
   static const tvProfileRelogin = 'tv.profile.relogin';
   static const tvProfileServer = 'tv.profile.server';
   static const tvProfileTitle = 'tv.profile.title';
+  static const tvProfileVersion = 'tv.profile.version';
   static const tvPlayerClose = 'tv.player.close';
   static const tvPlayerHint = 'tv.player.hint';
   static const tvSearchAction = 'tv.search.action';
@@ -2961,4 +2965,4 @@ class I18nKeys {
 }
 
 /// 契约键总数（生成时确定），供完整性自检使用。
-const int i18nKeyCount = 2912;
+const int i18nKeyCount = 2916;

@@ -2414,6 +2414,7 @@
       "lines": {}
     },
     "settings.mediaSection": {},
+    "settings.nav.about": {},
     "settings.nav.appearance": {},
     "settings.nav.logs": {},
     "settings.nav.other": {},
@@ -2434,6 +2435,8 @@
     "settings.perf.smoothHint": {},
     "settings.perf.title": {},
     "settings.port": {},
+    "settings.projectHome": {},
+    "settings.projectHomeHint": {},
     "settings.proxy": {},
     "settings.proxyActive": {
       "proxy": {}
@@ -2821,6 +2824,7 @@
     "tv.profile.relogin": {},
     "tv.profile.server": {},
     "tv.profile.title": {},
+    "tv.profile.version": {},
     "tv.player.close": {},
     "tv.player.hint": {},
     "tv.search.action": {},

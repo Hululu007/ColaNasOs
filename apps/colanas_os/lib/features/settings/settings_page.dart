@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../shell/app_widgets.dart';
 
@@ -13,6 +14,7 @@ import '../../core/app_settings.dart';
 import '../../core/app_version.dart';
 import '../../core/autostart.dart';
 import '../../core/display_labels.dart';
+import '../../core/external_link.dart';
 import '../../core/i18n_setup.dart';
 import '../../core/perf_diagnostics.dart';
 import '../../core/session.dart';
@@ -23,8 +25,9 @@ import '../../shell/mobile_frame.dart';
 import '../../shell/app_nav_shell.dart';
 import '../../shell/desktop_tray.dart';
 
-/// 设置（配置中心）：左侧二级导航分四组 —— 服务器（服务器配置 + 服务与账号）、
-/// 外观（外观 + 语言）、日志（服务端日志）、其他（索引维护 + 关于）。
+/// 设置（配置中心）：左侧二级导航分五组 —— 服务器（服务器配置 + 服务与账号）、
+/// 外观（外观 + 语言）、日志（服务端日志）、其他（性能 + 索引维护）、
+/// 关于（版本号 + 项目主页 + 检查更新）。
 ///
 /// 媒体库管理已按既有实现移到各模块（相册来源 / 影视库管理 / 音乐库管理 / 书房），
 /// 设置页不再放「媒体库」栏目。
@@ -72,10 +75,10 @@ class _SettingsPageState extends State<SettingsPage> {
   bool _checkingUpdate = false;
   bool _restarting = false;
 
-  /// 二级导航当前分组：server / appearance / logs / other
+  /// 二级导航当前分组：server / appearance / logs / other / about
   String _tab = _initialTab();
 
-  static const _tabs = {'server', 'appearance', 'logs', 'other'};
+  static const _tabs = {'server', 'appearance', 'logs', 'other', 'about'};
 
   static String _initialTab() {
     final saved = SettingsStore.instance.getString('ui.settings.tab');
@@ -1473,22 +1476,86 @@ class _SettingsPageState extends State<SettingsPage> {
     ]);
   }
 
+  /// 关于：版本号 + 项目主页 + 检查更新 + 法务说明。
+  ///
+  /// 2026-11-17 用户要求「版本号要一眼能看到」：以前版本号埋在「其他」分组
+  /// 最下面，翻半天找不到，所以单独拆成一页，标题上直接写「关于」。
+  /// 项目主页地址统一在 `core/app_version.dart#kProjectUrl`（TV「我的」页也用它）。
   Widget _about() {
-    return _section(tr('settings.about'), [
-      // 客户端/服务端共用这套界面，但它是客户端；标题栏之外再在关于页点明身份
-      Text(
-        tr('app.clientName'),
-        style: Theme.of(context).textTheme.titleMedium,
+    final scheme = Theme.of(context).colorScheme;
+    // 卡片标题用「客户端名」：导航项已经叫「关于」了，再写一遍「关于」是废话
+    return _section(tr('app.clientName'), [
+      Row(
+        children: [
+          Icon(Icons.movie_filter_outlined, color: scheme.primary, size: 32),
+          const SizedBox(width: NasTokens.spaceSm),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // 版本号单独一行、等宽字体 + 主题色：用户要的就是「一眼看到」
+                SelectableText(
+                  'v$kAppVersion',
+                  style: TextStyle(
+                    fontSize: NasTokens.fontBody,
+                    fontWeight: FontWeight.w600,
+                    color: scheme.primary,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+                const SizedBox(height: NasTokens.spaceXs),
+                Text(
+                  tr('ui.settings.h4b0e3b'),
+                  style: TextStyle(
+                    fontSize: NasTokens.fontCaption,
+                    color: context.nasTextSecondary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
-      const SizedBox(height: NasTokens.spaceXs),
-      Text(
-        tr('settings.version', {'version': kAppVersion}),
-        style: Theme.of(context).textTheme.bodyLarge,
+      const SizedBox(height: NasTokens.spaceMd),
+      // 项目主页：整行可点（桌面点链接、手机点按钮都行）
+      InkWell(
+        onTap: () => _openProjectHome(),
+        borderRadius: BorderRadius.circular(NasTokens.radiusSm),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: NasTokens.spaceXs),
+          child: Row(
+            children: [
+              Icon(Icons.code, size: 18, color: context.nasTextSecondary),
+              const SizedBox(width: NasTokens.spaceXs),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      tr('settings.projectHome'),
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                    Text(
+                      kProjectUrl,
+                      style: TextStyle(
+                        fontSize: NasTokens.fontCaption,
+                        color: scheme.primary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(Icons.open_in_new, size: 16, color: scheme.primary),
+            ],
+          ),
+        ),
       ),
-      const SizedBox(height: NasTokens.spaceXs),
       Text(
-        tr('ui.settings.h4b0e3b'),
-        style: TextStyle(color: context.nasTextSecondary),
+        tr('settings.projectHomeHint'),
+        style: TextStyle(
+          fontSize: NasTokens.fontCaption,
+          color: context.nasTextSecondary,
+        ),
       ),
       const SizedBox(height: NasTokens.spaceSm),
       Wrap(
@@ -1534,12 +1601,36 @@ class _SettingsPageState extends State<SettingsPage> {
     ]);
   }
 
+  /// 打开项目主页。Web 走 `window.open`（`openExternalLink`），其余端交给系统浏览器；
+  /// 两边都打不开时把地址显示出来让人复制，不静默失败。
+  Future<void> _openProjectHome() async {
+    var ok = false;
+    if (canOpenExternalLinks) {
+      ok = openExternalLink(kProjectUrl);
+    } else {
+      try {
+        ok = await launchUrl(
+          Uri.parse(kProjectUrl),
+          mode: LaunchMode.externalApplication,
+        );
+      } catch (_) {
+        // 部分精简系统没有 URL 处理器，交给下面的提示兜底
+        ok = false;
+      }
+    }
+    if (!ok && mounted) {
+      final messenger = ScaffoldMessenger.maybeOf(context);
+      if (messenger != null) NasSnack.showOn(messenger, kProjectUrl);
+    }
+  }
+
   void _refreshCurrent() {
     if (_tab == 'logs') {
       _loadLogs();
       return;
     }
     if (_tab == 'appearance') return;
+    if (_tab == 'about') return;
     if (_tab == 'other') {
       _loadCache();
       return;
@@ -1558,11 +1649,12 @@ class _SettingsPageState extends State<SettingsPage> {
         ];
       case 'logs':
         return [_logsSection(), const SizedBox(height: NasTokens.spaceLg)];
+      case 'about':
+        return [_about(), const SizedBox(height: NasTokens.spaceLg)];
       case 'other':
         return [
           _perfSection(),
           _maintenance(),
-          _about(),
           const SizedBox(height: NasTokens.spaceLg),
         ];
       default:
@@ -1601,6 +1693,11 @@ class _SettingsPageState extends State<SettingsPage> {
         id: 'other',
         label: tr('settings.nav.other'),
         icon: Icons.tune_outlined,
+      ),
+      NasTabItem(
+        id: 'about',
+        label: tr('settings.nav.about'),
+        icon: Icons.info_outline,
       ),
     ];
 
@@ -1659,6 +1756,11 @@ class _SettingsPageState extends State<SettingsPage> {
                     id: 'other',
                     label: tr('settings.nav.other'),
                     icon: Icons.tune_outlined,
+                  ),
+                  NasNavEntry(
+                    id: 'about',
+                    label: tr('settings.nav.about'),
+                    icon: Icons.info_outline,
                   ),
                 ],
               ),

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:nas_ui/nas_ui.dart';
 
+import '../../core/app_version.dart';
 import '../../core/codec_support.dart';
 import '../../core/play_preferences.dart';
 import '../../core/play_quality.dart';
@@ -137,6 +138,20 @@ class _TvProfileSectionState extends State<TvProfileSection> {
             icon: Icons.dns_outlined,
             label: tr('tv.profile.server'),
             value: host.isEmpty ? server : '$server · $host',
+          ),
+          SizedBox(height: m.px(12)),
+          // 版本号与项目主页：大屏上没有「设置 → 关于」，报问题时同样要能一眼看到。
+          // 电视不保证有浏览器，所以地址只展示不点开（手机上照抄即可）。
+          _InfoRow(
+            icon: Icons.info_outline_rounded,
+            label: tr('tv.profile.version'),
+            value: 'v$kAppVersion',
+          ),
+          SizedBox(height: m.px(12)),
+          _InfoRow(
+            icon: Icons.code_rounded,
+            label: tr('settings.projectHome'),
+            value: kProjectUrl,
           ),
           SizedBox(height: m.px(22)),
           _SettingRow(
