@@ -12,6 +12,7 @@ import { video } from '../src/modules/video';
 import { music } from '../src/modules/music';
 import { blog } from '../src/modules/blog';
 import { videoPlayer } from '../src/modules/videoPlayer';
+import { offlineDownload } from '../src/modules/offline-download';
 import { discover } from '../src/modules/discover';
 import { pt } from '../src/modules/pt';
 
@@ -35,6 +36,7 @@ export function moduleList(): ServerModule[] {
     music,
     blog,
     videoPlayer,
+    offlineDownload,
     discover,
     pt,
   ];

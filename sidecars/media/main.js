@@ -96,9 +96,13 @@ function runFfmpeg(args, timeoutMs = 120_000, opts = {}) {
   return new Promise((resolve, reject) => {
     // `cwd` 只给 HLS 用：ffmpeg 的 `-hls_fmp4_init_filename` 是相对**进程工作目录**解析的，
     // 不设就会把 init.mp4 丢到 sidecar 的启动目录（实测落在仓库根），播放器再请求 init.mp4 就 404。
+    //
+    // stdout 平时直接 ignore（每条命令都开一条管道纯属浪费）；只有传了 `progress`
+    // 才接管：`-progress pipe:1` 往 stdout 写 NDJSON，是我们唯一能拿到编码进度的口子。
+    const wantProgress = typeof opts.progress === 'function';
     const child = spawn(FFMPEG, args, {
       windowsHide: true,
-      stdio: ['ignore', 'ignore', 'pipe'],
+      stdio: ['ignore', wantProgress ? 'pipe' : 'ignore', 'pipe'],
       cwd: opts.cwd || undefined,
     });
     const hlsKey = opts.hlsKey || null;
@@ -189,6 +193,31 @@ function runFfmpeg(args, timeoutMs = 120_000, opts = {}) {
       err += String(c);
       if (err.length > 8192) err = err.slice(-4096);
     });
+    // `-progress pipe:1` 的输出形如 `out_time_us=12345678\nspeed=1.4x\n`，逐行解析。
+    // 回调抛错一律吞掉：进度是观测，不能因为它把正在跑的编码带崩。
+    if (wantProgress) {
+      let pbuf = '';
+      child.stdout.setEncoding('utf8');
+      child.stdout.on('data', (c) => {
+        pbuf += c;
+        let idx = pbuf.indexOf('\n');
+        while (idx >= 0) {
+          const line = pbuf.slice(0, idx).trim();
+          pbuf = pbuf.slice(idx + 1);
+          const eq = line.indexOf('=');
+          if (eq > 0) {
+            try {
+              opts.progress(line.slice(0, eq), line.slice(eq + 1));
+            } catch {
+              /* 观测失败不影响编码 */
+            }
+          }
+          idx = pbuf.indexOf('\n');
+        }
+        // 兜底：没有换行的异常输出不能无限增长
+        if (pbuf.length > 8192) pbuf = '';
+      });
+    }
     child.on('error', (e) => {
       if (hlsKey && activeHls.get(hlsKey) === child) activeHls.delete(hlsKey);
       finish(
@@ -240,6 +269,15 @@ function createLimiter(n) {
 }
 
 const limit = createLimiter(CONCURRENCY);
+
+/**
+ * 单文件编码（离线下载）单独排队，且只允许 1 路。
+ *
+ * 整片编码动辄几十分钟，占的是编码器本身而不是「一次处理」：跟播放一起排进
+ * CONCURRENCY 的槽里，会让缩略图、字幕提取这些短任务排在它后面干等。
+ * 限死 1 路 + encode() 里「播放正在转码就让位 CPU」的规则，才有「边看边下」。
+ */
+const encodeLimiter = createLimiter(1);
 
 /**
  * GPU 零拷贝链路串行门：两路 AMF 并发会把编码器卡死（见 cancel() 的实测记录），
@@ -868,27 +906,19 @@ async function probeSourceInfo(src) {
   return info;
 }
 
-async function hls(params) {
-  const { src, dir } = params || {};
-  if (!src || !dir) throw Object.assign(new Error('src/dir required'), { code: 'E_PARAM' });
-  if (!fs.existsSync(src))
-    throw Object.assign(new Error('src not found: ' + src), { code: 'E_NO_SRC' });
+/**
+ * 编码方案解析（HLS 与单文件 encode 共用）。
+ *
+ * 把「片源探测 → 档位收敛 → 编码/码率 → HDR→SDR → 解码链路」整体抽出来：
+ * 边转边播的分片和离线下载的单文件，差别只在下游的 ffmpeg 输出参数。
+ * 针对片源兼容性的修补必须同时作用于两条产出 —— 各写一份迟早会漂。
+ *
+ * @param {object} params hls / encode 的入参（preset/codec/height/subtitle/audioIndex/…）
+ * @param {string} tag    日志前缀（hls / encode），只用于排障时区分来源
+ */
+async function resolveEncodePlan(params, tag) {
+  const src = params.src;
 
-  // 分段续转：从片源的第 seekMs 毫秒开始，只转 limitMs 毫秒。
-  // 两个都是**输入侧**选项（必须排在 -i 之前）；0 / 缺省 = 从片头转到片尾（原行为）。
-  // 每段是独立的 init.mp4 + 分片，由上层把多段拼成一份播放列表，
-  // 段与段之间用 #EXT-X-DISCONTINUITY 隔开（实测 hls.js 会自动追加新的 init）。
-  const seekMs = Math.max(0, Number(params.seekMs) || 0);
-  const limitMs = Math.max(0, Number(params.limitMs) || 0);
-  const rangeArgs = [
-    ...(seekMs > 0 ? ['-ss', (seekMs / 1000).toFixed(3)] : []),
-    ...(limitMs > 0 ? ['-t', (limitMs / 1000).toFixed(3)] : []),
-  ];
-
-  fs.mkdirSync(dir, { recursive: true });
-  // 新会话复用同一目录时先把「已取消」标记清掉；同一次 hls() 内部的重试不清，
-  // 否则被抢占的旧会话会在重试里继续跑、和新会话抢 GPU。
-  canceledHls.delete(dir);
   const presetRow =
     PLAY_QUALITY.presets.find((p) => p.key === params.preset) ||
     PLAY_QUALITY.presets.find((p) => p.key === PLAY_QUALITY.defaultPreset) ||
@@ -915,7 +945,7 @@ async function hls(params) {
   const hdrToSdr = params.hdrToSdr === true || sourceNeedsTonemap;
   if (sourceNeedsTonemap && params.hdrToSdr !== true) {
     console.error(
-      `[media] hls 片源是 ${source.hdrKind}${source.dvProfile ? ` P${source.dvProfile}` : ''}，` +
+      `[media] ${tag} 片源是 ${source.hdrKind}${source.dvProfile ? ` P${source.dvProfile}` : ''}，` +
         '库标记缺失，按片源自动启用 HDR→SDR',
     );
   }
@@ -947,10 +977,15 @@ async function hls(params) {
     !hdrToSdr &&
     !!srcMapped &&
     srcMapped === wantCodec;
-  // 目标码率：按「这一档 × 当前编码」取，H.265 / AV1 同画质更省流量
+  // 目标码率：离线下载允许手填（`videoKbps`），播放只能吃档位表。
+  // 手填值原样采信 —— 合法区间在服务端 quote 里已经夹过，这里再夹一次只会让
+  // 两端显示的数字对不上（用户填 2500，界面显示 2500，实际编码 1800）。
+  const manualKbps = Number(params.videoKbps) || 0;
   const targetKbps = copyVideo
     ? 0
-    : Number((presetRow.bitrates || {})[wantCodec] || presetRow.videoBitrateKbps || 0);
+    : manualKbps > 0
+      ? manualKbps
+      : Number((presetRow.bitrates || {})[wantCodec] || presetRow.videoBitrateKbps || 0);
   // original 档 height=0：scale=-2:0 非法，改成保持原分辨率的合法滤镜
   const scale = height > 0 ? `scale=-2:${height}` : 'scale=iw:-2';
   const subtitleFilter = params.subtitle
@@ -997,6 +1032,71 @@ async function hls(params) {
     tailParts,
   };
   const plans = decodePlans(pipelineCtx);
+
+  return {
+    presetRow,
+    srcHeight,
+    height,
+    source,
+    sourceNeedsTonemap,
+    hdrToSdr,
+    srcCodec,
+    srcMapped,
+    wantCodec,
+    copyVideo,
+    targetKbps,
+    scale,
+    subtitleFilter,
+    tailParts,
+    pipelineCtx,
+    cpuFilter,
+    timeoutMs,
+    prefer,
+    audioIndex,
+    audioFilter,
+    hw,
+    outputCodec,
+    plans,
+  };
+}
+
+async function hls(params) {
+  const { src, dir } = params || {};
+  if (!src || !dir) throw Object.assign(new Error('src/dir required'), { code: 'E_PARAM' });
+  if (!fs.existsSync(src))
+    throw Object.assign(new Error('src not found: ' + src), { code: 'E_NO_SRC' });
+
+  // 分段续转：从片源的第 seekMs 毫秒开始，只转 limitMs 毫秒。
+  // 两个都是**输入侧**选项（必须排在 -i 之前）；0 / 缺省 = 从片头转到片尾（原行为）。
+  // 每段是独立的 init.mp4 + 分片，由上层把多段拼成一份播放列表，
+  // 段与段之间用 #EXT-X-DISCONTINUITY 隔开（实测 hls.js 会自动追加新的 init）。
+  const seekMs = Math.max(0, Number(params.seekMs) || 0);
+  const limitMs = Math.max(0, Number(params.limitMs) || 0);
+  const rangeArgs = [
+    ...(seekMs > 0 ? ['-ss', (seekMs / 1000).toFixed(3)] : []),
+    ...(limitMs > 0 ? ['-t', (limitMs / 1000).toFixed(3)] : []),
+  ];
+
+  fs.mkdirSync(dir, { recursive: true });
+  // 新会话复用同一目录时先把「已取消」标记清掉；同一次 hls() 内部的重试不清，
+  // 否则被抢占的旧会话会在重试里继续跑、和新会话抢 GPU。
+  canceledHls.delete(dir);
+  const {
+    source,
+    sourceNeedsTonemap,
+    hdrToSdr,
+    srcMapped,
+    copyVideo,
+    targetKbps,
+    cpuFilter,
+    timeoutMs,
+    prefer,
+    audioIndex,
+    audioFilter,
+    hw,
+    outputCodec,
+    plans,
+  } = await resolveEncodePlan(params, 'hls');
 
   const attempt = async (codec, allowHw = true, plan = CPU_PLAN, tonemapOn = true) => {
     // 被抢占（换档 / 新会话）时立即收手：旧会话的重试链不能再起新 ffmpeg
@@ -1254,6 +1354,292 @@ async function hls(params) {
   return { dir, ...result };
 }
 /**
+ * 单文件编码（离线下载）：把片源按参数压成**一个完整文件**，供客户端整包下载。
+ *
+ * 与 hls() 的差别只在输出侧 —— 容器、音轨选择、可选内挂字幕、进度上报；
+ * 解码链路 / 档位收敛 / HDR→SDR 全部走 resolveEncodePlan()，不另写一份。
+ *
+ * 为什么不用现成的 transcode()：它只认 h264/h265（没有 AV1）、不探硬件编码器、
+ * 没有进度也没有取消、mp4 里 HEVC 不标 hvc1、不加 faststart，`scale=-2:h` 还会把
+ * 矮片源放大。那套是给图片 / 音频转换写的，压整部片会重踩播放链路踩过的坑。
+ *
+ * 产物先写 `<dst>.part`，校验通过后由调用方（或这里）rename —— 中途被 kill 不会留下
+ * 一个「看起来完整」的文件，避免上层把半截文件算成一个合法的 sha256。
+ */
+async function encode(params) {
+  const { src, dir } = params || {};
+  if (!src || !dir) throw Object.assign(new Error('src/dir required'), { code: 'E_PARAM' });
+  if (!fs.existsSync(src))
+    throw Object.assign(new Error('src not found: ' + src), { code: 'E_NO_SRC' });
+
+  fs.mkdirSync(dir, { recursive: true });
+  // 同一目录重试时清掉上一轮留下的取消标记，否则这一轮第一刀就被判成「已取消」
+  canceledHls.delete(dir);
+
+  // 原画 = 不重编码，remux 到 mkv：mp4 装不了 DTS / PGS / 多音轨，硬塞就得重编码音频，
+  // 那就不叫原画了。mkv 里 `-c copy` 能把视频 / 全部音轨 / 内嵌字幕一次带过去。
+  const remux = params.preset === 'original';
+  const file = String(params.file || (remux ? 'out.mkv' : 'out.mp4'));
+  const dst = nodePath.join(dir, file);
+  const part = dst + '.part';
+  try {
+    fs.rmSync(part, { force: true });
+  } catch {
+    /* 忽略 */
+  }
+
+  const resolved = remux ? null : await resolveEncodePlan(params, 'encode');
+  const source = resolved ? resolved.source : await probeSourceInfo(src);
+  const durationMs = Number(params.durationMs) || Number(source.durationMs) || 0;
+  // 整片编码的耗时上限：按片长 × 6 估（4K 软编实测约 1.5~2.5 倍片长），保底 10 分钟
+  const timeoutMs =
+    Number(params.timeoutMs) || Math.max(durationMs > 0 ? durationMs * 6 : 0, 10 * 60 * 1000);
+
+  const started = Date.now();
+  let lastEmit = 0;
+  let speedText = '';
+  const onProgress = (key, value) => {
+    if (key === 'speed') {
+      speedText = String(value);
+      return;
+    }
+    // `-progress` 同时给 out_time_us 与 out_time_ms，后者因历史原因也是微秒，只信前者
+    if (key !== 'out_time_us') return;
+    const us = Number(value);
+    if (!Number.isFinite(us) || us <= 0) return;
+    const now = Date.now();
+    if (now - lastEmit < 500) return;
+    lastEmit = now;
+    const percent =
+      durationMs > 0 ? Math.min(99, Math.round((us / 1000 / durationMs) * 1000) / 10) : 0;
+    send({
+      type: 'event',
+      event: 'encode_progress',
+      data: {
+        dir,
+        file,
+        percent,
+        outTimeMs: Math.round(us / 1000),
+        totalMs: durationMs,
+        speed: speedText,
+        elapsedMs: now - started,
+      },
+    });
+  };
+
+  const logArgs = (args, extra) => {
+    try {
+      fs.writeFileSync(
+        nodePath.join(dir, '.encode.json'),
+        JSON.stringify({ ...extra, args, at: Date.now() }, null, 1),
+      );
+    } catch {
+      /* 写不了不影响编码 */
+    }
+  };
+
+  // ------------------------------------------------------------------ 原画 remux
+  if (remux) {
+    const args = [
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-y',
+      '-nostats',
+      '-progress',
+      'pipe:1',
+      '-i',
+      src,
+      // 显式选流：`?` 让缺失的流不致命（没有字幕轨的片子照样能 remux）
+      '-map',
+      '0:v?',
+      '-map',
+      '0:a?',
+      '-map',
+      '0:s?',
+      // mkv 里的附件（字体）是 ASS 字幕渲染需要的东西，一并带过去
+      '-map',
+      '0:t?',
+      '-c',
+      'copy',
+      '-map_metadata',
+      '0',
+      '-map_chapters',
+      '0',
+      // 产物先写 `.part`，ffmpeg 从后缀猜不出容器，必须显式指定
+      '-f',
+      'matroska',
+      part,
+    ];
+    logArgs(args, { mode: 'remux' });
+    await encodeLimiter(() => runFfmpeg(args, timeoutMs, { hlsKey: dir, progress: onProgress }));
+    if (!fs.existsSync(part) || fs.statSync(part).size <= 0) {
+      throw Object.assign(new Error('remux output missing'), { code: 'E_FFMPEG' });
+    }
+    fs.renameSync(part, dst);
+    stats.transcodes += 1;
+    return {
+      dir,
+      file,
+      dst,
+      bytes: fs.statSync(dst).size,
+      durationMs,
+      codec: source.codec || '',
+      container: 'mkv',
+      encoder: 'copy',
+      decoder: 'copy',
+      pipeline: 'copy',
+      ms: Date.now() - started,
+    };
+  }
+
+  // ------------------------------------------------------------------ 转码档
+  const buildArgs = (codec, plan, tonemapOn) => {
+    const vc = videoCodecArgs(codec, plan.gpu === true, resolved.prefer, resolved.hw, resolved.targetKbps);
+    const vCodec = vc.args;
+    const vf = plan.filter ? plan.filter(tonemapOn) : resolved.cpuFilter(tonemapOn);
+    const audioKbps = Number(params.audioBitrateKbps) || PLAY_QUALITY.audioBitrateKbps;
+    const embedSubs = params.subtitleMode === 'embed';
+    // mp4 里的 HEVC 必须标 `hvc1`：MKV 源多是 `hev1`，Android 硬解只认 hvc1，
+    // 标错不会报错、只会退化软解（4K 片子直接卡成幻灯片）。libx265 自带这个参数，
+    // 硬件编码器不带，所以这里补一条（重复给 ffmpeg 也认，后者覆盖前者）。
+    const needHvc1 = codec === 'h265' && !vCodec.includes('hvc1');
+    return {
+      vc,
+      args: [
+        '-hide_banner',
+        '-loglevel',
+        'error',
+        '-y',
+        '-nostats',
+        '-progress',
+        'pipe:1',
+        ...plan.inputArgs,
+        // 起流只需读头部；4K 多音轨源默认 5MB/5s 探测能白等 1~3 秒
+        '-probesize',
+        '2M',
+        '-analyzeduration',
+        '0',
+        '-i',
+        src,
+        '-map',
+        '0:v:0',
+        '-map',
+        `0:a:${resolved.audioIndex}?`,
+        ...(embedSubs ? ['-map', '0:s?'] : ['-sn']),
+        '-dn',
+        ...(resolved.copyVideo
+          ? ['-c:v', 'copy', ...(resolved.srcMapped === 'h265' ? ['-tag:v', 'hvc1'] : [])]
+          : ['-vf', vf, '-c:v', ...vCodec]),
+        // 统一 8-bit + BT.709：10-bit / 未标色彩的片源不这么做会在手机上一片发灰
+        ...(!resolved.copyVideo
+          ? ['-color_primaries', 'bt709', '-color_trc', 'bt709', '-colorspace', 'bt709']
+          : []),
+        // 码率封顶：目标码率是「平均」，不加 maxrate 遇到高动态镜头会翻倍
+        ...(!resolved.copyVideo && resolved.targetKbps > 0
+          ? ['-maxrate', `${resolved.targetKbps}k`, '-bufsize', `${resolved.targetKbps * 2}k`]
+          : []),
+        ...(resolved.audioFilter ? ['-af', resolved.audioFilter] : []),
+        '-c:a',
+        'aac',
+        '-b:a',
+        `${audioKbps}k`,
+        '-ac',
+        '2',
+        ...(embedSubs ? ['-c:s', 'mov_text'] : []),
+        ...(needHvc1 ? ['-tag:v', 'hvc1'] : []),
+        // moov 前置：客户端边下边播 / 拖进度不用等整文件
+        '-movflags',
+        '+faststart',
+        // 同理：`.part` 后缀猜不出容器
+        '-f',
+        'mp4',
+        part,
+      ],
+    };
+  };
+
+  const runOne = async (codec, plan, tonemapOn) => {
+    const { args, vc } = buildArgs(codec, plan, tonemapOn);
+    logArgs(args, {
+      mode: 'transcode',
+      codec,
+      pipeline: plan.pipeline,
+      targetKbps: resolved.targetKbps,
+      copyVideo: resolved.copyVideo,
+    });
+    const exec = () => encodeLimiter(() => runFfmpeg(args, timeoutMs, { hlsKey: dir, progress: onProgress }));
+    // GPU 零拷贝链是全局串行的，且两路硬件编码会把编码器卡死。播放正在转码时
+    // 本任务只走 CPU：宁可慢，也不能把用户正在看的片子卡住。
+    await (plan.gpu ? withGpuGate(exec) : exec());
+    if (!fs.existsSync(part) || fs.statSync(part).size <= 0) {
+      throw Object.assign(new Error('encode output missing'), { code: 'E_FFMPEG' });
+    }
+    return {
+      codec,
+      encoder: resolved.copyVideo ? 'copy' : vc.encoder,
+      decoder: resolved.copyVideo ? 'copy' : plan.decoder,
+      pipeline: resolved.copyVideo ? 'copy' : plan.pipeline,
+    };
+  };
+
+  // 候选链与 hls 同口径：GPU 零拷贝 → 普通硬解 → CPU 软解 → h264 CPU 兜底。
+  // 区别只有一处：播放正在转码时（activeHls 非空）直接跳过所有硬件候选。
+  const playbackBusy = activeHls.size > 0;
+  const candidates = [];
+  if (!playbackBusy) {
+    for (const plan of resolved.plans) candidates.push({ codec: resolved.outputCodec, plan });
+  }
+  candidates.push({ codec: resolved.outputCodec, plan: CPU_PLAN });
+  if (resolved.outputCodec !== 'h264') candidates.push({ codec: 'h264', plan: CPU_PLAN });
+
+  let out = null;
+  let lastErr = null;
+  for (let i = 0; i < candidates.length && !out; i += 1) {
+    // 原画直通不涉及编码器，换候选没有意义
+    if (resolved.copyVideo && i > 0) break;
+    const c = candidates[i];
+    try {
+      out = await runOne(c.codec, c.plan, true);
+    } catch (err) {
+      if (err && err.code === 'E_CANCELED') throw err;
+      lastErr = err;
+      try {
+        fs.rmSync(part, { force: true });
+      } catch {
+        /* 忽略 */
+      }
+      if (i + 1 < candidates.length) {
+        console.error(
+          `[media] encode ${c.codec}/${c.plan.pipeline} failed, fallback: ${String(
+            (err && err.message) || err,
+          )}`,
+        );
+      }
+    }
+  }
+  if (!out) throw lastErr || Object.assign(new Error('encode failed'), { code: 'E_FFMPEG' });
+
+  fs.renameSync(part, dst);
+  stats.transcodes += 1;
+  return {
+    dir,
+    file,
+    dst,
+    bytes: fs.statSync(dst).size,
+    durationMs,
+    codec: out.codec,
+    container: 'mp4',
+    encoder: out.encoder,
+    decoder: out.decoder,
+    pipeline: out.pipeline,
+    // 播放抢占导致的降级要让用户/排障看得到：这不是故障，是让位
+    degradedToCpu: playbackBusy,
+    ms: Date.now() - started,
+  };
+}
+
+/**
  * 取消某个目录下正在跑的 HLS 转码（新会话抢占旧会话 / 用户换档时调用）。
  * 只 kill 精确匹配的 ffmpeg；取消标记让 runFfmpeg 抛 E_CANCELED，上层不重试。
  */
@@ -1310,6 +1696,7 @@ async function handle(msg) {
     thumb,
     transcode,
     hls,
+    encode,
     cancel,
     subtitleTracks,
     extractSubtitle,

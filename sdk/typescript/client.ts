@@ -617,6 +617,46 @@ export class ColanasClient {
     return this.request('GET', '/api/v1/music/stream-url', params, 'query');
   }
 
+  /** 删除服务端产物（仅在没有任何引用时；永不碰原始影视文件） */
+  async offlineArtifactDelete(params: Record<string, any> = {}): Promise<any> {
+    return this.request('DELETE', '/api/v1/offline-downloads/artifacts/{id}', params, 'query');
+  }
+
+  /** 下载产物文件（支持 Range 断点续传） */
+  async offlineArtifactDownload(params: Record<string, any> = {}): Promise<any> {
+    return this.request('GET', '/api/v1/offline-downloads/artifacts/{id}', params, 'query');
+  }
+
+  /** 任务产物的元信息（大小 / sha256 / etag / 规格） */
+  async offlineJobArtifact(params: Record<string, any> = {}): Promise<any> {
+    return this.request('GET', '/api/v1/offline-downloads/jobs/{id}/artifact', params, 'query');
+  }
+
+  /** 取消任务（杀掉正在跑的编码，清掉半截产物） */
+  async offlineJobCancel(params: Record<string, any> = {}): Promise<any> {
+    return this.request('POST', '/api/v1/offline-downloads/jobs/{id}/cancel', params, 'body');
+  }
+
+  /** 创建下载任务（同参数复用已有产物，同参数活动任务直接返回） */
+  async offlineJobCreate(params: Record<string, any> = {}): Promise<any> {
+    return this.request('POST', '/api/v1/offline-downloads/jobs', params, 'body');
+  }
+
+  /** 单个任务（状态 / 进度 / 产物） */
+  async offlineJobGet(params: Record<string, any> = {}): Promise<any> {
+    return this.request('GET', '/api/v1/offline-downloads/jobs/{id}', params, 'query');
+  }
+
+  /** 任务列表（详情页按钮状态 / 下载管理页轮询） */
+  async offlineJobList(params: Record<string, any> = {}): Promise<any> {
+    return this.request('GET', '/api/v1/offline-downloads/jobs', params, 'query');
+  }
+
+  /** 下载参数推荐与校验（编码 / 分辨率 / 码率联动、预估体积） */
+  async offlineQuote(params: Record<string, any> = {}): Promise<any> {
+    return this.request('POST', '/api/v1/offline-downloads/quote', params, 'body');
+  }
+
   /** 导出 OpenAPI 文档 */
   async openapiJson(params: Record<string, any> = {}): Promise<any> {
     return this.request('GET', '/openapi.json', params, 'query');

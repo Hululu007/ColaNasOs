@@ -16,6 +16,7 @@ const EMPTY_SOURCE = Object.freeze({
   pixFmt: '',
   width: 0,
   height: 0,
+  durationMs: 0,
   tenBit: false,
   hi10p: false,
   dvProfile: 0,
@@ -54,12 +55,23 @@ function parseSource(stderr) {
   const hdr10 = /smpte2084|bt2020|Mastering display metadata/i.test(vline);
   const hasHdrMeta = hlg || hdr10;
 
+  // `Duration: 01:58:32.45`：离线下载要拿它算编码进度百分比，不能按文件大小估
+  // （VBR 片源按字节算出来的进度会跳着走，用户看着像卡住）。
+  const dur = /Duration:\s*(\d+):(\d{2}):(\d{2})\.(\d{2})/.exec(text);
+  const durationMs = dur
+    ? Math.round(
+        (Number(dur[1]) * 3600 + Number(dur[2]) * 60 + Number(dur[3]) + Number(dur[4]) / 100) *
+          1000,
+      )
+    : 0;
+
   return {
     codec,
     profile,
     pixFmt,
     width,
     height,
+    durationMs,
     tenBit,
     hi10p,
     dvProfile,

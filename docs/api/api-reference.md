@@ -1,7 +1,7 @@
 # API 参考
 
 > 由 `tool/gen-api-doc.js` 从 `contracts/openapi.json` 生成，**请勿手改**；改契约后执行 `npm run api:doc`。
-> 当前：**416 个路径 / 442 个操作 / 18 个域**。鉴权统一为 `Authorization: Bearer <jwt>`，媒体直链另支持 `?token=`（5 分钟）。
+> 当前：**422 个路径 / 450 个操作 / 19 个域**。鉴权统一为 `Authorization: Bearer <jwt>`，媒体直链另支持 `?token=`（5 分钟）。
 
 ## 域索引
 
@@ -13,6 +13,7 @@
 - **文件**（`files`）· 18 个操作 · [跳转](#files)
 - **开放集成（Webhook / deliveries）**（`integration`）· 6 个操作 · [跳转](#integration)
 - **音乐**（`music`）· 35 个操作 · [跳转](#music)
+- **offline**（`offline`）· 8 个操作 · [跳转](#offline)
 - **其他**（`other`）· 2 个操作 · [跳转](#other)
 - **相册**（`photo`）· 141 个操作 · [跳转](#photo)
 - **player**（`player`）· 2 个操作 · [跳转](#player)
@@ -946,6 +947,66 @@ Webhook 列表（不含 secret） · `webhookList`
 
 - 参数：`id` · 查询 · string · **必填**<br>`token` · 查询 · string · 可选<br>`format` · 查询 · string · 可选
 - 响应：200 `MusicStreamUrlResponse` · 错误 404
+
+## offline
+
+### offline
+
+#### `GET /api/v1/offline-downloads/artifacts/{id}`
+
+下载产物文件（支持 Range 断点续传） · `offlineArtifactDownload`
+
+- 参数：`id` · 路径 · string · **必填**
+- 响应：200 -
+
+#### `DELETE /api/v1/offline-downloads/artifacts/{id}`
+
+删除服务端产物（仅在没有任何引用时；永不碰原始影视文件） · `offlineArtifactDelete`
+
+- 参数：`id` · 路径 · string · **必填**
+- 响应：200 `OfflineOk`
+
+#### `GET /api/v1/offline-downloads/jobs`
+
+任务列表（详情页按钮状态 / 下载管理页轮询） · `offlineJobList`
+
+- 参数：`itemId` · 查询 · string · 可选<br>`limit` · 查询 · integer · 可选
+- 响应：200 `OfflineJobList`
+
+#### `POST /api/v1/offline-downloads/jobs`
+
+创建下载任务（同参数复用已有产物，同参数活动任务直接返回） · `offlineJobCreate`
+
+- 请求体：（空对象）
+- 响应：200 `OfflineJob`
+
+#### `GET /api/v1/offline-downloads/jobs/{id}`
+
+单个任务（状态 / 进度 / 产物） · `offlineJobGet`
+
+- 参数：`id` · 路径 · string · **必填**
+- 响应：200 `OfflineJob`
+
+#### `GET /api/v1/offline-downloads/jobs/{id}/artifact`
+
+任务产物的元信息（大小 / sha256 / etag / 规格） · `offlineJobArtifact`
+
+- 参数：`id` · 路径 · string · **必填**
+- 响应：200 `OfflineArtifact`
+
+#### `POST /api/v1/offline-downloads/jobs/{id}/cancel`
+
+取消任务（杀掉正在跑的编码，清掉半截产物） · `offlineJobCancel`
+
+- 参数：`id` · 路径 · string · **必填**
+- 响应：200 `OfflineOk`
+
+#### `POST /api/v1/offline-downloads/quote`
+
+下载参数推荐与校验（编码 / 分辨率 / 码率联动、预估体积） · `offlineQuote`
+
+- 请求体：（空对象）
+- 响应：200 `OfflineQuoteResponse`
 
 ## other
 

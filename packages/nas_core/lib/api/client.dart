@@ -3298,6 +3298,58 @@ class ApiClient {
     return _asMap(_decode(res));
   }
 
+  /// 下载参数推荐与校验（编码 / 分辨率 / 码率联动、预估体积）
+  Future<OfflineQuoteResponse> offlineQuote({required OfflineQuoteBody body}) async {
+    final res = await transport.send('POST', _uri('/api/v1/offline-downloads/quote'), headers: await _headers(jsonBody: true), body: utf8.encode(jsonEncode(body.toJson())));
+    return OfflineQuoteResponse.fromJson(_asMap(_decode(res)));
+  }
+
+  /// 任务列表（详情页按钮状态 / 下载管理页轮询）
+  Future<OfflineJobList> offlineJobList({String? itemId, int? limit}) async {
+    final query = <String, String>{
+      if (itemId != null) 'itemId': itemId,
+      if (limit != null) 'limit': '$limit',
+    };
+    final res = await transport.send('GET', _uri('/api/v1/offline-downloads/jobs', query), headers: await _headers());
+    return OfflineJobList.fromJson(_asMap(_decode(res)));
+  }
+
+  /// 创建下载任务（同参数复用已有产物，同参数活动任务直接返回）
+  Future<OfflineJob> offlineJobCreate({required OfflineCreateJobBody body}) async {
+    final res = await transport.send('POST', _uri('/api/v1/offline-downloads/jobs'), headers: await _headers(jsonBody: true), body: utf8.encode(jsonEncode(body.toJson())));
+    return OfflineJob.fromJson(_asMap(_decode(res)));
+  }
+
+  /// 单个任务（状态 / 进度 / 产物）
+  Future<OfflineJob> offlineJobGet({required String id}) async {
+    final res = await transport.send('GET', _uri('/api/v1/offline-downloads/jobs/${Uri.encodeComponent(id)}'), headers: await _headers());
+    return OfflineJob.fromJson(_asMap(_decode(res)));
+  }
+
+  /// 取消任务（杀掉正在跑的编码，清掉半截产物）
+  Future<OfflineOk> offlineJobCancel({required String id}) async {
+    final res = await transport.send('POST', _uri('/api/v1/offline-downloads/jobs/${Uri.encodeComponent(id)}/cancel'), headers: await _headers());
+    return OfflineOk.fromJson(_asMap(_decode(res)));
+  }
+
+  /// 任务产物的元信息（大小 / sha256 / etag / 规格）
+  Future<OfflineArtifact> offlineJobArtifact({required String id}) async {
+    final res = await transport.send('GET', _uri('/api/v1/offline-downloads/jobs/${Uri.encodeComponent(id)}/artifact'), headers: await _headers());
+    return OfflineArtifact.fromJson(_asMap(_decode(res)));
+  }
+
+  /// 下载产物文件（支持 Range 断点续传）
+  Future<Map<String, dynamic>> offlineArtifactDownload({required String id}) async {
+    final res = await transport.send('GET', _uri('/api/v1/offline-downloads/artifacts/${Uri.encodeComponent(id)}'), headers: await _headers());
+    return _asMap(_decode(res));
+  }
+
+  /// 删除服务端产物（仅在没有任何引用时；永不碰原始影视文件）
+  Future<OfflineOk> offlineArtifactDelete({required String id}) async {
+    final res = await transport.send('DELETE', _uri('/api/v1/offline-downloads/artifacts/${Uri.encodeComponent(id)}'), headers: await _headers());
+    return OfflineOk.fromJson(_asMap(_decode(res)));
+  }
+
   /// 查询转码会话状态与播放地址
   Future<PlayerSessionItem> playerSessionGet({required String id, double? pos}) async {
     final query = <String, String>{

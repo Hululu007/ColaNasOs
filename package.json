@@ -92,6 +92,7 @@
     "smoke:lyrics": "node tool/check/lyrics-smoke.js",
     "smoke:mcp": "node tool/check/mcp-smoke.js",
     "smoke:media": "node tool/check/media-smoke.js",
+    "smoke:offline": "node tool/check/offline-smoke.js",
     "smoke:music": "node tool/check/music-smoke.js",
     "smoke:music-compat": "node tool/check/music-compat-smoke.js",
     "smoke:music-detail": "node tool/check/music-detail-smoke.js",

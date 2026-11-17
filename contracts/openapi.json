@@ -14260,6 +14260,1072 @@
           }
         }
       },
+      "OfflineSpec": {
+        "type": "object",
+        "required": [
+          "preset",
+          "codec",
+          "height",
+          "videoKbps",
+          "audioKbps",
+          "audioIndex",
+          "container",
+          "subtitleMode"
+        ],
+        "properties": {
+          "preset": {
+            "description": "画质档位 key",
+            "type": "string"
+          },
+          "codec": {
+            "description": "目标编码：original / h264 / h265 / av1",
+            "type": "string"
+          },
+          "height": {
+            "description": "目标高度（像素）；0 = 跟随片源",
+            "type": "integer"
+          },
+          "videoKbps": {
+            "description": "目标视频码率（kbps）；0 = 不控码率",
+            "type": "integer"
+          },
+          "audioKbps": {
+            "description": "目标音频码率（kbps）",
+            "type": "integer"
+          },
+          "audioIndex": {
+            "description": "选第几条音轨",
+            "type": "integer"
+          },
+          "container": {
+            "description": "产物封装：mp4 / mkv",
+            "type": "string"
+          },
+          "subtitleMode": {
+            "description": "none / embed",
+            "type": "string"
+          }
+        }
+      },
+      "OfflineQuoteBody": {
+        "type": "object",
+        "required": [
+          "itemId"
+        ],
+        "properties": {
+          "itemId": {
+            "minLength": 1,
+            "description": "影视条目 id（剧集就是该集的 id）",
+            "type": "string"
+          },
+          "preset": {
+            "description": "画质档位 key（来自 contracts/play-quality.json）；`original` = 不重编码",
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "original"
+                ]
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "2160p_15m"
+                ]
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "1440p_10m"
+                ]
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "1440p_8m"
+                ]
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "1440p_5m"
+                ]
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "1440p_3m"
+                ]
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "1080p_8m"
+                ]
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "1080p_5m"
+                ]
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "1080p_3m"
+                ]
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "1080p_2m"
+                ]
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "720p_3m"
+                ]
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "720p_2m"
+                ]
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "720p_1m"
+                ]
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "480p_1m"
+                ]
+              }
+            ]
+          },
+          "codec": {
+            "description": "目标编码；original = remux（mkv，保留全部音轨与内嵌字幕）",
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "original"
+                ]
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "h264"
+                ]
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "h265"
+                ]
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "av1"
+                ]
+              }
+            ]
+          },
+          "height": {
+            "minimum": 0,
+            "maximum": 4320,
+            "type": "integer"
+          },
+          "qualityMode": {
+            "description": "画质档位：省空间 / 标准 / 高画质，只影响推荐码率",
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "saver"
+                ]
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "standard"
+                ]
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "high"
+                ]
+              }
+            ]
+          },
+          "videoKbps": {
+            "minimum": 0,
+            "maximum": 200000,
+            "type": "integer"
+          },
+          "audioIndex": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "audioBitrateKbps": {
+            "minimum": 32,
+            "maximum": 640,
+            "type": "integer"
+          },
+          "subtitleMode": {
+            "description": "字幕处理：none = 不带；embed = 内挂（mp4 内嵌 mov_text）",
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "none"
+                ]
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "embed"
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "OfflineQuoteResponse": {
+        "type": "object",
+        "required": [
+          "source",
+          "capabilities",
+          "target",
+          "limits",
+          "estimate",
+          "cached"
+        ],
+        "properties": {
+          "source": {
+            "type": "object",
+            "required": [
+              "width",
+              "height",
+              "videoCodec",
+              "audioCodec",
+              "durationMs",
+              "bytes",
+              "bitrateKbps",
+              "hasSubtitle"
+            ],
+            "properties": {
+              "width": {
+                "type": "integer"
+              },
+              "height": {
+                "type": "integer"
+              },
+              "videoCodec": {
+                "type": "string"
+              },
+              "audioCodec": {
+                "type": "string"
+              },
+              "durationMs": {
+                "type": "integer"
+              },
+              "bytes": {
+                "type": "integer"
+              },
+              "bitrateKbps": {
+                "type": "integer"
+              },
+              "hasSubtitle": {
+                "type": "boolean"
+              }
+            }
+          },
+          "capabilities": {
+            "type": "object",
+            "required": [
+              "codecs",
+              "heights",
+              "maxHeight"
+            ],
+            "properties": {
+              "codecs": {
+                "description": "可选输出编码（original 在最前）",
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "heights": {
+                "description": "片源能支撑的档位高度（降序）",
+                "type": "array",
+                "items": {
+                  "type": "integer"
+                }
+              },
+              "maxHeight": {
+                "type": "integer"
+              }
+            }
+          },
+          "target": {
+            "type": "object",
+            "required": [
+              "preset",
+              "codec",
+              "height",
+              "videoKbps",
+              "audioKbps",
+              "audioIndex",
+              "container",
+              "subtitleMode"
+            ],
+            "properties": {
+              "preset": {
+                "description": "画质档位 key",
+                "type": "string"
+              },
+              "codec": {
+                "description": "目标编码：original / h264 / h265 / av1",
+                "type": "string"
+              },
+              "height": {
+                "description": "目标高度（像素）；0 = 跟随片源",
+                "type": "integer"
+              },
+              "videoKbps": {
+                "description": "目标视频码率（kbps）；0 = 不控码率",
+                "type": "integer"
+              },
+              "audioKbps": {
+                "description": "目标音频码率（kbps）",
+                "type": "integer"
+              },
+              "audioIndex": {
+                "description": "选第几条音轨",
+                "type": "integer"
+              },
+              "container": {
+                "description": "产物封装：mp4 / mkv",
+                "type": "string"
+              },
+              "subtitleMode": {
+                "description": "none / embed",
+                "type": "string"
+              }
+            }
+          },
+          "limits": {
+            "type": "object",
+            "required": [
+              "minKbps",
+              "maxKbps",
+              "recommendedKbps"
+            ],
+            "properties": {
+              "minKbps": {
+                "type": "integer"
+              },
+              "maxKbps": {
+                "type": "integer"
+              },
+              "recommendedKbps": {
+                "type": "integer"
+              }
+            }
+          },
+          "estimate": {
+            "type": "object",
+            "required": [
+              "bytes"
+            ],
+            "properties": {
+              "bytes": {
+                "type": "integer"
+              }
+            }
+          },
+          "cached": {
+            "type": "boolean"
+          },
+          "activeJobId": {
+            "type": "string"
+          }
+        }
+      },
+      "OfflineCreateJobBody": {
+        "type": "object",
+        "required": [
+          "itemId",
+          "preset"
+        ],
+        "properties": {
+          "itemId": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "preset": {
+            "description": "画质档位 key（来自 contracts/play-quality.json）；`original` = 不重编码",
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "original"
+                ]
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "2160p_15m"
+                ]
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "1440p_10m"
+                ]
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "1440p_8m"
+                ]
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "1440p_5m"
+                ]
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "1440p_3m"
+                ]
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "1080p_8m"
+                ]
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "1080p_5m"
+                ]
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "1080p_3m"
+                ]
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "1080p_2m"
+                ]
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "720p_3m"
+                ]
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "720p_2m"
+                ]
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "720p_1m"
+                ]
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "480p_1m"
+                ]
+              }
+            ]
+          },
+          "codec": {
+            "description": "目标编码；original = remux（mkv，保留全部音轨与内嵌字幕）",
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "original"
+                ]
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "h264"
+                ]
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "h265"
+                ]
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "av1"
+                ]
+              }
+            ]
+          },
+          "height": {
+            "minimum": 0,
+            "maximum": 4320,
+            "type": "integer"
+          },
+          "qualityMode": {
+            "description": "画质档位：省空间 / 标准 / 高画质，只影响推荐码率",
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "saver"
+                ]
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "standard"
+                ]
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "high"
+                ]
+              }
+            ]
+          },
+          "videoKbps": {
+            "minimum": 0,
+            "maximum": 200000,
+            "type": "integer"
+          },
+          "audioIndex": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "audioBitrateKbps": {
+            "minimum": 32,
+            "maximum": 640,
+            "type": "integer"
+          },
+          "subtitleMode": {
+            "description": "字幕处理：none = 不带；embed = 内挂（mp4 内嵌 mov_text）",
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "none"
+                ]
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "embed"
+                ]
+              }
+            ]
+          },
+          "operation": {
+            "description": "create / replace",
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "create"
+                ]
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "replace"
+                ]
+              }
+            ]
+          },
+          "idempotencyKey": {
+            "maxLength": 128,
+            "type": "string"
+          }
+        }
+      },
+      "OfflineArtifact": {
+        "type": "object",
+        "required": [
+          "id",
+          "size",
+          "sha256",
+          "etag",
+          "mime",
+          "width",
+          "height",
+          "durationMs",
+          "videoCodec",
+          "container",
+          "bitrateKbps"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer"
+          },
+          "sha256": {
+            "description": "产物整文件校验值；客户端边下边算，下完比对",
+            "type": "string"
+          },
+          "etag": {
+            "description": "尺寸 + mtime，用于断点续传的 If-Range",
+            "type": "string"
+          },
+          "mime": {
+            "type": "string"
+          },
+          "width": {
+            "type": "integer"
+          },
+          "height": {
+            "type": "integer"
+          },
+          "durationMs": {
+            "type": "integer"
+          },
+          "videoCodec": {
+            "type": "string"
+          },
+          "container": {
+            "description": "mp4 / mkv",
+            "type": "string"
+          },
+          "bitrateKbps": {
+            "type": "integer"
+          }
+        }
+      },
+      "OfflineJob": {
+        "type": "object",
+        "required": [
+          "id",
+          "itemId",
+          "libraryId",
+          "spec",
+          "operation",
+          "state",
+          "progress",
+          "createdAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "itemId": {
+            "type": "string"
+          },
+          "libraryId": {
+            "type": "string"
+          },
+          "seriesKey": {
+            "type": "string"
+          },
+          "spec": {
+            "type": "object",
+            "required": [
+              "preset",
+              "codec",
+              "height",
+              "videoKbps",
+              "audioKbps",
+              "audioIndex",
+              "container",
+              "subtitleMode"
+            ],
+            "properties": {
+              "preset": {
+                "description": "画质档位 key",
+                "type": "string"
+              },
+              "codec": {
+                "description": "目标编码：original / h264 / h265 / av1",
+                "type": "string"
+              },
+              "height": {
+                "description": "目标高度（像素）；0 = 跟随片源",
+                "type": "integer"
+              },
+              "videoKbps": {
+                "description": "目标视频码率（kbps）；0 = 不控码率",
+                "type": "integer"
+              },
+              "audioKbps": {
+                "description": "目标音频码率（kbps）",
+                "type": "integer"
+              },
+              "audioIndex": {
+                "description": "选第几条音轨",
+                "type": "integer"
+              },
+              "container": {
+                "description": "产物封装：mp4 / mkv",
+                "type": "string"
+              },
+              "subtitleMode": {
+                "description": "none / embed",
+                "type": "string"
+              }
+            }
+          },
+          "operation": {
+            "type": "string"
+          },
+          "state": {
+            "description": "任务状态；ready 之后才能下载产物",
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "queued"
+                ]
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "transcoding"
+                ]
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "ready"
+                ]
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "failed"
+                ]
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "canceled"
+                ]
+              }
+            ]
+          },
+          "progress": {
+            "type": "number"
+          },
+          "error": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "integer"
+          },
+          "updatedAt": {
+            "type": "integer"
+          },
+          "artifact": {
+            "type": "object",
+            "required": [
+              "id",
+              "size",
+              "sha256",
+              "etag",
+              "mime",
+              "width",
+              "height",
+              "durationMs",
+              "videoCodec",
+              "container",
+              "bitrateKbps"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "size": {
+                "type": "integer"
+              },
+              "sha256": {
+                "description": "产物整文件校验值；客户端边下边算，下完比对",
+                "type": "string"
+              },
+              "etag": {
+                "description": "尺寸 + mtime，用于断点续传的 If-Range",
+                "type": "string"
+              },
+              "mime": {
+                "type": "string"
+              },
+              "width": {
+                "type": "integer"
+              },
+              "height": {
+                "type": "integer"
+              },
+              "durationMs": {
+                "type": "integer"
+              },
+              "videoCodec": {
+                "type": "string"
+              },
+              "container": {
+                "description": "mp4 / mkv",
+                "type": "string"
+              },
+              "bitrateKbps": {
+                "type": "integer"
+              }
+            }
+          }
+        }
+      },
+      "OfflineListQuery": {
+        "type": "object",
+        "properties": {
+          "itemId": {
+            "description": "只看某个影视条目的任务（详情页按钮状态用）",
+            "type": "string"
+          },
+          "limit": {
+            "minimum": 1,
+            "maximum": 100,
+            "default": 20,
+            "type": "integer"
+          }
+        }
+      },
+      "OfflineJobList": {
+        "type": "object",
+        "required": [
+          "items",
+          "total"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "itemId",
+                "libraryId",
+                "spec",
+                "operation",
+                "state",
+                "progress",
+                "createdAt",
+                "updatedAt"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "itemId": {
+                  "type": "string"
+                },
+                "libraryId": {
+                  "type": "string"
+                },
+                "seriesKey": {
+                  "type": "string"
+                },
+                "spec": {
+                  "type": "object",
+                  "required": [
+                    "preset",
+                    "codec",
+                    "height",
+                    "videoKbps",
+                    "audioKbps",
+                    "audioIndex",
+                    "container",
+                    "subtitleMode"
+                  ],
+                  "properties": {
+                    "preset": {
+                      "description": "画质档位 key",
+                      "type": "string"
+                    },
+                    "codec": {
+                      "description": "目标编码：original / h264 / h265 / av1",
+                      "type": "string"
+                    },
+                    "height": {
+                      "description": "目标高度（像素）；0 = 跟随片源",
+                      "type": "integer"
+                    },
+                    "videoKbps": {
+                      "description": "目标视频码率（kbps）；0 = 不控码率",
+                      "type": "integer"
+                    },
+                    "audioKbps": {
+                      "description": "目标音频码率（kbps）",
+                      "type": "integer"
+                    },
+                    "audioIndex": {
+                      "description": "选第几条音轨",
+                      "type": "integer"
+                    },
+                    "container": {
+                      "description": "产物封装：mp4 / mkv",
+                      "type": "string"
+                    },
+                    "subtitleMode": {
+                      "description": "none / embed",
+                      "type": "string"
+                    }
+                  }
+                },
+                "operation": {
+                  "type": "string"
+                },
+                "state": {
+                  "description": "任务状态；ready 之后才能下载产物",
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "enum": [
+                        "queued"
+                      ]
+                    },
+                    {
+                      "type": "string",
+                      "enum": [
+                        "transcoding"
+                      ]
+                    },
+                    {
+                      "type": "string",
+                      "enum": [
+                        "ready"
+                      ]
+                    },
+                    {
+                      "type": "string",
+                      "enum": [
+                        "failed"
+                      ]
+                    },
+                    {
+                      "type": "string",
+                      "enum": [
+                        "canceled"
+                      ]
+                    }
+                  ]
+                },
+                "progress": {
+                  "type": "number"
+                },
+                "error": {
+                  "type": "string"
+                },
+                "createdAt": {
+                  "type": "integer"
+                },
+                "updatedAt": {
+                  "type": "integer"
+                },
+                "artifact": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "size",
+                    "sha256",
+                    "etag",
+                    "mime",
+                    "width",
+                    "height",
+                    "durationMs",
+                    "videoCodec",
+                    "container",
+                    "bitrateKbps"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "size": {
+                      "type": "integer"
+                    },
+                    "sha256": {
+                      "description": "产物整文件校验值；客户端边下边算，下完比对",
+                      "type": "string"
+                    },
+                    "etag": {
+                      "description": "尺寸 + mtime，用于断点续传的 If-Range",
+                      "type": "string"
+                    },
+                    "mime": {
+                      "type": "string"
+                    },
+                    "width": {
+                      "type": "integer"
+                    },
+                    "height": {
+                      "type": "integer"
+                    },
+                    "durationMs": {
+                      "type": "integer"
+                    },
+                    "videoCodec": {
+                      "type": "string"
+                    },
+                    "container": {
+                      "description": "mp4 / mkv",
+                      "type": "string"
+                    },
+                    "bitrateKbps": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "total": {
+            "type": "integer"
+          }
+        }
+      },
+      "OfflineOk": {
+        "type": "object",
+        "required": [
+          "ok"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "affected": {
+            "type": "integer"
+          }
+        }
+      },
       "PlayerSessionCreateBody": {
         "type": "object",
         "required": [
@@ -42025,6 +43091,295 @@
                       }
                     }
                   }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/offline-downloads/quote": {
+      "post": {
+        "operationId": "offlineQuote",
+        "summary": "下载参数推荐与校验（编码 / 分辨率 / 码率联动、预估体积）",
+        "tags": [
+          "offline"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OfflineQuoteBody"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OfflineQuoteResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/offline-downloads/jobs": {
+      "post": {
+        "operationId": "offlineJobCreate",
+        "summary": "创建下载任务（同参数复用已有产物，同参数活动任务直接返回）",
+        "tags": [
+          "offline"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OfflineCreateJobBody"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OfflineJob"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "offlineJobList",
+        "summary": "任务列表（详情页按钮状态 / 下载管理页轮询）",
+        "tags": [
+          "offline"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "query",
+            "name": "itemId",
+            "required": false,
+            "description": "只看某个影视条目的任务（详情页按钮状态用）"
+          },
+          {
+            "schema": {
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20,
+              "type": "integer"
+            },
+            "in": "query",
+            "name": "limit",
+            "required": false
+          }
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OfflineJobList"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/offline-downloads/jobs/{id}": {
+      "get": {
+        "operationId": "offlineJobGet",
+        "summary": "单个任务（状态 / 进度 / 产物）",
+        "tags": [
+          "offline"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OfflineJob"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/offline-downloads/jobs/{id}/cancel": {
+      "post": {
+        "operationId": "offlineJobCancel",
+        "summary": "取消任务（杀掉正在跑的编码，清掉半截产物）",
+        "tags": [
+          "offline"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OfflineOk"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/offline-downloads/jobs/{id}/artifact": {
+      "get": {
+        "operationId": "offlineJobArtifact",
+        "summary": "任务产物的元信息（大小 / sha256 / etag / 规格）",
+        "tags": [
+          "offline"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OfflineArtifact"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/offline-downloads/artifacts/{id}": {
+      "get": {
+        "operationId": "offlineArtifactDownload",
+        "summary": "下载产物文件（支持 Range 断点续传）",
+        "tags": [
+          "offline"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "offlineArtifactDelete",
+        "summary": "删除服务端产物（仅在没有任何引用时；永不碰原始影视文件）",
+        "tags": [
+          "offline"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OfflineOk"
                 }
               }
             }

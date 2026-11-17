@@ -12450,6 +12450,350 @@ class VideoHomeResponse {
       };
 }
 
+class OfflineSpec {
+  final String preset;
+  final String codec;
+  final int height;
+  final int videoKbps;
+  final int audioKbps;
+  final int audioIndex;
+  final String container;
+  final String subtitleMode;
+
+  const OfflineSpec({
+    required this.preset,
+    required this.codec,
+    required this.height,
+    required this.videoKbps,
+    required this.audioKbps,
+    required this.audioIndex,
+    required this.container,
+    required this.subtitleMode,
+  });
+
+  factory OfflineSpec.fromJson(Map<String, dynamic> json) => OfflineSpec(
+        preset: json['preset'] as String,
+        codec: json['codec'] as String,
+        height: json['height'] as int,
+        videoKbps: json['videoKbps'] as int,
+        audioKbps: json['audioKbps'] as int,
+        audioIndex: json['audioIndex'] as int,
+        container: json['container'] as String,
+        subtitleMode: json['subtitleMode'] as String,
+      );
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+        'preset': preset,
+        'codec': codec,
+        'height': height,
+        'videoKbps': videoKbps,
+        'audioKbps': audioKbps,
+        'audioIndex': audioIndex,
+        'container': container,
+        'subtitleMode': subtitleMode,
+      };
+}
+
+class OfflineQuoteBody {
+  final String itemId;
+  final dynamic preset;
+  final dynamic codec;
+  final int? height;
+  final dynamic qualityMode;
+  final int? videoKbps;
+  final int? audioIndex;
+  final int? audioBitrateKbps;
+  final dynamic subtitleMode;
+
+  const OfflineQuoteBody({
+    required this.itemId,
+    this.preset,
+    this.codec,
+    this.height,
+    this.qualityMode,
+    this.videoKbps,
+    this.audioIndex,
+    this.audioBitrateKbps,
+    this.subtitleMode,
+  });
+
+  factory OfflineQuoteBody.fromJson(Map<String, dynamic> json) => OfflineQuoteBody(
+        itemId: json['itemId'] as String,
+        preset: json['preset'] == null ? null : (json['preset'] as dynamic),
+        codec: json['codec'] == null ? null : (json['codec'] as dynamic),
+        height: json['height'] == null ? null : json['height'] as int,
+        qualityMode: json['qualityMode'] == null ? null : (json['qualityMode'] as dynamic),
+        videoKbps: json['videoKbps'] == null ? null : json['videoKbps'] as int,
+        audioIndex: json['audioIndex'] == null ? null : json['audioIndex'] as int,
+        audioBitrateKbps: json['audioBitrateKbps'] == null ? null : json['audioBitrateKbps'] as int,
+        subtitleMode: json['subtitleMode'] == null ? null : (json['subtitleMode'] as dynamic),
+      );
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+        'itemId': itemId,
+        if (preset != null) 'preset': preset!,
+        if (codec != null) 'codec': codec!,
+        if (height != null) 'height': height!,
+        if (qualityMode != null) 'qualityMode': qualityMode!,
+        if (videoKbps != null) 'videoKbps': videoKbps!,
+        if (audioIndex != null) 'audioIndex': audioIndex!,
+        if (audioBitrateKbps != null) 'audioBitrateKbps': audioBitrateKbps!,
+        if (subtitleMode != null) 'subtitleMode': subtitleMode!,
+      };
+}
+
+class OfflineQuoteResponse {
+  final Map<String, dynamic> source;
+  final Map<String, dynamic> capabilities;
+  final Map<String, dynamic> target;
+  final Map<String, dynamic> limits;
+  final Map<String, dynamic> estimate;
+  final bool cached;
+  final String? activeJobId;
+
+  const OfflineQuoteResponse({
+    required this.source,
+    required this.capabilities,
+    required this.target,
+    required this.limits,
+    required this.estimate,
+    required this.cached,
+    this.activeJobId,
+  });
+
+  factory OfflineQuoteResponse.fromJson(Map<String, dynamic> json) => OfflineQuoteResponse(
+        source: json['source'] as Map<String, dynamic>,
+        capabilities: json['capabilities'] as Map<String, dynamic>,
+        target: json['target'] as Map<String, dynamic>,
+        limits: json['limits'] as Map<String, dynamic>,
+        estimate: json['estimate'] as Map<String, dynamic>,
+        cached: json['cached'] as bool,
+        activeJobId: json['activeJobId'] == null ? null : json['activeJobId'] as String,
+      );
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+        'source': source,
+        'capabilities': capabilities,
+        'target': target,
+        'limits': limits,
+        'estimate': estimate,
+        'cached': cached,
+        if (activeJobId != null) 'activeJobId': activeJobId!,
+      };
+}
+
+class OfflineCreateJobBody {
+  final String itemId;
+  final dynamic preset;
+  final dynamic codec;
+  final int? height;
+  final dynamic qualityMode;
+  final int? videoKbps;
+  final int? audioIndex;
+  final int? audioBitrateKbps;
+  final dynamic subtitleMode;
+  final dynamic operation;
+  final String? idempotencyKey;
+
+  const OfflineCreateJobBody({
+    required this.itemId,
+    required this.preset,
+    this.codec,
+    this.height,
+    this.qualityMode,
+    this.videoKbps,
+    this.audioIndex,
+    this.audioBitrateKbps,
+    this.subtitleMode,
+    this.operation,
+    this.idempotencyKey,
+  });
+
+  factory OfflineCreateJobBody.fromJson(Map<String, dynamic> json) => OfflineCreateJobBody(
+        itemId: json['itemId'] as String,
+        preset: (json['preset'] as dynamic),
+        codec: json['codec'] == null ? null : (json['codec'] as dynamic),
+        height: json['height'] == null ? null : json['height'] as int,
+        qualityMode: json['qualityMode'] == null ? null : (json['qualityMode'] as dynamic),
+        videoKbps: json['videoKbps'] == null ? null : json['videoKbps'] as int,
+        audioIndex: json['audioIndex'] == null ? null : json['audioIndex'] as int,
+        audioBitrateKbps: json['audioBitrateKbps'] == null ? null : json['audioBitrateKbps'] as int,
+        subtitleMode: json['subtitleMode'] == null ? null : (json['subtitleMode'] as dynamic),
+        operation: json['operation'] == null ? null : (json['operation'] as dynamic),
+        idempotencyKey: json['idempotencyKey'] == null ? null : json['idempotencyKey'] as String,
+      );
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+        'itemId': itemId,
+        'preset': preset,
+        if (codec != null) 'codec': codec!,
+        if (height != null) 'height': height!,
+        if (qualityMode != null) 'qualityMode': qualityMode!,
+        if (videoKbps != null) 'videoKbps': videoKbps!,
+        if (audioIndex != null) 'audioIndex': audioIndex!,
+        if (audioBitrateKbps != null) 'audioBitrateKbps': audioBitrateKbps!,
+        if (subtitleMode != null) 'subtitleMode': subtitleMode!,
+        if (operation != null) 'operation': operation!,
+        if (idempotencyKey != null) 'idempotencyKey': idempotencyKey!,
+      };
+}
+
+class OfflineArtifact {
+  final String id;
+  final int size;
+  final String sha256;
+  final String etag;
+  final String mime;
+  final int width;
+  final int height;
+  final int durationMs;
+  final String videoCodec;
+  final String container;
+  final int bitrateKbps;
+
+  const OfflineArtifact({
+    required this.id,
+    required this.size,
+    required this.sha256,
+    required this.etag,
+    required this.mime,
+    required this.width,
+    required this.height,
+    required this.durationMs,
+    required this.videoCodec,
+    required this.container,
+    required this.bitrateKbps,
+  });
+
+  factory OfflineArtifact.fromJson(Map<String, dynamic> json) => OfflineArtifact(
+        id: json['id'] as String,
+        size: json['size'] as int,
+        sha256: json['sha256'] as String,
+        etag: json['etag'] as String,
+        mime: json['mime'] as String,
+        width: json['width'] as int,
+        height: json['height'] as int,
+        durationMs: json['durationMs'] as int,
+        videoCodec: json['videoCodec'] as String,
+        container: json['container'] as String,
+        bitrateKbps: json['bitrateKbps'] as int,
+      );
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+        'id': id,
+        'size': size,
+        'sha256': sha256,
+        'etag': etag,
+        'mime': mime,
+        'width': width,
+        'height': height,
+        'durationMs': durationMs,
+        'videoCodec': videoCodec,
+        'container': container,
+        'bitrateKbps': bitrateKbps,
+      };
+}
+
+class OfflineJob {
+  final String id;
+  final String itemId;
+  final String libraryId;
+  final String? seriesKey;
+  final Map<String, dynamic> spec;
+  final String operation;
+  final dynamic state;
+  final double progress;
+  final String? error;
+  final int createdAt;
+  final int updatedAt;
+  final Map<String, dynamic>? artifact;
+
+  const OfflineJob({
+    required this.id,
+    required this.itemId,
+    required this.libraryId,
+    this.seriesKey,
+    required this.spec,
+    required this.operation,
+    required this.state,
+    required this.progress,
+    this.error,
+    required this.createdAt,
+    required this.updatedAt,
+    this.artifact,
+  });
+
+  factory OfflineJob.fromJson(Map<String, dynamic> json) => OfflineJob(
+        id: json['id'] as String,
+        itemId: json['itemId'] as String,
+        libraryId: json['libraryId'] as String,
+        seriesKey: json['seriesKey'] == null ? null : json['seriesKey'] as String,
+        spec: json['spec'] as Map<String, dynamic>,
+        operation: json['operation'] as String,
+        state: (json['state'] as dynamic),
+        progress: (json['progress'] as num).toDouble(),
+        error: json['error'] == null ? null : json['error'] as String,
+        createdAt: json['createdAt'] as int,
+        updatedAt: json['updatedAt'] as int,
+        artifact: json['artifact'] == null ? null : json['artifact'] as Map<String, dynamic>,
+      );
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+        'id': id,
+        'itemId': itemId,
+        'libraryId': libraryId,
+        if (seriesKey != null) 'seriesKey': seriesKey!,
+        'spec': spec,
+        'operation': operation,
+        'state': state,
+        'progress': progress,
+        if (error != null) 'error': error!,
+        'createdAt': createdAt,
+        'updatedAt': updatedAt,
+        if (artifact != null) 'artifact': artifact!,
+      };
+}
+
+class OfflineJobList {
+  final List<Map<String, dynamic>> items;
+  final int total;
+
+  const OfflineJobList({
+    required this.items,
+    required this.total,
+  });
+
+  factory OfflineJobList.fromJson(Map<String, dynamic> json) => OfflineJobList(
+        items: (json['items'] as List<dynamic>).cast<Map<String, dynamic>>(),
+        total: json['total'] as int,
+      );
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+        'items': items,
+        'total': total,
+      };
+}
+
+class OfflineOk {
+  final bool ok;
+  final int? affected;
+
+  const OfflineOk({
+    required this.ok,
+    this.affected,
+  });
+
+  factory OfflineOk.fromJson(Map<String, dynamic> json) => OfflineOk(
+        ok: json['ok'] as bool,
+        affected: json['affected'] == null ? null : json['affected'] as int,
+      );
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+        'ok': ok,
+        if (affected != null) 'affected': affected!,
+      };
+}
+
 class PlayerSessionCreateBody {
   final String id;
   final dynamic preset;

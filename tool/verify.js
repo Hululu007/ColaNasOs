@@ -171,6 +171,7 @@ const MODULE_RULES = [
   { dir: 'video', steps: ['smoke:video-duplicates', 'smoke:video-image', 'smoke:video', 'smoke:video-series', 'smoke:video-progress', 'smoke:subtitles', 'smoke:player'], domains: ['video'] },
   { dir: 'videoPlayer', steps: ['smoke:player'], domains: ['video'] },
   { dir: 'transfer', steps: ['smoke:transfer', 'smoke:upload', 'smoke:download'], domains: [] },
+  { dir: 'offline-download', steps: ['smoke:offline', 'smoke:player'], domains: ['video'] },
 ];
 
 const FULL_TRIGGERS = [

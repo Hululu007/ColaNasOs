@@ -368,6 +368,7 @@ export async function startKernel(opts: KernelOptions) {
       register: (type, handler) => queue.register(type, handler),
       registered: () => queue.registered(),
       stats: () => queue.stats(),
+      cancel: (id) => queue.cancel(id),
     },
     background,
     config,
@@ -383,6 +384,7 @@ export async function startKernel(opts: KernelOptions) {
       thumb: (src, dst, size, atSec) => mediaBridge.thumb(src, dst, size, atSec),
       transcode: (src, dst, preset) => mediaBridge.transcode(src, dst, preset),
       hls: (src, dir, opts) => mediaBridge.hls(src, dir, opts),
+      encode: (src, dir, opts, onProgress) => mediaBridge.encode(src, dir, opts, onProgress),
       cancel: (dir) => mediaBridge.cancel(dir),
       subtitleTracks: (src) => mediaBridge.subtitleTracks(src),
       extractSubtitle: (src, index, dst, format) =>

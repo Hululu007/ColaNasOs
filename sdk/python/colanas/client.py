@@ -503,6 +503,38 @@ class ColanasClient:
         """生成带短期令牌的播放地址（format=auto 时 Web 端按需转 AAC）"""
         return self._request("GET", "/api/v1/music/stream-url", params, "query")
 
+    def offline_artifact_delete(self, **params):
+        """删除服务端产物（仅在没有任何引用时；永不碰原始影视文件）"""
+        return self._request("DELETE", "/api/v1/offline-downloads/artifacts/{id}", params, "query")
+
+    def offline_artifact_download(self, **params):
+        """下载产物文件（支持 Range 断点续传）"""
+        return self._request("GET", "/api/v1/offline-downloads/artifacts/{id}", params, "query")
+
+    def offline_job_artifact(self, **params):
+        """任务产物的元信息（大小 / sha256 / etag / 规格）"""
+        return self._request("GET", "/api/v1/offline-downloads/jobs/{id}/artifact", params, "query")
+
+    def offline_job_cancel(self, **params):
+        """取消任务（杀掉正在跑的编码，清掉半截产物）"""
+        return self._request("POST", "/api/v1/offline-downloads/jobs/{id}/cancel", params, "body")
+
+    def offline_job_create(self, **params):
+        """创建下载任务（同参数复用已有产物，同参数活动任务直接返回）"""
+        return self._request("POST", "/api/v1/offline-downloads/jobs", params, "body")
+
+    def offline_job_get(self, **params):
+        """单个任务（状态 / 进度 / 产物）"""
+        return self._request("GET", "/api/v1/offline-downloads/jobs/{id}", params, "query")
+
+    def offline_job_list(self, **params):
+        """任务列表（详情页按钮状态 / 下载管理页轮询）"""
+        return self._request("GET", "/api/v1/offline-downloads/jobs", params, "query")
+
+    def offline_quote(self, **params):
+        """下载参数推荐与校验（编码 / 分辨率 / 码率联动、预估体积）"""
+        return self._request("POST", "/api/v1/offline-downloads/quote", params, "body")
+
     def openapi_json(self, **params):
         """导出 OpenAPI 文档"""
         return self._request("GET", "/openapi.json", params, "query")

@@ -64,6 +64,58 @@ export interface HlsResult {
   container?: string;
 }
 
+/** 单文件编码（离线下载）的入参 */
+export interface EncodeOptions {
+  /** 画质档位 key（来自 play-quality.json）；`original` = 不重编码、remux 到 mkv */
+  preset: string;
+  codec?: string;
+  /** 目标高度（像素）；片源更矮时按片源走，不放大 */
+  height?: number;
+  /** 目标视频码率（kbps）。不传 = 按「档位 × 编码」查表 */
+  videoKbps?: number;
+  audioIndex?: number;
+  audioBitrateKbps?: number;
+  /** none = 不带字幕；embed = 内挂（mp4 转 mov_text） */
+  subtitleMode?: 'none' | 'embed';
+  audioFilter?: string;
+  hwaccel?: string;
+  hdrToSdr?: boolean;
+  srcVideoCodec?: string;
+  /** 片源总时长：用来算进度百分比，也用来估 ffmpeg 超时 */
+  durationMs?: number;
+  timeoutMs?: number;
+}
+
+/** 编码进度（sidecar 每 500 ms 推一条） */
+export interface EncodeProgress {
+  /** 0~99 的百分比；拿不到片长时为 0 */
+  percent: number;
+  outTimeMs: number;
+  totalMs: number;
+  /** 形如 `1.4x` */
+  speed?: string;
+  elapsedMs: number;
+}
+
+export interface EncodeResult {
+  dir: string;
+  file: string;
+  /** 产物绝对路径 */
+  dst: string;
+  bytes: number;
+  durationMs: number;
+  /** 实际编码（原画 remux 时等于片源编码） */
+  codec: string;
+  /** mp4 | mkv */
+  container: string;
+  encoder?: string;
+  decoder?: string;
+  pipeline?: string;
+  /** 播放正在转码，本次让位走 CPU（不是故障） */
+  degradedToCpu?: boolean;
+  ms: number;
+}
+
 /** 容器内的字幕轨（按 ffmpeg 流信息解析） */
 export interface SubtitleTrackInfo {
   /** 第几条字幕流（`-map 0:s:<index>`） */
@@ -172,6 +224,68 @@ export class MediaBridge {
       codec: res.codec,
       container: res.container,
     };
+  }
+
+  /**
+   * 单文件编码（离线下载）：把片源压成 `dir` 下的**一个完整文件**。
+   *
+   * 与 `hls()` 共用同一套编码方案（`resolveEncodePlan`），区别只在输出侧：
+   * 容器（mp4/mkv）、音轨选择、可选内挂字幕、`-movflags +faststart`。
+   * 进度通过 sidecar 的 `encode_progress` 事件回调，按 500 ms 节流。
+   *
+   * 取消走 {@link cancel}：传同一个 `dir` 即可 —— 两者共用 sidecar 里的 active 表。
+   */
+  async encode(
+    src: string,
+    dir: string,
+    opts: EncodeOptions,
+    onProgress?: (p: EncodeProgress) => void,
+  ): Promise<EncodeResult> {
+    const sup = await this.ensure();
+    // RPC 超时必须比 ffmpeg 自己的超时更长，否则「编码还在跑、RPC 先断」，
+    // 客户端看到的是超时、实际进程还在烧 CPU。
+    const ffmpegTimeout =
+      opts.timeoutMs ?? Math.max((Number(opts.durationMs) || 0) * 6, 10 * 60_000);
+    const rpcTimeout = ffmpegTimeout + 120_000;
+
+    const handler = (name: string, data: unknown) => {
+      if (name !== 'encode_progress' || !onProgress) return;
+      const d = (data || {}) as Record<string, unknown>;
+      // 同一个 sidecar 可能同时跑多条 encode（理论上被 limiter 限成 1 条，
+      // 但换任务时旧事件可能还在路上），按目录精确过滤。
+      if (String(d.dir || '') !== dir) return;
+      onProgress({
+        percent: Number(d.percent) || 0,
+        outTimeMs: Number(d.outTimeMs) || 0,
+        totalMs: Number(d.totalMs) || 0,
+        speed: d.speed === undefined ? undefined : String(d.speed),
+        elapsedMs: Number(d.elapsedMs) || 0,
+      });
+    };
+    if (onProgress) sup.on('event', handler);
+    try {
+      const res = await sup.request<Record<string, unknown>>(
+        'encode',
+        { src, dir, ...opts },
+        rpcTimeout,
+      );
+      return {
+        dir: String(res.dir || dir),
+        file: String(res.file || ''),
+        dst: String(res.dst || ''),
+        bytes: Number(res.bytes) || 0,
+        durationMs: Number(res.durationMs) || 0,
+        codec: String(res.codec || ''),
+        container: String(res.container || 'mp4'),
+        encoder: res.encoder === undefined ? undefined : String(res.encoder),
+        decoder: res.decoder === undefined ? undefined : String(res.decoder),
+        pipeline: res.pipeline === undefined ? undefined : String(res.pipeline),
+        degradedToCpu: res.degradedToCpu === true,
+        ms: Number(res.ms) || 0,
+      };
+    } finally {
+      if (onProgress) sup.off('event', handler);
+    }
   }
 
   /**

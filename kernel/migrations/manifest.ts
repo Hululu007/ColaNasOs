@@ -218,6 +218,8 @@ export const MIGRATION_ORDER: readonly string[] = Object.freeze([
   '178_video_orphan_purge',
   // 混合库「同名封面排除」的表达式索引（内层是列上的函数，不建索引就是整目录逐条现算）
   '179_video_same_name_idx',
+  // 离线下载：任务行 + 产物行（产物按参数指纹缓存，跨设备复用）
+  '180_offline_download',
 ]);
 
 export interface OrderCheck {

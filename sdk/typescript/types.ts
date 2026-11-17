@@ -3706,6 +3706,180 @@ export type VideoHomeResponse = {
   "progress": VideoProgress[];
 };
 
+export type OfflineSpec = {
+  "preset": string;
+  "codec": string;
+  "height": number;
+  "videoKbps": number;
+  "audioKbps": number;
+  "audioIndex": number;
+  "container": string;
+  "subtitleMode": string;
+};
+
+export type OfflineQuoteBody = {
+  "itemId": string;
+  "preset"?: "original" | "2160p_15m" | "1440p_10m" | "1440p_8m" | "1440p_5m" | "1440p_3m" | "1080p_8m" | "1080p_5m" | "1080p_3m" | "1080p_2m" | "720p_3m" | "720p_2m" | "720p_1m" | "480p_1m";
+  "codec"?: "original" | "h264" | "h265" | "av1";
+  "height"?: number;
+  "qualityMode"?: "saver" | "standard" | "high";
+  "videoKbps"?: number;
+  "audioIndex"?: number;
+  "audioBitrateKbps"?: number;
+  "subtitleMode"?: "none" | "embed";
+};
+
+export type OfflineQuoteResponse = {
+  "source": {
+    "width": number;
+    "height": number;
+    "videoCodec": string;
+    "audioCodec": string;
+    "durationMs": number;
+    "bytes": number;
+    "bitrateKbps": number;
+    "hasSubtitle": boolean;
+  };
+  "capabilities": {
+    "codecs": string[];
+    "heights": number[];
+    "maxHeight": number;
+  };
+  "target": {
+    "preset": string;
+    "codec": string;
+    "height": number;
+    "videoKbps": number;
+    "audioKbps": number;
+    "audioIndex": number;
+    "container": string;
+    "subtitleMode": string;
+  };
+  "limits": {
+    "minKbps": number;
+    "maxKbps": number;
+    "recommendedKbps": number;
+  };
+  "estimate": {
+    "bytes": number;
+  };
+  "cached": boolean;
+  "activeJobId"?: string;
+};
+
+export type OfflineCreateJobBody = {
+  "itemId": string;
+  "preset": "original" | "2160p_15m" | "1440p_10m" | "1440p_8m" | "1440p_5m" | "1440p_3m" | "1080p_8m" | "1080p_5m" | "1080p_3m" | "1080p_2m" | "720p_3m" | "720p_2m" | "720p_1m" | "480p_1m";
+  "codec"?: "original" | "h264" | "h265" | "av1";
+  "height"?: number;
+  "qualityMode"?: "saver" | "standard" | "high";
+  "videoKbps"?: number;
+  "audioIndex"?: number;
+  "audioBitrateKbps"?: number;
+  "subtitleMode"?: "none" | "embed";
+  "operation"?: "create" | "replace";
+  "idempotencyKey"?: string;
+};
+
+export type OfflineArtifact = {
+  "id": string;
+  "size": number;
+  "sha256": string;
+  "etag": string;
+  "mime": string;
+  "width": number;
+  "height": number;
+  "durationMs": number;
+  "videoCodec": string;
+  "container": string;
+  "bitrateKbps": number;
+};
+
+export type OfflineJob = {
+  "id": string;
+  "itemId": string;
+  "libraryId": string;
+  "seriesKey"?: string;
+  "spec": {
+    "preset": string;
+    "codec": string;
+    "height": number;
+    "videoKbps": number;
+    "audioKbps": number;
+    "audioIndex": number;
+    "container": string;
+    "subtitleMode": string;
+  };
+  "operation": string;
+  "state": "queued" | "transcoding" | "ready" | "failed" | "canceled";
+  "progress": number;
+  "error"?: string;
+  "createdAt": number;
+  "updatedAt": number;
+  "artifact"?: {
+    "id": string;
+    "size": number;
+    "sha256": string;
+    "etag": string;
+    "mime": string;
+    "width": number;
+    "height": number;
+    "durationMs": number;
+    "videoCodec": string;
+    "container": string;
+    "bitrateKbps": number;
+  };
+};
+
+export type OfflineListQuery = {
+  "itemId"?: string;
+  "limit"?: number;
+};
+
+export type OfflineJobList = {
+  "items": {
+    "id": string;
+    "itemId": string;
+    "libraryId": string;
+    "seriesKey"?: string;
+    "spec": {
+      "preset": string;
+      "codec": string;
+      "height": number;
+      "videoKbps": number;
+      "audioKbps": number;
+      "audioIndex": number;
+      "container": string;
+      "subtitleMode": string;
+    };
+    "operation": string;
+    "state": "queued" | "transcoding" | "ready" | "failed" | "canceled";
+    "progress": number;
+    "error"?: string;
+    "createdAt": number;
+    "updatedAt": number;
+    "artifact"?: {
+      "id": string;
+      "size": number;
+      "sha256": string;
+      "etag": string;
+      "mime": string;
+      "width": number;
+      "height": number;
+      "durationMs": number;
+      "videoCodec": string;
+      "container": string;
+      "bitrateKbps": number;
+    };
+  }[];
+  "total": number;
+};
+
+export type OfflineOk = {
+  "ok": boolean;
+  "affected"?: number;
+};
+
 export type PlayerSessionCreateBody = {
   "id": string;
   "preset"?: "original" | "2160p_15m" | "1440p_10m" | "1440p_8m" | "1440p_5m" | "1440p_3m" | "1080p_8m" | "1080p_5m" | "1080p_3m" | "1080p_2m" | "720p_3m" | "720p_2m" | "720p_1m" | "480p_1m";

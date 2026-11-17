@@ -43,6 +43,12 @@ export interface KernelApi {
     /** 注册任务处理器；同名重复注册直接抛错（启动期暴露，而不是运行期静默丢任务） */
     register(type: string, handler: TaskHandler): void;
     registered(): string[];
+    /**
+     * 取消一条任务（pending / running / paused 都适用）。
+     * running 的任务只是改状态，正在跑的 handler 要自己收手 —— 长任务请配合
+     * 各自的取消通道（例如 media 的 `cancel(dir)` 杀掉 ffmpeg）。
+     */
+    cancel(id: string): Promise<void>;
     stats(): Promise<Record<string, number>>;
   };
   config: ConfigStore;
@@ -140,6 +146,16 @@ export interface KernelApi {
     >;
     /** 抽取一条字幕轨到 `dst`（默认 srt）；图形字幕 / 轨道不存在时抛错 */
     extractSubtitle(src: string, index: number, dst: string, format?: string): Promise<void>;
+    /**
+     * 单文件编码（离线下载）：把片源压成 `dir` 下的完整文件，进度走回调。
+     * 与 `hls()` 共用编码方案，区别只在输出侧（容器 / 音轨 / 内挂字幕 / faststart）。
+     */
+    encode(
+      src: string,
+      dir: string,
+      opts: import('./sidecar/media-bridge').EncodeOptions,
+      onProgress?: (p: import('./sidecar/media-bridge').EncodeProgress) => void,
+    ): Promise<import('./sidecar/media-bridge').EncodeResult>;
     available(): boolean;
   };
   /** 认证：用内核同一 secret 签发 token（模块登录用） */
