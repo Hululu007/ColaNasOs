@@ -156,7 +156,8 @@ const anyLike = (col: string, likes: string[]) =>
   );
 
 /** 曲目搜索列：标题 / 艺人 / 专辑 / **文件名**（老库很多歌只有文件名带信息） */
-const TRACK_SEARCH_COLS = ['t.title', 't.artist', 't.album', 't.rel_path'];
+// search_pinyin 里存着「原文 + 全拼 + 首字母」：watm / woaitaimei 这类输入才能命中
+const TRACK_SEARCH_COLS = ['t.title', 't.artist', 't.album', 't.rel_path', 't.search_pinyin'];
 
 /**
  * 「查无此图」哨兵的内容标记。在线源 / 匹配规则升级时改一下这个值，

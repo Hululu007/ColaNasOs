@@ -188,7 +188,8 @@ class _TvSearchSectionState extends State<TvSearchSection> {
 
   void _onQueryChanged() {
     _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 300), _search);
+    // 450ms：遥控器连按字母时，300ms 会在一串按键里跑起好几轮查询
+    _debounce = Timer(const Duration(milliseconds: 450), _search);
     setState(() {}); // 顶部搜索框要立刻回显按键
   }
 
@@ -285,30 +286,40 @@ class _TvSearchSectionState extends State<TvSearchSection> {
     });
 
     final client = ApiSession.instance.client;
-    final results = await Future.wait<Object?>([
-      _safe(client.videoList(q: q, limit: 100)),
+    // 一两个字（ad / 周）命中面太大，专辑 / 歌手的分组聚合又最慢 —— 先不给。
+    // 等用户多打两个字（≥3）再补上这两个栏目。
+    final rich = q.length >= 3;
+    final futures = <Future<Object?>>[
+      _safe(client.videoList(q: q, limit: 60)),
       _safe(client.videoSeriesList(q: q, limit: 20)),
-      _safe(client.musicList(q: q, limit: 40)),
-      _safe(client.musicAlbums(q: q, limit: 20)),
-      _safe(client.musicArtists(q: q, limit: 20)),
-    ]);
+      _safe(client.musicList(q: q, limit: 30)),
+    ];
+    if (rich) {
+      futures.add(_safe(client.musicAlbums(q: q, limit: 16)));
+      futures.add(_safe(client.musicArtists(q: q, limit: 16)));
+    }
+    final results = await Future.wait<Object?>(futures);
     // 输入还在继续：这一批结果已经过期，直接丢掉（防抖后仍可能连发）
     if (!mounted || seq != _searchSeq) return;
 
     final videoRes = results[0] as VideoListResponse?;
     final seriesRes = results[1] as VideoSeriesListResponse?;
     final trackRes = results[2] as MusicListResponse?;
-    final albumRes = results[3] as MusicAlbumListResponse?;
-    final artistRes = results[4] as MusicArtistListResponse?;
+    final albumRes = results.length > 3 ? results[3] as MusicAlbumListResponse? : null;
+    final artistRes = results.length > 4 ? results[4] as MusicArtistListResponse? : null;
 
     final videos = <VideoItem>[];
     final bySeries = <String, List<VideoItem>>{};
     for (final item in videoRes?.items ?? const <VideoItem>[]) {
       final name = (item.series ?? '').trim();
-      if (name.isEmpty) {
+      // 带集号的条目一定是剧的某一集：不管有没有 series 字段，都归到剧名下，
+      // 不然搜索「XXX」会刷出一排「第 1 集 / 第 2 集」，用户要的是那部剧。
+      final looksEpisode = item.season != null || item.episode != null;
+      if (name.isEmpty && !looksEpisode) {
         videos.add(item);
       } else {
-        bySeries.putIfAbsent(name, () => <VideoItem>[]).add(item);
+        final key = name.isEmpty ? seriesKeyOfTitle(item.title) : name;
+        bySeries.putIfAbsent(key, () => <VideoItem>[]).add(item);
       }
     }
     final series = <TvSeriesCard>[
@@ -955,6 +966,23 @@ class _TvSearchSectionState extends State<TvSearchSection> {
   }
 
   String? musicCoverUrlForTv(String id) => ApiSession.instance.coverUrl('music', id);
+}
+
+/// 从标题里去掉集数后缀，拿它当剧名。
+///
+/// 有些库的剧集条目没有 `series` 字段，只有「第 12 集」这种标题；
+/// 按标题聚合才不至于把同一��剧拆成 24 个栏目。
+// ⛔ 不做「光秃秃的数字」那一条：电影《2012》会被砍成「20」。
+// 纯数字只认带分隔符的写法（「剧名 - 03」）。
+final RegExp _episodeSuffix = RegExp(
+  r'\s*(?:[-–—]\s*)?(?:第\s*\d+\s*[集话話]|EP?\s*\d+|S\d+\s*E\d+|[-–—]\s*\d{1,3})\s*$',
+  caseSensitive: false,
+);
+
+String seriesKeyOfTitle(String title) {
+  final text = title.trim();
+  final stripped = text.replaceFirst(_episodeSuffix, '').trim();
+  return stripped.isEmpty ? text : stripped;
 }
 
 /// 一个栏目：标题 + 一行卡片（最多 5 张，不横向滚动）

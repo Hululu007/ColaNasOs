@@ -1,6 +1,7 @@
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { sql } from 'kysely';
+import { pinyinKey } from '../pinyin';
 import { filesRoot, resolveAnyPath, resolveInRoot } from '../files/fs-root';
 import { walkFilesStream } from '../files/walk';
 import { mapLimit } from '../media/concurrency';
@@ -124,16 +125,21 @@ export async function scanMusicLibrary(
       await db.transaction().execute(async (trx: any) => {
         for (const p of chunk) {
           const m = p.meta;
+          const title = m.title || titleOf(p.rel);
+          const searchPinyin = pinyinKey(title, m.artist, m.album);
           await sql`
             insert into music_tracks
               (id, library_id, rel_path, title, artist, album, album_artist, genre, track_no,
-               year, duration, bitrate, sample_rate, channels, codec, has_cover, size, mtime, created_at)
+               year, duration, bitrate, sample_rate, channels, codec, has_cover, size, mtime, created_at,
+               search_pinyin)
             values
               (${`${lib.id}_${Buffer.from(p.rel).toString('base64url')}`}, ${lib.id}, ${p.fullRel},
-               ${m.title || titleOf(p.rel)}, ${m.artist}, ${m.album}, ${m.albumArtist}, ${m.genre},
+               ${title}, ${m.artist}, ${m.album}, ${m.albumArtist}, ${m.genre},
                ${m.trackNo}, ${m.year}, ${m.durationMs}, ${m.bitrate}, ${m.sampleRate}, ${m.channels},
-               ${m.codec}, ${m.hasCover ? 1 : 0}, ${p.size}, ${p.mtime}, ${nowSec})
+               ${m.codec}, ${m.hasCover ? 1 : 0}, ${p.size}, ${p.mtime}, ${nowSec},
+               ${searchPinyin})
             on conflict(library_id, rel_path) do update set
+              search_pinyin = excluded.search_pinyin,
               title = excluded.title,
               artist = excluded.artist,
               album = excluded.album,

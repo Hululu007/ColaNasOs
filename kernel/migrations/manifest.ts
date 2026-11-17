@@ -220,6 +220,9 @@ export const MIGRATION_ORDER: readonly string[] = Object.freeze([
   '179_video_same_name_idx',
   // 离线下载：任务行 + 产物行（产物按参数指纹缓存，跨设备复用）
   '180_offline_download',
+  // 搜索拼音键：原文 + 全拼 + 首字母（影视 / 音乐各一列）
+  '181_video_search_pinyin',
+  '182_music_search_pinyin',
 ]);
 
 export interface OrderCheck {

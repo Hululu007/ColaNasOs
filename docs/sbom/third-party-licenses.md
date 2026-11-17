@@ -2,18 +2,18 @@
 
 > 自动生成，请勿手改；更新依赖后执行 `npm run sbom`。
 
-- 组件总数：**577**（运行时 226 / 开发期 351）
+- 组件总数：**538**（运行时 173 / 开发期 365）
 - 许可未知：**0**
 
 ## 按许可汇总
 
 | 许可 | 数量 |
 | --- | --- |
-| MIT | 434 |
-| ISC | 64 |
-| Apache-2.0 | 32 |
-| BSD-3-Clause | 19 |
-| BSD-2-Clause | 12 |
+| MIT | 419 |
+| ISC | 43 |
+| Apache-2.0 | 31 |
+| BSD-3-Clause | 18 |
+| BSD-2-Clause | 11 |
 | BlueOak-1.0.0 | 8 |
 | Python-2.0 | 1 |
 | (MIT OR WTFPL) | 1 |
@@ -93,7 +93,6 @@
 | @keyv/serialize | 1.1.1 | MIT | dev |
 | @malept/cross-spawn-promise | 2.0.0 | Apache-2.0 | dev |
 | @malept/flatpak-bundler | 0.4.0 | MIT | dev |
-| @mapbox/node-pre-gyp | 1.0.11 | BSD-3-Clause | runtime |
 | @napi-rs/canvas | 1.0.13 | MIT | runtime |
 | @napi-rs/canvas-android-arm64 | 1.0.13 | MIT | runtime |
 | @napi-rs/canvas-darwin-arm64 | 1.0.13 | MIT | runtime |
@@ -141,13 +140,11 @@
 | @typescript-eslint/utils | 8.72.1 | MIT | dev |
 | @typescript-eslint/visitor-keys | 8.72.1 | MIT | dev |
 | @xmldom/xmldom | 0.8.15 | MIT | dev |
-| abbrev | 1.1.1 | ISC | runtime |
 | abbrev | 4.0.0 | ISC | dev |
 | abort-controller | 3.0.0 | MIT | runtime |
 | abstract-logging | 2.0.1 | MIT | runtime |
 | acorn | 8.19.0 | MIT | dev |
 | acorn-jsx | 5.3.2 | MIT | dev |
-| agent-base | 6.0.2 | MIT | runtime |
 | agent-base | 7.1.4 | MIT | dev |
 | ajv | 6.15.0 | MIT | dev |
 | ajv | 8.20.0 | MIT | runtime |
@@ -155,12 +152,10 @@
 | ajv | 8.20.0 | MIT | dev |
 | ajv | 8.20.0 | MIT | runtime |
 | ajv-formats | 3.0.1 | MIT | runtime |
-| ansi-regex | 5.0.1 | MIT | runtime |
+| ansi-regex | 5.0.1 | MIT | dev |
 | ansi-styles | 4.3.0 | MIT | dev |
 | app-builder-lib | 26.18.0 | MIT | dev |
-| aproba | 2.1.0 | ISC | runtime |
 | archiver | 8.0.0 | MIT | runtime |
-| are-we-there-yet | 2.0.0 | ISC | runtime |
 | argparse | 2.0.1 | Python-2.0 | dev |
 | asn1js | 3.1.0 | BSD-3-Clause | dev |
 | async | 3.2.6 | MIT | runtime |
@@ -175,7 +170,7 @@
 | balanced-match | 1.0.2 | MIT | dev |
 | balanced-match | 1.0.2 | MIT | dev |
 | balanced-match | 1.0.2 | MIT | dev |
-| balanced-match | 1.0.2 | MIT | runtime |
+| balanced-match | 1.0.2 | MIT | dev |
 | balanced-match | 4.0.4 | MIT | runtime |
 | bare-events | 2.9.2 | Apache-2.0 | runtime |
 | bare-fs | 4.8.4 | Apache-2.0 | runtime |
@@ -190,7 +185,7 @@
 | boolean | 3.2.0 | MIT | dev |
 | brace-expansion | 1.1.21 | MIT | dev |
 | brace-expansion | 1.1.21 | MIT | dev |
-| brace-expansion | 1.1.21 | MIT | runtime |
+| brace-expansion | 1.1.21 | MIT | dev |
 | brace-expansion | 2.1.7 | MIT | dev |
 | brace-expansion | 2.1.7 | MIT | dev |
 | brace-expansion | 5.0.12 | MIT | runtime |
@@ -208,10 +203,8 @@
 | cacheable-lookup | 5.0.4 | MIT | dev |
 | cacheable-request | 7.0.4 | MIT | dev |
 | call-bind-apply-helpers | 1.0.2 | MIT | dev |
-| canvas | 2.11.2 | MIT | runtime |
 | chalk | 4.1.2 | MIT | dev |
 | chownr | 1.1.4 | ISC | runtime |
-| chownr | 2.0.0 | ISC | runtime |
 | chownr | 3.0.0 | BlueOak-1.0.0 | runtime |
 | chromium-pickle-js | 0.2.0 | MIT | dev |
 | ci-info | 4.3.1 | MIT | dev |
@@ -220,14 +213,12 @@
 | clone-response | 1.0.3 | MIT | dev |
 | color-convert | 2.0.1 | MIT | dev |
 | color-name | 1.1.4 | MIT | dev |
-| color-support | 1.1.3 | ISC | runtime |
 | combined-stream | 1.0.8 | MIT | dev |
 | commander | 5.1.0 | MIT | dev |
 | commander | 9.5.0 | MIT | dev |
 | compare-version | 0.1.2 | MIT | dev |
 | compress-commons | 7.0.1 | MIT | runtime |
-| concat-map | 0.0.1 | MIT | runtime |
-| console-control-strings | 1.1.0 | ISC | runtime |
+| concat-map | 0.0.1 | MIT | dev |
 | cookie | 2.0.1 | MIT | runtime |
 | core-util-is | 1.0.3 | MIT | runtime |
 | crc-32 | 1.2.2 | Apache-2.0 | runtime |
@@ -235,7 +226,6 @@
 | cross-dirname | 0.1.0 | MIT | dev |
 | cross-spawn | 7.0.6 | MIT | dev |
 | debug | 4.4.3 | MIT | runtime |
-| decompress-response | 4.2.1 | MIT | runtime |
 | decompress-response | 6.0.0 | MIT | runtime |
 | deep-extend | 0.6.0 | MIT | runtime |
 | deep-is | 0.1.4 | MIT | dev |
@@ -243,7 +233,6 @@
 | define-data-property | 1.1.4 | MIT | dev |
 | define-properties | 1.2.1 | MIT | dev |
 | delayed-stream | 1.0.0 | MIT | dev |
-| delegates | 1.0.0 | MIT | runtime |
 | dequal | 2.0.3 | MIT | runtime |
 | detect-libc | 2.1.2 | Apache-2.0 | runtime |
 | detect-node | 2.1.0 | MIT | dev |
@@ -260,7 +249,7 @@
 | electron-builder-squirrel-windows | 26.18.0 | MIT | dev |
 | electron-publish | 26.18.0 | MIT | dev |
 | electron-winstaller | 5.4.0 | MIT | dev |
-| emoji-regex | 8.0.0 | MIT | runtime |
+| emoji-regex | 8.0.0 | MIT | dev |
 | end-of-stream | 1.4.5 | MIT | runtime |
 | env-paths | 2.2.1 | MIT | dev |
 | env-paths | 2.2.1 | MIT | dev |
@@ -323,17 +312,15 @@
 | fs-extra | 9.1.0 | MIT | dev |
 | fs-extra | 9.1.0 | MIT | dev |
 | fs-extra | 9.1.0 | MIT | dev |
-| fs-minipass | 2.1.0 | ISC | runtime |
-| fs.realpath | 1.0.0 | ISC | runtime |
+| fs.realpath | 1.0.0 | ISC | dev |
 | fsevents | 2.3.3 | MIT | dev |
 | function-bind | 1.1.2 | MIT | dev |
-| gauge | 3.0.2 | ISC | runtime |
 | get-caller-file | 2.0.5 | ISC | dev |
 | get-intrinsic | 1.3.0 | MIT | dev |
 | get-proto | 1.0.1 | MIT | dev |
 | get-stream | 5.2.0 | MIT | dev |
 | github-from-package | 0.0.0 | MIT | runtime |
-| glob | 7.2.3 | ISC | runtime |
+| glob | 7.2.3 | ISC | dev |
 | glob-parent | 6.0.2 | ISC | dev |
 | global-agent | 3.0.0 | BSD-3-Clause | dev |
 | globalthis | 1.0.4 | MIT | dev |
@@ -344,7 +331,6 @@
 | has-property-descriptors | 1.0.2 | MIT | dev |
 | has-symbols | 1.1.0 | MIT | dev |
 | has-tostringtag | 1.0.2 | MIT | dev |
-| has-unicode | 2.0.1 | ISC | runtime |
 | hashery | 1.5.1 | MIT | dev |
 | hasown | 2.0.4 | MIT | dev |
 | hookified | 1.15.1 | MIT | dev |
@@ -353,18 +339,17 @@
 | http-cache-semantics | 4.3.0 | BSD-2-Clause | dev |
 | http-proxy-agent | 7.0.2 | MIT | dev |
 | http2-wrapper | 1.0.3 | MIT | dev |
-| https-proxy-agent | 5.0.1 | MIT | runtime |
 | https-proxy-agent | 7.0.6 | MIT | dev |
 | ieee754 | 1.2.1 | BSD-3-Clause | runtime |
 | ignore | 5.3.2 | MIT | dev |
 | ignore | 7.0.14 | MIT | dev |
 | imurmurhash | 0.1.4 | MIT | dev |
-| inflight | 1.0.6 | ISC | runtime |
+| inflight | 1.0.6 | ISC | dev |
 | inherits | 2.0.4 | ISC | runtime |
 | ini | 1.3.8 | ISC | runtime |
 | ipaddr.js | 2.5.0 | MIT | runtime |
 | is-extglob | 2.1.1 | MIT | dev |
-| is-fullwidth-code-point | 3.0.0 | MIT | runtime |
+| is-fullwidth-code-point | 3.0.0 | MIT | dev |
 | is-glob | 4.0.3 | MIT | dev |
 | is-stream | 4.0.1 | MIT | runtime |
 | isarray | 1.0.0 | MIT | runtime |
@@ -401,49 +386,37 @@
 | lodash | 4.18.1 | MIT | dev |
 | lowercase-keys | 2.0.0 | MIT | dev |
 | lru-cache | 6.0.0 | ISC | dev |
-| make-dir | 3.1.0 | MIT | runtime |
 | matcher | 3.0.0 | MIT | dev |
 | math-intrinsics | 1.1.0 | MIT | dev |
 | mime | 2.6.0 | MIT | dev |
 | mime-db | 1.52.0 | MIT | dev |
 | mime-types | 2.1.35 | MIT | dev |
 | mimic-response | 1.0.1 | MIT | dev |
-| mimic-response | 2.1.0 | MIT | runtime |
 | mimic-response | 3.1.0 | MIT | runtime |
 | minimatch | 10.2.6 | BlueOak-1.0.0 | runtime |
 | minimatch | 3.1.5 | ISC | dev |
 | minimatch | 3.1.5 | ISC | dev |
-| minimatch | 3.1.5 | ISC | runtime |
+| minimatch | 3.1.5 | ISC | dev |
 | minimatch | 5.1.9 | ISC | dev |
 | minimatch | 9.0.9 | ISC | dev |
 | minimist | 1.2.8 | MIT | runtime |
-| minipass | 3.3.6 | ISC | runtime |
-| minipass | 3.3.6 | ISC | runtime |
-| minipass | 5.0.0 | ISC | runtime |
 | minipass | 7.1.3 | BlueOak-1.0.0 | runtime |
-| minizlib | 2.1.2 | MIT | runtime |
 | minizlib | 3.1.0 | MIT | runtime |
 | mkdirp | 0.5.6 | MIT | dev |
-| mkdirp | 1.0.4 | MIT | runtime |
 | mkdirp-classic | 0.5.3 | MIT | runtime |
 | ms | 2.1.3 | MIT | runtime |
-| nan | 2.30.0 | MIT | runtime |
 | napi-build-utils | 2.0.0 | MIT | runtime |
 | natural-compare | 1.4.0 | MIT | dev |
 | node-abi | 3.101.0 | MIT | runtime |
 | node-abi | 4.40.0 | MIT | dev |
 | node-addon-api | 7.1.1 | MIT | runtime |
 | node-api-version | 0.2.1 | MIT | dev |
-| node-fetch | 2.7.0 | MIT | runtime |
 | node-gyp | 12.4.0 | MIT | dev |
 | node-int64 | 0.4.0 | MIT | dev |
 | node-pty | 1.1.0 | MIT | runtime |
-| nopt | 5.0.0 | ISC | runtime |
 | nopt | 9.0.0 | ISC | dev |
 | normalize-path | 3.0.0 | MIT | runtime |
 | normalize-url | 6.1.0 | MIT | dev |
-| npmlog | 5.0.1 | ISC | runtime |
-| object-assign | 4.1.1 | MIT | runtime |
 | object-keys | 1.1.1 | MIT | dev |
 | on-exit-leak-free | 2.1.2 | MIT | runtime |
 | once | 1.4.0 | ISC | runtime |
@@ -455,16 +428,15 @@
 | p-limit | 3.1.0 | MIT | dev |
 | p-locate | 5.0.0 | MIT | dev |
 | path-exists | 4.0.0 | MIT | dev |
-| path-is-absolute | 1.0.1 | MIT | runtime |
+| path-is-absolute | 1.0.1 | MIT | dev |
 | path-key | 3.1.1 | MIT | dev |
-| path2d-polyfill | 2.0.1 | MIT | runtime |
-| pdfjs-dist | 3.11.174 | Apache-2.0 | runtime |
 | pe-library | 0.4.1 | MIT | dev |
 | picocolors | 1.1.1 | ISC | dev |
 | picomatch | 4.0.7 | MIT | dev |
 | pino | 9.14.0 | MIT | runtime |
 | pino-abstract-transport | 2.0.0 | MIT | runtime |
 | pino-std-serializers | 7.1.0 | MIT | runtime |
+| pinyin-pro | 3.29.5 | MIT | runtime |
 | pkijs | 3.4.3 | BSD-3-Clause | dev |
 | plist | 3.1.0 | MIT | dev |
 | postject | 1.0.0-alpha.6 | MIT | dev |
@@ -506,7 +478,6 @@
 | reusify | 1.1.0 | MIT | runtime |
 | rfdc | 1.4.1 | MIT | runtime |
 | rimraf | 2.6.3 | ISC | dev |
-| rimraf | 3.0.2 | ISC | runtime |
 | roarr | 2.15.4 | BSD-3-Clause | dev |
 | safe-buffer | 5.1.2 | MIT | dev |
 | safe-buffer | 5.1.2 | MIT | runtime |
@@ -518,18 +489,15 @@
 | secure-json-parse | 4.1.1 | BSD-3-Clause | runtime |
 | semver | 5.7.2 | ISC | dev |
 | semver | 6.3.1 | ISC | dev |
-| semver | 6.3.1 | ISC | runtime |
 | semver | 7.7.4 | ISC | dev |
 | semver | 7.8.5 | ISC | runtime |
 | semver-compare | 1.0.0 | MIT | dev |
 | serialize-error | 7.0.1 | MIT | dev |
-| set-blocking | 2.0.0 | ISC | runtime |
 | set-cookie-parser | 3.2.1 | MIT | runtime |
 | shebang-command | 2.0.0 | MIT | dev |
 | shebang-regex | 3.0.0 | MIT | dev |
-| signal-exit | 3.0.7 | ISC | runtime |
+| signal-exit | 3.0.7 | ISC | dev |
 | simple-concat | 1.0.1 | MIT | runtime |
-| simple-get | 3.1.1 | MIT | runtime |
 | simple-get | 4.0.1 | MIT | runtime |
 | simple-update-notifier | 2.0.0 | MIT | dev |
 | sonic-boom | 4.2.1 | MIT | runtime |
@@ -543,12 +511,11 @@
 | string_decoder | 1.1.1 | MIT | dev |
 | string_decoder | 1.1.1 | MIT | runtime |
 | string_decoder | 1.3.0 | MIT | runtime |
-| string-width | 4.2.3 | MIT | runtime |
-| strip-ansi | 6.0.1 | MIT | runtime |
+| string-width | 4.2.3 | MIT | dev |
+| strip-ansi | 6.0.1 | MIT | dev |
 | strip-json-comments | 2.0.1 | MIT | runtime |
 | sumchecker | 3.0.1 | Apache-2.0 | dev |
 | supports-color | 7.2.0 | MIT | dev |
-| tar | 6.2.1 | ISC | runtime |
 | tar | 7.5.22 | BlueOak-1.0.0 | runtime |
 | tar-fs | 2.1.5 | MIT | runtime |
 | tar-stream | 2.2.0 | MIT | runtime |
@@ -563,7 +530,6 @@
 | tmp | 0.2.7 | MIT | dev |
 | tmp-promise | 3.0.3 | MIT | dev |
 | toad-cache | 3.7.4 | MIT | runtime |
-| tr46 | 0.0.3 | MIT | runtime |
 | truncate-utf8-bytes | 1.0.2 | WTFPL | dev |
 | ts-api-utils | 2.5.0 | MIT | dev |
 | tslib | 2.8.1 | 0BSD | dev |
@@ -584,20 +550,15 @@
 | utf8-byte-length | 1.0.5 | (WTFPL OR MIT) | dev |
 | util-deprecate | 1.0.2 | MIT | runtime |
 | webcrypto-core | 1.9.2 | MIT | dev |
-| webidl-conversions | 3.0.1 | BSD-2-Clause | runtime |
-| whatwg-url | 5.0.0 | MIT | runtime |
 | which | 2.0.2 | ISC | dev |
 | which | 5.0.0 | ISC | dev |
 | which | 6.0.1 | ISC | dev |
-| wide-align | 1.1.5 | ISC | runtime |
 | word-wrap | 1.2.5 | MIT | dev |
 | wrap-ansi | 7.0.0 | MIT | dev |
 | wrappy | 1.0.2 | ISC | runtime |
 | ws | 8.22.0 | MIT | runtime |
 | xmlbuilder | 15.1.1 | MIT | dev |
 | y18n | 5.0.8 | ISC | dev |
-| yallist | 4.0.0 | ISC | runtime |
-| yallist | 4.0.0 | ISC | runtime |
 | yallist | 4.0.0 | ISC | dev |
 | yallist | 5.0.0 | BlueOak-1.0.0 | runtime |
 | yaml | 2.9.1 | ISC | runtime |

@@ -307,7 +307,9 @@ export async function registerVideoItems(app: FastifyInstance, k: KernelApi, h: 
           if (q.libraryId) where = sql`${where} and i.library_id = ${q.libraryId}`;
           if (folderMode) where = sql`${where} and ${scopeCond('i', folderPath, folderMode, roots)}`;
           if (keyword) {
-            where = sql`${where} and (i.title like ${keyword} escape '\\' or i.rel_path like ${keyword} escape '\\')`;
+            where = sql`${where} and (i.title like ${keyword} escape '\\'
+                       or i.rel_path like ${keyword} escape '\\'
+                       or coalesce(i.search_pinyin, '') like ${keyword} escape '\\')`;
           }
           if (offline.length > 0) where = sql`${where} and ${offlineCond(offline, 'i.rel_path')}`;
           if (q.letter) where = sql`${where} and ${letterCond('i', q.letter)}`;
@@ -358,14 +360,18 @@ export async function registerVideoItems(app: FastifyInstance, k: KernelApi, h: 
             // 搜索只查本地索引（nfo 在扫描时已落库）：名字 / 原名 / 番号 / 演员，
             // 都不需要再去 SMB 上读一遍。
             where = fts
-              ? sql`${where} and v.rowid in (select rowid from video_items_fts where video_items_fts match ${fts})`
+              // FTS 命中标题原文；拼音键（原文+全拼+首字母）单独 OR 上来，
+              // 否则「woai」这种三字以上的拼音输入走不到 LIKE 分支
+              ? sql`${where} and (v.rowid in (select rowid from video_items_fts where video_items_fts match ${fts})
+                       or coalesce(v.search_pinyin, '') like ${keyword} escape '\')`
               : sql`${where} and (coalesce(v.nfo_name, '') like ${keyword} escape '\\'
                          or coalesce(v.nfo_original_name, '') like ${keyword} escape '\\'
                          or v.title like ${keyword} escape '\\'
                          or v.rel_path like ${keyword} escape '\\'
                          or coalesce(v.code, '') like ${keyword} escape '\\'
                          or coalesce(v.nfo_actors, '') like ${keyword} escape '\\'
-                         or coalesce(v.nfo_directors, '') like ${keyword} escape '\\')`;
+                         or coalesce(v.nfo_directors, '') like ${keyword} escape '\\'
+                         or coalesce(v.search_pinyin, '') like ${keyword} escape '\\')`;
           }
           if (offline.length > 0) where = sql`${where} and ${offlineCond(offline, 'v.rel_path')}`;
           if (mediaCur) {

@@ -2,6 +2,13 @@ import { sql } from 'kysely';
 import type { Migration } from '../../../kernel/migrator';
 
 export const VIDEO_MIGRATIONS: Migration[] = [
+  {
+    // 搜索用拼音键（原文 + 全拼 + 首字母）：查询侧零开销，写入时算一次
+    id: '181_video_search_pinyin',
+    async up(db) {
+      await sql`alter table video_items add column search_pinyin text`.execute(db);
+    },
+  },
     {
       id: '031_video',
       async up(db) {

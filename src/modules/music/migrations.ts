@@ -2,6 +2,13 @@ import { sql } from 'kysely';
 import type { Migration } from '../../../kernel/migrator';
 
 export const MUSIC_MIGRATIONS: Migration[] = [
+  {
+    // 搜索用拼音键（原文 + 全拼 + 首字母）
+    id: '182_music_search_pinyin',
+    async up(db) {
+      await sql`alter table music_tracks add column search_pinyin text`.execute(db);
+    },
+  },
     {
       id: '032_music',
       async up(db) {

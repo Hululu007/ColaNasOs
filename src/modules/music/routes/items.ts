@@ -88,7 +88,11 @@ export async function registerMusicItems(app: FastifyInstance, k: KernelApi, h: 
         }
         if (q.q && q.q.trim()) {
           // 标题 / 艺人 / 专辑 / 文件名：简繁互通 + 跳字模糊
-          const sw = musicSearchWhere(['title', 'artist', 'album', 'rel_path'], q.q.trim());
+          // search_pinyin 里含「原文 + 全拼 + 首字母」：watm / woai / 台妹 都能命中
+          const sw = musicSearchWhere(
+            ['title', 'artist', 'album', 'rel_path', 'search_pinyin'],
+            q.q.trim(),
+          );
           if (sw) where = sql`${where} and ${sw}`;
         }
         if (cur) {
@@ -150,7 +154,7 @@ export async function registerMusicItems(app: FastifyInstance, k: KernelApi, h: 
         let where = sql`album is not null and album != ''`;
         if (q.libraryId) where = sql`${where} and library_id = ${q.libraryId}`;
         if (q.q && q.q.trim()) {
-          const sw = musicSearchWhere(['album'], q.q.trim());
+          const sw = musicSearchWhere(['album', 'search_pinyin'], q.q.trim());
           if (sw) where = sql`${where} and ${sw}`;
         }
         const order =
@@ -213,7 +217,7 @@ export async function registerMusicItems(app: FastifyInstance, k: KernelApi, h: 
         let where = sql`artist is not null and artist != ''`;
         if (q.libraryId) where = sql`${where} and library_id = ${q.libraryId}`;
         if (q.q && q.q.trim()) {
-          const sw = musicSearchWhere(['artist'], q.q.trim());
+          const sw = musicSearchWhere(['artist', 'search_pinyin'], q.q.trim());
           if (sw) where = sql`${where} and ${sw}`;
         }
         const order =

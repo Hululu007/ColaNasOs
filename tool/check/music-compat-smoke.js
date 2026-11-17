@@ -611,6 +611,15 @@ function makeAudio(out, opts) {
   let t = await titlesOf('我爱台妹'); // 简体查繁体
   check('search_simp_query_trad_title', t.includes('我愛臺妹'), JSON.stringify(t));
 
+  // 拼音检索：首字母 / 全拼（数据里是繁体「我愛臺妹」，拼音与简体一致）
+  t = await titlesOf('watm');
+  check('search_pinyin_initials', t.includes('我愛臺妹'), JSON.stringify(t));
+  t = await titlesOf('woaitaimei');
+  check('search_pinyin_full', t.includes('我愛臺妹'), JSON.stringify(t));
+  // 英文歌手名也在键里（原文部分）：hotdog → MC HotDog
+  t = await titlesOf('hotdog');
+  check('search_pinyin_artist_name', t.includes('我愛臺妹'), JSON.stringify(t));
+
   t = await titlesOf('我愛臺妹');
   check('search_trad_query_trad_title', t.includes('我愛臺妹'), JSON.stringify(t));
 

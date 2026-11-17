@@ -1,4 +1,5 @@
 import { sql } from 'kysely';
+import { backfillTablePinyin } from '../pinyin';
 import type { ServerModule } from '../../../kernel/types';
 import { VIDEO_SCHEMAS } from './schemas';
 import { scanVideoLibrary, type VideoLibraryRow } from './scan';
@@ -551,5 +552,7 @@ export const video: ServerModule = {
     await registerVideoSmartAlbums(app, k, h);
     await registerVideoScrape(app, k, h);
     await registerVideoSettings(app, k);
+    // 老数据的 search_pinyin 是空的：后台补齐（不阻塞启动，也不抢任务槽位）
+    backfillTablePinyin(k, 'video', 'video_items', ['title', 'series', 'code']);
   },
 };

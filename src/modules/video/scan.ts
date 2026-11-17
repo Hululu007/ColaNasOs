@@ -1,6 +1,7 @@
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { sql } from 'kysely';
+import { pinyinKey } from '../pinyin';
 import { resolveAnyPath } from '../files/fs-root';
 import { walkFiles } from '../files/walk';
 import { mapLimit } from '../media/concurrency';
@@ -507,12 +508,15 @@ async function scanOneSource(
           const m = p.meta;
           const ep = parseEpisode(p.rel);
           const jp = jpMetaOf(p.rel);
+          // 拼音键也进库：搜索时不用现算（一算就是每键一次的字典遍历）
+          const searchPinyin = pinyinKey(titleOf(p.rel), ep.series, isJp ? jp.code : null);
           await sql`
             insert into video_items
               (id, library_id, rel_path, dir_path, title, duration, width, height, video_codec,
                audio_codec, container, has_subtitle, size, mtime, created_at,
                series, season, episode, media_type, code, uncensored, chinese_sub,
-               is_4k, hdr10, hdr10plus, hlg, dolby_vision, dolby_atmos, hdr_meta_v)
+               is_4k, hdr10, hdr10plus, hlg, dolby_vision, dolby_atmos, hdr_meta_v,
+               search_pinyin)
             values
               (${p.id}, ${lib.id}, ${p.fullRel}, ${dirPathOf(p.fullRel)},
                ${titleOf(p.rel)}, ${m.durationMs},
@@ -522,7 +526,7 @@ async function scanOneSource(
                ${isJp ? jp.code : null}, ${isJp ? jp.uncensored : 0}, ${isJp ? jp.chineseSub : 0},
                ${m.is4k ? 1 : 0}, ${m.hdr10 ? 1 : 0}, ${m.hdr10plus ? 1 : 0},
                ${m.hlg ? 1 : 0}, ${m.dolbyVision ? 1 : 0}, ${m.dolbyAtmos ? 1 : 0},
-               ${HDR_META_VERSION})
+               ${HDR_META_VERSION}, ${searchPinyin})
             on conflict(library_id, rel_path) do update set
               dir_path = excluded.dir_path,
               title = excluded.title,
@@ -535,6 +539,7 @@ async function scanOneSource(
               has_subtitle = excluded.has_subtitle,
               size = excluded.size,
               mtime = excluded.mtime,
+              search_pinyin = excluded.search_pinyin,
               series = excluded.series,
               season = excluded.season,
               episode = excluded.episode,

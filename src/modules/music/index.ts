@@ -1,4 +1,5 @@
 import { sql } from 'kysely';
+import { backfillTablePinyin } from '../pinyin';
 import type { KernelApi, ServerModule } from '../../../kernel/types';
 import { writeCover, isAudioFile } from './ffmpeg';
 import { MUSIC_SCHEMAS } from './schemas';
@@ -111,5 +112,7 @@ export const music: ServerModule = {
     await registerMusicCollections(app, k, h);
     // 音乐兼容层（前端音乐模块只认这套形状）
     await registerMusicCompat(app, k, h);
+    // 老数据的 search_pinyin 是空的：后台补齐
+    backfillTablePinyin(k, 'music', 'music_tracks', ['title', 'artist', 'album']);
   },
 };

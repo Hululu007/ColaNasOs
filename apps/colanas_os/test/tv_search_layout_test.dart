@@ -163,4 +163,21 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
     expect(tapped, 1);
   });
+
+  // ---------------------------------------------------------------- 剧名归并
+  //
+  // 有些库的剧集条目没有 series 字段，只有「第 12 集」这种标题；
+  // 归并错了就会把同一部剧拆成一排栏目。
+
+  test('去掉标题里的集数后缀', () {
+    expect(seriesKeyOfTitle('我爱台妹 第12集'), '我爱台妹');
+    expect(seriesKeyOfTitle('我爱台妹 第 12 集'), '我爱台妹');
+    expect(seriesKeyOfTitle('我爱台妹 EP05'), '我爱台妹');
+    expect(seriesKeyOfTitle('我爱台妹 S01E02'), '我爱台妹');
+    expect(seriesKeyOfTitle('我爱台妹 - 03'), '我爱台妹');
+    // 普通标题不能动
+    expect(seriesKeyOfTitle('流浪地球'), '流浪地球');
+    // ⛔ 电影《2012》不能被砍成「20」
+    expect(seriesKeyOfTitle('2012'), '2012');
+  });
 }
