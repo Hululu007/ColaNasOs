@@ -14361,7 +14361,7 @@
             ]
           },
           "codec": {
-            "default": "h264",
+            "default": "h265",
             "anyOf": [
               {
                 "type": "string",
