@@ -171,7 +171,7 @@ class _AiNewsPageState extends State<AiNewsPage> {
         limit: _perPage,
         offset: _page * _perPage,
       );
-      // 下载状态单独兜底：老版本服务端没有这个接口时，页面其余部分照常可用
+      // 下载状态单独兜底：服务端没有这个接口时，页面其余部分照常可用
       BlogTtsModelResponse? model;
       try {
         model = await client.blogTtsModel();

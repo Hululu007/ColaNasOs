@@ -1,6 +1,6 @@
 /// 播放队列：不可变序列 + 一个游标。
 ///
-/// 旧实现的队列是 controller 里一个可变的 `RxList` + 一个 `currentIndex`，
+/// 队列不该放在 controller 里用一个可变的 `RxList` + 一个 `currentIndex`，
 /// 任何地方都能 `playlist[i] = xxx`，于是「界面正在渲染的那一版」和
 /// 「播放器实际打开的那一首」会短暂不一致 —— 切歌瞬间点全屏、列表刷新
 /// 打断播放之类的怪现象都是这么来的。
@@ -144,7 +144,7 @@ class PlaybackQueue {
   /// 算「下一首该是谁」。
   ///
   /// 返回新队列 + 语义动作：调用方据此决定「重开一首」还是「seek 回 0 继续」。
-  /// 单曲循环不换曲目，只回到起点 —— 旧实现把它和「切歌」混在一起，
+  /// 单曲循环不换曲目，只回到起点 —— 别把它和「切歌」混在一起，
   /// 导致每次循环都重建播放器（白付一次加载开销）。
   (PlaybackQueue, QueueAdvance) advance() {
     if (tracks.isEmpty) return (this, QueueAdvance.exhausted);

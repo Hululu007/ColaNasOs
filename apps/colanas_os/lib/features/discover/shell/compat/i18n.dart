@@ -1,4 +1,4 @@
-// AUTO-GENERATED from 既有实现的 zh_cn.dart；固定中文，暂不接本项目多语。
+// 固定中文文案，暂不接本项目多语。
 const Map<String, String> kCompatZhCN = <String, String>{
   'cancel': "取消",
   'discover_add': "添加",
@@ -274,7 +274,7 @@ const Map<String, String> kCompatZhCN = <String, String>{
   'discover_year_90s': "90年代",
   'discover_year_all': "全部",
   'download': "下载",
-  // 返回首页按钮的 tooltip，原先漏登记会直接显示 "nav.home"
+  // 返回首页按钮的 tooltip，漏登记会直接显示 "nav.home"
   'nav.home': "返回首页",
 };
 

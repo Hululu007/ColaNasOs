@@ -164,7 +164,7 @@ extension MusicPlayServiceLifecycle on MusicPlayServiceController {
     if (level > 0.01) _volumeBeforeMute = level;
   }
 
-  /// 旧实现靠 500ms 轮询把播放器状态抄进 Rx 字段；新内核把
+  /// 靠 500ms 轮询把播放器状态抄进 Rx 字段太浪费；新内核把
   /// position / duration / buffered / playing 都做成事件流，由适配层直接投影，
   /// 这里已经没有要绑的东西了。保留方法名是为了让 `_initService` 的初始化顺序
   /// 保持原样（音量 → 绑定 → isReady），避免以后再插逻辑时漏掉一步。

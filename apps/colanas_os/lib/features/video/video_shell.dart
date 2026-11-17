@@ -213,7 +213,7 @@ class _VideoShellPageState extends State<VideoShellPage> {
     if (key.startsWith('lib:')) {
       for (final lib in _libraries) {
         if ('lib:${lib.id}' == key) {
-          // 日本电影库和普通电影库的「入口」不同：既有实现是先进演员网格，
+          // 日本电影库和普通电影库的「入口」不同：先进演员网格，
           // 点演员再看她的作品；点右上角「影片」才切回普通列表。
           if (lib.libType == 'jp_movie') {
             return VideoJpActorPage(embedded: true, libraryId: lib.id);

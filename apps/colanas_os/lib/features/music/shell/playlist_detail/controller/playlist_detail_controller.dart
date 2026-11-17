@@ -29,7 +29,7 @@ class PlaylistDetailController extends GetxController with MusicDetailActions {
               keyType: 'playlist',
               name: name,
               listId: listId,
-              // 歌单内固定按文件名排（与旧版歌单遮罩一致），不跟随曲库的排序缓存
+              // 歌单内固定按文件名排（与歌单遮罩一致），不跟随曲库的排序缓存
               initialSortBy: MusicSubListSortBy.filename,
               initialSortOrder: MusicSubListSortOrder.asc,
               ignoreStoredSort: true,

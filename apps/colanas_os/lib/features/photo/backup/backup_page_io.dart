@@ -430,7 +430,7 @@ class _PhotoBackupPageState extends State<PhotoBackupPage> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               // 分母是扫描结束时一次定死的 runTotal，分子只增不减。
-              // 旧版按「已完成字节 / 已加入字节」算，每批结束就 100%，
+              // 若按「已完成字节 / 已加入字节」算，每批结束就 100%，
               // 下一批又撑大分母，进度条来回跳。
               if (active) ...[
                 LinearProgressIndicator(value: rt.progress, minHeight: 6),

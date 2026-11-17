@@ -1,6 +1,6 @@
 import 'dart:async';
 
-// 从既有实现按接口约定实现：以下 lint 属于参考源码风格，保持 1:1 不改写。
+// 以下 lint 属于本仓源码风格，保持 1:1 不改写。
 // ignore_for_file: use_null_aware_elements, unnecessary_underscores, use_build_context_synchronously, unused_element, dead_code, dead_null_aware_expression
 import '../../photo/folder_picker.dart';
 import 'package:flutter/material.dart';
@@ -3123,7 +3123,7 @@ class _MediaDetailPageState extends State<_MediaDetailPage> {
                   ),
                 ),
                 const SizedBox(width: 12),
-                // ⭐ 右侧：完整封面（BoxFit.contain，不裁切；原先只用封面当背景裁成横幅，看不出全图）
+                // ⭐ 右侧：完整封面（BoxFit.contain，不裁切；只用封面当背景会裁成横幅，看不出全图）
                 ClipRRect(
                   borderRadius: BorderRadius.circular(8),
                   child: SizedBox(

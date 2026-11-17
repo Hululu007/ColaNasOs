@@ -256,7 +256,7 @@ class _MusicFavoritesPageState extends State<MusicFavoritesPage> {
   }
 }
 
-/// 曲库 · 播放历史：服务端按播放时间倒序返回，行式列表（对齐既有实现的表格行）。
+/// 曲库 · 播放历史：服务端按播放时间倒序返回，行式列表（表格行形态）。
 class MusicHistoryPage extends StatefulWidget {
   const MusicHistoryPage({super.key, this.embedded = true});
 

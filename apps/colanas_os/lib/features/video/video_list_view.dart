@@ -19,7 +19,7 @@ import 'video_scrape_dialogs.dart';
 
 /// 影片列表（一个影库 / 全部库 / 某个人 / 某个类型）。
 ///
-/// 对照既有实现 `app_video_list_page.dart` 的能力面：
+/// 列表页的能力面：
 ///   顶栏：搜索（防抖）/ 排序 / 筛选 / 海报大小 / 竖版↔横版 / 刷新
 ///   网格：列宽由「海报大小 × 屏宽」算，格子比例按 2:3 或 3:2 **反算**（不在固定比例里裁图）
 ///   卡片：评分 / 番号 / 已看 / 收藏 / 画质徽章 / 进度 / 更多菜单
@@ -121,7 +121,7 @@ class _VideoListViewState extends State<VideoListView> {
   void initState() {
     super.initState();
     _selection.addListener(_onSelectionChanged);
-    // 只认本库自己的键：旧版本的全局键会串库，不再回退
+    // 只认本库自己的键：全局键会串库，不再回退
     final savedScale = SettingsStore.instance.getInt(_keyScale) ?? 100;
     _scale = (savedScale / 100.0).clamp(0.7, 1.15);
     _fanart = SettingsStore.instance.getBool(_keyFanart) ?? false;
@@ -1080,7 +1080,7 @@ class _VideoListViewState extends State<VideoListView> {
         final columns = (maxWidth / targetWidth).floor().clamp(2, 9);
         final itemWidth = ((maxWidth - spacing * (columns - 1) - spacing) / columns).floorToDouble();
         // 关键：图片区按真实比例预留，再加标题两行的高度。
-        // 旧实现写死 0.72 导致 2:3 海报被 BoxFit.cover 上下裁掉一截。
+        // 写死 0.72 会导致 2:3 海报被 BoxFit.cover 上下裁掉一截。
         final imageHeight = _fanart ? itemWidth / (3 / 2) : itemWidth * 1.5;
         final tileHeight = imageHeight + textBlock;
         return GridView.builder(

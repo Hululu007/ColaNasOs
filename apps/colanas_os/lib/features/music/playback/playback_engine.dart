@@ -1,6 +1,6 @@
 /// 播放引擎：**只管一件事** —— 打开一个 URI，然后把变化以事件流吐出来。
 ///
-/// 这是旧实现最缺的一层。以前「打开 / 重试 / 缓存 / 转码 / 状态同步」
+/// 这是播放链路最缺的一层。「打开 / 重试 / 缓存 / 转码 / 状态同步」
 /// 全纠缠在同一个 controller 的 extension 里（`playback.dart` 995 行），
 /// 于是任何一处想改行为，都得先搞清楚另外四件事的影响。
 ///
@@ -59,7 +59,7 @@ abstract interface class PlaybackEngine {
 ///
 /// `benign` 用来区分「真的播不了」和「传输层抖了一下」：
 /// mpv 在分片结束、keep-alive 断开时会报 `tcp: ffurl read returned 0` 这类，
-/// 数据其实还在管道里。旧实现把这类和真错误混在一个 `String?` 里，
+/// 数据其实还在管道里。把这类和真错误混在一个 `String?` 里，
 /// 只能靠字符串匹配去猜（`_isBenignPlaybackError`），猜漏了就糊一整层错误页。
 class PlaybackError {
   const PlaybackError(this.message, {this.benign = false});
@@ -87,7 +87,7 @@ class PlaybackError {
 
 /// 基于 media_kit 的唯一实现。
 ///
-/// 为什么只留一条链路：旧实现按平台分叉（移动端 just_audio、桌面/web media_kit），
+/// 为什么只留一条链路：按平台分叉（移动端 just_audio、桌面/web media_kit），
 /// 两条链路对「seek 之后 position 怎么报」「完成事件何时发」的脾气不一样，
 /// 于是上层不得不写一堆平台判断。同一套 media_kit 在 Android / iOS / Windows /
 /// Linux / macOS / Web 都跑得起来（web 走 wasm），分叉的理由已经不存在。

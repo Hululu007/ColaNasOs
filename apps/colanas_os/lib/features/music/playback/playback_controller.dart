@@ -1,6 +1,6 @@
 /// 播放控制器：**唯一**能改播放状态的地方。
 ///
-/// 结构上只有三条规则，但它把旧实现里的五个布尔补丁全替掉了：
+/// 结构上只有三条规则，但它把散落各处的五个布尔补丁全替掉了：
 ///   1. 状态是 `PlayerState` 的互斥值，任何变化走 [_emit]；
 ///   2. 每个异步动作带一个 [_generation]，老动作回来时对不上号就丢弃
 ///      （替代 `_rebuildToken`）；
@@ -289,7 +289,7 @@ class PlaybackController extends ChangeNotifier {
         if (next is PlaybackReady) _emit(next.copyWith(buffered: buffered));
       }),
       // 卡住恢复：缓冲超过 12 秒还没动静，就带着当前进度重开一次。
-      // 旧实现靠轮询检查 `_player.isBuffering`，新内核直接用引擎的 buffering 流。
+      // 直接用引擎的 buffering 流，不必轮询检查 `_player.isBuffering`。
       _engine.bufferingStream.listen((buffering) {
         if (!buffering || !_state.isPlaying) {
           _stallTimer?.cancel();

@@ -86,7 +86,7 @@ dependencies:
   audio_service: ^0.18.19
   device_info_plus: ^13.3.0
   # 影视发现 兼容适配（features/discover/shell）专用，其它模块不引用。
-  # 既有实现是 GetX + 右键菜单 + 外链，原样搬源码比逐控件重写更能保证界面/逻辑一致。
+  # 影视发现壳用 GetX + 右键菜单 + 外链，整体保留以保证界面/逻辑一致。
   get: ^4.7.2
   flutter_context_menu: ^0.4.0
   url_launcher: ^6.3.2

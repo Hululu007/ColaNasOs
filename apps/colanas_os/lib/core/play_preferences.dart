@@ -5,7 +5,7 @@ import 'settings_store.dart';
 /// 播放偏好的唯一落盘入口（改进 6.4）。
 ///
 /// 画质 / 编码统一写在 `player.preset` / `player.codec` 两个键上，
-/// Web、桌面、后续安卓 / TV 端读同一份；旧版 `video.preset` / `video.codec`
+/// Web、桌面、后续安卓 / TV 端读同一份；早期键名 `video.preset` / `video.codec`
 /// 作为回退值读取，升级后首次保存即迁移到新键。
 ///
 /// 音频两项（`player.audioNormalize` / `player.audioDownmix`）是**客户端覆盖**：
@@ -68,7 +68,7 @@ class PlayPreferences {
   /// 而且整片动辄一两个小时，退出就白转。现在一律按段转，播到哪儿转到哪儿。
   static const int defaultLeadMinutes = 3;
 
-  /// 提前转码时长（分钟）。**永远 > 0**：老版本存过 0（整片模式）的，这里
+  /// 提前转码时长（分钟）。**永远 > 0**：本地偏好存过 0（整片模式）的，这里
   /// 直接回落默认值，UI / 建会话都不会再产生整片会话。
   static int get leadMinutes {
     final v = int.tryParse(SettingsStore.instance.getString(_leadKey) ?? '');

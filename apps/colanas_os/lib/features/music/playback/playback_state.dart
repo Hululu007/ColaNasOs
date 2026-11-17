@@ -1,6 +1,6 @@
 /// 播放状态的**唯一真相**。
 ///
-/// 旧实现用 `_rebuildToken` / `_desiredPlaying` / `_isCompleted` /
+/// 别用 `_rebuildToken` / `_desiredPlaying` / `_isCompleted` /
 /// `_suppressCompletedUntil` 等五个布尔量互相打补丁 —— 每个都是「怕某件事
 /// 在错误的时机发生」。它们之所以必要，是因为状态本身是散的：
 /// `isPlaying` 一个 Rx、`position` 一个 Rx、`_player` 可能为 null，

@@ -15,7 +15,7 @@ class VideoSubtitlePrefs {
   static const String auto = 'auto';
   static const String off = 'off';
 
-  /// 字号倍数（TV 面板可调，0.8x ~ 2.0x）。默认 1.0 = 与旧版完全一致。
+  /// 字号倍数（TV 面板可调，0.8x ~ 2.0x）。默认 1.0 = 与既有配置完全一致。
   static const String scaleKey = 'player.subtitleScale';
 
   /// 字幕垂直位置：0 = 底部，1 = 居中偏下，2 = 偏上。

@@ -27,10 +27,10 @@ import 'source_setting/view/cola_source_settings_view.dart';
 import 'sub_list/view/cola_sub_list_overlay.dart';
 
 /// 是否启用音乐的 兼容适配版。
-/// 置 false 可一行回退到旧的 `MusicShellPage`（旧实现文件全部保留）。
+/// 置 false 可一行回退到 `MusicShellPage`（实现文件全部保留）。
 const bool kMusicShell = true;
 
-/// 音乐应用入口（移植版）。
+/// 音乐应用入口。
 ///
 /// 与原版的差别只有一处：原版左栏是 `MusicLeftMenu`（自带「曲库 / 歌单 /
 /// 设置」三段折叠菜单），本项目统一走 `AppNavShell` + `contracts/apps.json#nav`，
@@ -65,7 +65,7 @@ class _MusicShellViewState extends State<MusicShellView> {
     _ctrl = Get.put(MusicMainController());
     _detail = Get.put(MusicDetailRouter());
     _scrobbler = LastfmScrobbler(MusicPlayServiceController.instance);
-    // 「打开所在文件夹」「回到首页」在既有实现里走 GetX 命名路由，
+    // 「打开所在文件夹」「回到首页」走 GetX 命名路由，
     // 这里注入到统一桌面壳（AppShell.openApp）。
     AppRoutes.toFilesHandler = (_) => AppShell.openApp('files');
     AppRoutes.toHomeHandler = () => AppShell.openApp('home');
@@ -132,7 +132,7 @@ class _MusicShellViewState extends State<MusicShellView> {
         );
         break;
       case 'files':
-        // 参考侧是独立「文件视图」页；本项目已有正式的文件应用，
+        // 这里是独立「文件视图」页；本项目已有正式的文件应用，
         // 这里保留同形态入口，真正浏览交给「文件」应用。
         page = const PcFolderViewPage(moduleType: FolderViewModuleType.music);
         break;
@@ -146,7 +146,7 @@ class _MusicShellViewState extends State<MusicShellView> {
         page = const ColaMusicCacheSettingsView();
         break;
       case 'settings.app':
-        // 契约里这一项原本没有对应页面（既有实现只有「来源 / 缓存」两页），
+        // 契约里这一项原本没有对应页面（只有「来源 / 缓存」两页），
         // 现在放 Last.fm 在线数据源与账号绑定。
         page = const MusicLastfmSettingsView();
         break;
@@ -217,7 +217,7 @@ class _MusicShellViewState extends State<MusicShellView> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final style = context.nasStyle;
-    // 移植页有 13+ 处读 theme.extension<CustomColors>()：不注册时恒为 null，
+    // 本页有 13+ 处读 theme.extension<CustomColors>()：不注册时恒为 null，
     // 背景落空 + 页面按深色配色写死 → 手机上整片发灰、白字看不清。
     // 只在音乐壳子树注册，不动全局主题。
     final themed = theme.copyWith(
@@ -255,7 +255,7 @@ class _MusicShellViewState extends State<MusicShellView> {
                 },
               ),
             ),
-            // 全屏播放器：盖在整个二级栏之上（参考侧也是这样）
+            // 全屏播放器：盖在整个二级栏之上
             Positioned.fill(
               child: Obx(
                 () => ctrl.showFullPlayer.value

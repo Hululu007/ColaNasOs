@@ -1878,7 +1878,7 @@ class _PlayerPageState extends State<PlayerPage> {
   /// 字幕正文搜索：在已加载的 cue 里找关键字，点结果直接跳到那句台词。
   ///
   /// 为什么有用：一部两小时的片子想找某句台词 / 某个场景，只能靠拖进度条瞎撞。
-  /// 既有实现 的「字幕搜索」就是干这个的。Cue 在 `_applySubtitle` 里已经
+  /// 「字幕搜索」就是干这个的。Cue 在 `_applySubtitle` 里已经
   /// 解析进内存（自绘字幕要用），这里只是过滤 + seek，不额外请求服务端。
   Future<void> _showSubtitleSearch() async {
     if (_cues.isEmpty) {
@@ -2146,7 +2146,7 @@ class _PlayerPageState extends State<PlayerPage> {
 
   // ------------------------------------------------------------ 进度手势
   //
-  // 既有实现 那套手势：横向拖动 = 快进快退（松手才真跳），
+  // 手势：横向拖动 = 快进快退（松手才真跳），
   // 双击左 / 右两侧 = ±10s，中间双击仍然是播放/暂停。
   // 以前只有底部那条细滑块能拖，手机上一根手指很难抓准；画面区域
   // 那么大一块却只认「单击唤出控件」和「长按 2 倍速」，等于浪费。
@@ -3898,7 +3898,7 @@ class _PlayerPageState extends State<PlayerPage> {
             );
             if (text.isEmpty) return const SizedBox.shrink();
             // 字号 / 位置来自 `VideoSubtitlePrefs`（TV 面板可调，默认 1.0 / 底部，
-            // 与旧版完全一致）。位置档 0/1/2 分别再抬高 0 / 90 / 200。
+            // 与既有配置完全一致）。位置档 0/1/2 分别再抬高 0 / 90 / 200。
             final scale = VideoSubtitlePrefs.instance.scale;
             final posOffset = switch (VideoSubtitlePrefs.instance.position) {
               1 => 90.0,

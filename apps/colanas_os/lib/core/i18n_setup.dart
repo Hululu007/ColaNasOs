@@ -27,7 +27,7 @@ Future<void> initI18n() async {
   });
   final saved =
       SettingsStore.instance.getString('ui.locale') ?? I18n.fallbackLocale;
-  // 旧版本可能存了已停用的语言（如 ja-JP）：回退到默认语言，避免加载缺失的语言包
+  // 本地偏好里可能存了已停用的语言（如 ja-JP）：回退到默认语言，避免加载缺失的语言包
   final usable = supportedLocales.any((l) => l.$1 == saved);
   await I18n.instance.load(usable ? saved : I18n.fallbackLocale);
   i18nRevision.value += 1;

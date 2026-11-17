@@ -785,7 +785,7 @@ class _PhotoSmartPageState extends State<PhotoSmartPage> {
 
   /// 场景 / 活动：**封面网格**。
   ///
-  /// 旧实现是纯文字列表（图标 + 名称 + 张数），面对一屏标签根本看不出里面是什么照片；
+  /// 纯文字列表（图标 + 名称 + 张数）面对，面对一屏标签根本看不出里面是什么照片；
   /// 现在每格用「这个标签下**最近拍**的一张」当封面（封面由服务端按 taken_at desc 取），
   /// 一眼就能对上内容，和 AI 人脸的头像墙保持同一套观感。
   Widget _coverGrid(List<Widget> tiles, String emptyHint) {
@@ -905,7 +905,7 @@ class _PhotoSmartPageState extends State<PhotoSmartPage> {
 
   /// 人脸簇：**头像墙**。
   ///
-  /// 旧实现是一个 ListTile 列表：通用人脸图标 + "未命名 · ab12cd" + 张数。
+  /// 早期形态是一个 ListTile 列表：通用人脸图标 + "未命名 · ab12cd" + 张数。
   /// 面对一屏这样的条目，用户根本没法认人 —— 必须点开照片墙去猜。
   /// 头像来自 `/photo/face/image`（服务端按 bbox 裁出来的正方形人脸图）。
   Widget _faceGrid() {
@@ -1034,7 +1034,7 @@ class _PhotoSmartPageState extends State<PhotoSmartPage> {
   /// 长按：改名 / 合并 / 隐藏
   /// 人脸卡右键菜单（桌面 / Web）；移动端走长按 [_faceActions]。
   ///
-  /// 既有实现的人脸右键有「下载 / 重命名 / 显示隐藏 / 标记问题」，我们目前只有
+  /// 人脸右键有「下载 / 重命名 / 显示隐藏 / 标记问题」，我们目前只有
   /// 重命名、合并、解散、管理这几个能力，就只给这些 —— 不造点了没反应的项。
   List<NasMenuEntry> _faceMenuEntries(PhotoFaceClusterItem c) => [
     NasMenuEntry(
@@ -1427,7 +1427,7 @@ class _PhotoSmartPageState extends State<PhotoSmartPage> {
 
   // -------------------------------------------- 人脸簇内照片：长按 / 右键菜单
 
-  /// 既有实现的形态：三项都挂在照片本身，不塞进多选栏 ——
+  /// 形态：三项都挂在照片本身，不塞进多选栏 ——
   /// 为了设个封面还要先框选太绕。桌面 / Web 走右键，移动端走长按弹窗。
   List<NasMenuEntry> _clusterPhotoMenuEntries(
     PhotoFaceClusterItem cluster,

@@ -17,10 +17,10 @@ import 'cola_api_controller.dart';
 class CompatApi {
   const CompatApi._();
 
-  /// 前缀：参考侧 `apiBaseUrl` 是 `/api`，这里补成内核的真实前缀
+  /// 前缀：`apiBaseUrl` 是 `/api`，这里补成内核的真实前缀
   static const String _compatPrefix = '/api/v1/music/compat';
 
-  /// 参考侧路径里拼了 id 的三个端点（正则里只抓数字）
+  /// 路径里拼了 id 的三个端点（正则里只抓数字）
   static final RegExp _sourceIdPath = RegExp(
     r'^/api/music/source/(update|relocate)/(\d+)$',
   );

@@ -64,7 +64,7 @@ class ApiSession {
         // 其它情况页面本身就是内核提供的（直连 7788，或经 lucky 反代到 23788/443），
         // **端口必须照抄页面自己的** —— API 与页面同源才连得上。
         //
-        // 旧实现把 dev 端口写死成 5173，TV.bat 的 5175 漏了：
+        // dev 端口写死成 5173 会漏掉，TV.bat 的 5175 漏了：
         // 页面被当成服务端，登录 POST 打到静态服务器 → 404。
         if (!_flutterDevPorts.contains(base.port) && base.port != 0) {
           return base.origin;
@@ -168,7 +168,7 @@ class ApiSession {
   /// 2. token 过期，或被服务端作废（内核换过密钥、账号改过密码、token 被吊销）
   ///    → 用记住的密码**自动登录一次**再进桌面。
   ///
-  /// 勾了自动登录就不该再让人手输密码。旧实现只做第 1 步，token 一失效
+  /// 勾了自动登录就不该再让人手输密码。只做第 1 步的话，token 一失效
   /// 就停在登录页，用户每次开客户端都要重新输一遍。
   Future<bool> restore() async {
     if (autoLoginDisabled) return false;

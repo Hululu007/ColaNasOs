@@ -884,7 +884,7 @@ class _VideoJpActorPageState extends State<VideoJpActorPage> {
   }
 
   /// 「影片」视图：直接复用普通列表页（分页 / 搜索 / 排序 / 筛选都在），
-  /// 顶栏额外给一个「返回演员」按钮 —— 既有实现是在列表页顶栏放同样的切换钮。
+  /// 顶栏额外给一个「返回演员」按钮 —— 列表页顶栏放同样的切换钮。
   Widget _buildMoviesView() {
     return Column(
       children: [

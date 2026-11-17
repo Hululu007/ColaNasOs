@@ -30,7 +30,7 @@ import 'smart_page.dart';
 
 /// 相册主页：左侧二级导航 + 右侧内容区。
 ///
-/// 分组顺序与既有实现一致：照片 / 回忆 / 相册 / AI / 设置。
+/// 分组顺序：照片 / 回忆 / 相册 / AI / 设置。
 /// 导航本身由 [AppNavShell] 统一实现，菜单内容来自 `contracts/apps.json#nav`；
 /// 这里只剩「菜单项 id → 页面」。
 class PhotoShellPage extends StatefulWidget {

@@ -428,7 +428,7 @@ class _PhotoPageState extends State<PhotoPage> {
     });
     try {
       final client = ApiSession.instance.client;
-      // 四个请求互不依赖，原先逐个 await —— 首屏要等 4 个 RTT 才出第一张图。
+      // 四个请求互不依赖，逐个 await 会让 —— 首屏要等 4 个 RTT 才出第一张图。
       // 先一起发出去，再用 Future.wait 等齐：任何一个失败都在这里统一抛出，
       // 不会留下「没 await 的 future 抛未捕获异常」。
       final fTimeline = widget.favoriteOnly
@@ -628,7 +628,7 @@ class _PhotoPageState extends State<PhotoPage> {
 
   /// 扫描：入队后立刻返回，进度靠轮询。
   ///
-  /// 原先直接 await 同步的 `/photo/scan`，而它要等整个库扫完才返回 ——
+  /// 直接 await 同步的 `/photo/scan` 会，而它要等整个库扫完才返回 ——
   /// 数万张照片必然超过传输层的 30 s 超时，用户看到的是「扫描失败」，
   /// 服务端其实还在跑，于是再点一次（越点越乱）。
   Future<void> _scan() async {

@@ -2,13 +2,13 @@ part of '../cola_player_controller.dart';
 
 /// 是否启用新的播放内核（`playback/` 下的状态机实现）。
 ///
-/// 关掉就完全回到旧实现（`_player` + 五个布尔标志那套），行为不变。
-/// 之所以留开关而不是直接删旧代码：播放牵扯后台服务、通知栏、分页追加、
+/// 关掉就完全回到 `_player` + 五个布尔标志那套，行为不变。
+/// 之所以留开关而不是直接删代码：播放牵扯后台服务、通知栏、分页追加、
 /// 音频缓存，任何一处没接好都会退化成「能出声但别处坏掉」，
-/// 留着旧路径才能一行回退。
+/// 留着回退开关才能一行切回去。
 const bool kNewPlaybackCore = true;
 
-/// 新旧内核之间的适配层。
+/// 新内核与原控制器之间的适配层。
 ///
 /// UI 完全不知道它存在：对外仍然是 [MusicPlayServiceController] 的那套 Rx 字段
 /// 和方法名，这里负责把新内核的**单向状态**翻译回去，并把「缓存 / 分页 / 通知栏 /
@@ -217,7 +217,7 @@ class _MusicNewCoreAdapter {
         _owner.currentIndex.value = index;
         _owner._invalidateMediaItemCache();
         _owner._syncMediaItem(index);
-        // 切歌后补拉详情：旁挂 .lrc 才会被读到（旧实现漏了这一步）
+        // 切歌后补拉详情：旁挂 .lrc 才会被读到（这一步容易漏）
         unawaited(_owner._refreshDetailForIndex(index));
       }
     }

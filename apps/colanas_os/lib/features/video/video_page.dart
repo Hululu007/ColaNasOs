@@ -1,6 +1,6 @@
 ﻿/// 影视模块的公共出口。
 ///
-/// 详情页 / 海报卡 / 剧集详情原先都塞在 `video_page.dart` 里，现在拆成独立文件，
+/// 详情页 / 海报卡 / 剧集详情曾都塞在 `video_page.dart` 里，现在拆成独立文件，
 /// 这里统一 re-export，保持既有 import 路径（`import 'video_page.dart'`）继续可用。
 library;
 
@@ -16,11 +16,11 @@ export 'video_series_detail_page.dart';
 
 /// 影视入口（二级导航 `video_shell` 直接用它）。
 ///
-/// 语义变化（对齐既有实现）：
+/// 语义变化：
 ///   - **没有 libraryId** → 首页（四段式浏览：来源 / 推荐 / 继续观看 / 每库最近添加）
 ///   - **带 libraryId**   → 该库的影片列表（顶栏可排序 / 筛选 / 调海报大小）
 ///
-/// 旧版两种情况都渲染「搜索框 + 一整面无限网格」，所以首页看着不像首页、
+/// 早期形态两种情况都渲染「搜索框 + 一整面无限网格」，所以首页看着不像首页、
 /// 列表又缺所有工具；现在把两件事拆成两个页面。
 class VideoPage extends StatelessWidget {
   const VideoPage({

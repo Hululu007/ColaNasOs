@@ -15,7 +15,7 @@ import '../../list/models/cola_list_models.dart';
 import '../../list/service/cola_list_api_service.dart';
 import '../cache/cola_audio_cache.dart';
 import '../lyric_match.dart';
-// 新播放内核（playback/）：引擎 + 状态机 + 不可变队列，与旧实现并存
+// 新播放内核（playback/）：引擎 + 状态机 + 不可变队列，与原控制器并存
 import '../../../playback/playback_controller.dart';
 import '../../../playback/playback_engine.dart';
 import '../../../playback/playback_state.dart';
@@ -131,7 +131,7 @@ class MusicPlayServiceController extends GetxController
   _MusicAudioHandler? _handler;
   Future<void>? _serviceInitFuture;
 
-  /// 新内核适配层；`kNewPlaybackCore` 关闭时为 null，自动退回旧实现。
+  /// 新内核适配层；`kNewPlaybackCore` 关闭时为 null，自动退回原控制器。
   _MusicNewCoreAdapter? _coreAdapter;
   _MusicNewCoreAdapter get _newCore =>
       _coreAdapter ??= _MusicNewCoreAdapter(this);

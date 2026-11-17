@@ -160,7 +160,7 @@ const Map<String, String> kMusicCompatZhCN = <String, String>{
   'tip': '提示',
   'total_size': '总大小',
   'unfavorite': '取消收藏',
-  // 下面 4 个是代码里用到、但翻译表原先漏登记的键。
+  // 下面 4 个是代码里用到、但翻译表漏登记的键。
   // 缺键时 `'xxx'.tr` 会直接把 snake_case 键名显示到界面上（中文界面漏英文）。
   'book_delete_confirm_count': '确认删除这 {count} 项吗？',
   'book_delete_confirm_path_line': '  {path}',

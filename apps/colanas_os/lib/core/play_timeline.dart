@@ -83,7 +83,7 @@ int seekBaseMs({
 /// 同机实测转码约 **3.5 倍实时**（2 秒一片、约 0.6 秒出一片），所以追上 [gap]
 /// 大约要 `gap / 3.5`，再留 2 秒余量。上下夹紧：太短会白重建会话（新会话首片
 /// 要等好几秒），太长用户就是在看静止画面 —— 2026-11-17 反馈的「卡住」就是
-/// 旧版本动辄等 14~20 秒造成的。
+/// 早期实现动辄等 14~20 秒造成的。
 Duration clampWaitBudget(
   Duration gap, {
   Duration min = const Duration(seconds: 3),

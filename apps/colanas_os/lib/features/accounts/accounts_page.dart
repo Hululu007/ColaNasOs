@@ -14,7 +14,7 @@ import 'scope_picker.dart';
 
 /// 用户与权限（SP3-01）：主从布局（用户列表 + 详情工作台）。
 ///
-/// 既有实现是「左列表 + 右详情（信息卡 + 2FA / 登录记录 / 操作日志 / 权限）」；
+/// 布局是「左列表 + 右详情（信息卡 + 2FA / 登录记录 / 操作日志 / 权限）」；
 /// 操作日志默认展示文件操作（`/files/op-logs`），账号审计作为第二个子页保留。
 /// IP 黑名单保留为左下角弹窗，避免丢失现有能力。
 class AccountsPage extends StatefulWidget {
@@ -144,7 +144,7 @@ class _AccountsPageState extends State<AccountsPage> {
             (e) => <String, dynamic>{
               'path': '${e['path'] ?? ''}',
               // 老数据只有 access(ro/rw)，服务端已折算成 actions；这里再兜一层，
-              // 免得某个旧版本服务端只回 access 时界面变成「零动作」。
+              // 免得某个服务端只回 access 时界面变成「零动作」。
               'actions': _actionsOfRule(Map<String, dynamic>.from(e)),
             },
           )
@@ -1309,7 +1309,7 @@ class _AccountsPageState extends State<AccountsPage> {
 
 /// 操作日志页签：文件操作（默认，`file_op_logs`）+ 账号审计（`auth_events`）。
 ///
-/// 既有实现的「操作日志」就是文件操作日志（类型 / 状态 / 关键词 / 分页）；
+/// 「操作日志」就是文件操作日志（类型 / 状态 / 关键词 / 分页）；
 /// 账号审计是本仓库额外能力，放在第二个子页，避免丢失。
 class _LogsTab extends StatefulWidget {
   const _LogsTab({super.key, required this.uid});

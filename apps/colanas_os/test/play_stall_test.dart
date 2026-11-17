@@ -24,7 +24,7 @@ void main() {
   }
 
   group('PlayStallDetector：只在「画面真的不动」时才动手', () {
-    test('seek 回显不算停滞（旧实现在这里就退场了）', () {
+    test('seek 回显不算停滞（回显阶段就该退场）', () {
       final d = PlayStallDetector();
       // 原位 0 → 用户跳到 30 秒，position 立刻报成 30000
       expect(d.tick(ms(30000)) == PlayStallAction.none, isTrue,

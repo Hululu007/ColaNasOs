@@ -253,7 +253,7 @@ class BackupFileRecord {
 ///
 /// 进度口径（2026-11-07 修）：扫描结束时把 `runTotal` 一次定死，
 /// `done` 只增不减，进度条 = done / runTotal，单调递增。
-/// 旧实现拿「已完成字节 / 已加入的字节」当分母，每跑完一批就 100%，
+/// 不能拿「已完成字节 / 已加入的字节」当分母，每跑完一批就 100%，
 /// 下一批又把分母撑大，进度条来回跳；退出页面再进来 rt.reset() 又全清零。
 class BackupRuntime {
   BackupPhase phase = BackupPhase.off;

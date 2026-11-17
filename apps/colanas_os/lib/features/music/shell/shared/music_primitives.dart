@@ -182,7 +182,7 @@ class MusicSlider extends StatelessWidget {
   }
 }
 
-/// 手机端状态栏 / 导航栏配色，三个列表页原先各复制了 16 行。
+/// 手机端状态栏 / 导航栏配色，三个列表页曾各复制了 16 行。
 class MusicSystemUiOverlay extends StatelessWidget {
   const MusicSystemUiOverlay({
     super.key,

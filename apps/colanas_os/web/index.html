@@ -53,7 +53,7 @@
     `_flutter.loader`，劫持后真正的 loader 永远不会被创建，页面同样白屏。
   -->
   <!--
-    旧版本用默认 bootstrap 注册过 service worker，它会把旧产物缓存下来，
+    早期版本用默认 bootstrap 注册过 service worker，它会把过期产物缓存下来，
     导致内核重启后浏览器仍拿到过期页面（同样是白屏）。现在明确不再注册 SW，
     顺手把历史注册与缓存清掉。
   -->

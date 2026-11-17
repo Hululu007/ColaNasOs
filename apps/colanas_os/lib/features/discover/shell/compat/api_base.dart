@@ -2,11 +2,11 @@ import 'package:nas_core/nas_core.dart';
 
 import '../../../../core/session.dart';
 
-/// 既有实现 `BaseApiService` / `ApiResponse` 的等价实现。
+/// `BaseApiService` / `ApiResponse` 的等价实现。
 ///
-/// 参考源码的 `DiscoverApiService` 调 `apiGet/apiPost('/api/...')`，而本项目走
-/// 强类型 `ApiSession.instance.client`（`/api/v1/...`，camelCase 字段）。
-/// 这里做一层「路径 + 字段」双向翻译，让搬过来的三个 Dart 文件**一行都不用改**。
+/// 本项目的 `DiscoverApiService` 走强类型 `ApiSession.instance.client`
+/// （`/api/v1/...`，camelCase 字段）。
+/// 这里做一层「路径 + 字段」双向翻译，让上层三个 Dart 文件**一行都不用改**。
 ///
 /// 参考服务里的 43 个端点已全部接到本项目真实能力上；字段层面除了 snake_case ↔
 /// camelCase，还要处理几处语义差异（设置存库 id 而非路径、时间戳要格式化、
@@ -82,7 +82,7 @@ class CompatApi {
 
   static ApiClient get _api => ApiSession.instance.client;
 
-  /// 既有实现 的 catalog type → 本项目的 (kind, media)。
+  /// catalog type → 本项目的 (kind, media)。
   static const Map<String, List<String>> _catalogTypes = <String, List<String>>{
     'trending_day': <String>['trending_day', 'movie'],
     'trending_week': <String>['trending_week', 'movie'],
@@ -151,7 +151,7 @@ class CompatApi {
     if (path == '/api/discover/browse') {
       final genreIds = b['genre_ids'] ?? b['genreIds'];
       final langs = b['languages'];
-      // 参考页的 country 是 List<String>（多选地区），本项目接口只要单个 ISO 码
+      // 上层的 country 是 List<String>（多选地区），本项目接口只要单个 ISO 码
       final countryRaw = _firstOf(b['country'] ?? b['origin_country']);
       final res = await _api.discoverCatalog(
         kind: 'popular',
@@ -281,7 +281,7 @@ class CompatApi {
       final body = <String, dynamic>{
         if (name.isNotEmpty) 'name': name,
         if (siteUrl.isNotEmpty) 'baseUrl': siteUrl,
-        // 既有实现 的 adapter_type=mteam 对应本项目的 kind=mteam（走专有 JSON API）
+        // adapter_type=mteam 对应本项目的 kind=mteam（走专有 JSON API）
         'kind': (_str(b['adapter_type'], '') == 'mteam' || siteUrl.contains('m-team'))
             ? 'mteam'
             : 'nexusphp',
@@ -344,7 +344,7 @@ class CompatApi {
       final raw = taskAction.group(2)!;
       return _api.ptDownloadAction(body: <String, dynamic>{
         'id': _rawId(taskAction.group(1)!),
-        // 参考页的「删除」就是移除任务（本地文件不删）
+        // 上层的「删除」就是移除任务（本地文件不删）
         'action': raw == 'delete' ? 'remove' : raw,
       });
     }
@@ -417,7 +417,7 @@ class CompatApi {
     }
     if (path == '/api/pt/favorites' && method == 'GET') {
       final res = _ensureItems(await _api.ptFavoriteList(state: q['state']));
-      // 参考页按日期字符串展示「入库时间」，后端回的是 unix 秒
+      // 上层按日期字符串展示「入库时间」，后端回的是 unix 秒
       final items = (res['items'] as List).map((e) {
         final m = _asMap(e);
         return <String, dynamic>{
@@ -442,7 +442,7 @@ class CompatApi {
     }
     if (path == '/api/pt/favorites/scan') return _api.ptFavoriteScan();
     if (path == '/api/pt/filter' && method == 'GET') {
-      // 参考页按 snake_case 读（movie_save_path / scan_interval_minutes ...），
+      // 上层按 snake_case 读（movie_save_path / scan_interval_minutes ...），
       // 而本项目模型是 camelCase + 库 id，直接 toJson 会让整页显示空。
       final res = await _api.ptDownloadSettingsGet();
       return _filterOf(res);
@@ -466,7 +466,7 @@ class CompatApi {
         maxSizeBytes: b['max_size_bytes'] is num ? (b['max_size_bytes'] as num).toInt() : null,
         minSeeders: b['min_seeders'] is num ? (b['min_seeders'] as num).toInt() : null,
         excludedKeywords: (b['excluded_keywords'] as List?)?.map((e) => e.toString()).toList(),
-        // 参考页字段名是 scan_interval_minutes（本项目模型叫 scanIntervalMin）
+        // 上层字段名是 scan_interval_minutes（本项目模型叫 scanIntervalMin）
         scanIntervalMin: (b['scan_interval_minutes'] ?? b['scan_interval_min']) is num
             ? ((b['scan_interval_minutes'] ?? b['scan_interval_min']) as num).toInt()
             : null,
@@ -480,7 +480,7 @@ class CompatApi {
     if (path == '/api/rss/feeds/add') {
       return _api.rssAddFeed(body: <String, dynamic>{
         'url': _str(b['url'], ''),
-        // 名称以前被丢掉了（参考页传 name，本项目 schema 叫 title）
+        // 名称以前被丢掉了（上层传 name，本项目 schema 叫 title）
         if (_str(b['name'], '').isNotEmpty) 'title': _str(b['name'], ''),
         if (_str(b['save_path'], '').isNotEmpty) 'savePath': _str(b['save_path'], ''),
         if (b['immediate'] is bool) 'immediate': b['immediate'] as bool,
@@ -515,12 +515,12 @@ class CompatApi {
         state: q['state'],
         limit: int.tryParse(q['limit'] ?? ''),
       ));
-      // 参考页副标题读 feed_name（本项目字段叫 feedTitle → feed_title）
+      // 上层副标题读 feed_name（本项目字段叫 feedTitle → feed_title）
       final items = (res['items'] as List).map((e) {
         final m = _asMap(e);
         return <String, dynamic>{
           ...m,
-          // 参考页拿 `id` 做行操作；本项目条目主键是 guid，映射成 int 才能一进一出
+          // 上层拿 `id` 做行操作；本项目条目主键是 guid，映射成 int 才能一进一出
           // （以前压根没给 id，列表上的确认/拒绝按钮点了什么都不会发生）
           'id': _numId((m['guid'] ?? '').toString()),
           'feed_name': m['feed_title'] ?? m['feedTitle'] ?? '',
@@ -541,7 +541,7 @@ class CompatApi {
         keyword: q['keyword'],
         limit: int.tryParse(q['limit'] ?? ''),
       ));
-      // 参考页把 create_time 当日期字符串用（.replaceAll('T',' ')），
+      // 上层把 create_time 当日期字符串用（.replaceAll('T',' ')），
       // 本项目回的是 unix 秒，直接拼会显示成一串数字。
       final items = (res['items'] as List).map((e) {
         final m = _asMap(e);
@@ -571,14 +571,14 @@ class CompatApi {
           .toList();
     }
 
-    // 兜底：未识别的 既有实现 端点回空结构（参考页不会崩，只是这一块没数据）。
+    // 兜底：未识别的端点回空结构（页面不会崩，只是这一块没数据）。
     // 43 个端点已全部接完，这里正常不会命中。
     return _empty();
   }
 
   // ---------- 形状转换 ----------
 
-  /// 下载筛选设置：本项目 `{settings, movieDir, tvDir}` → 参考页的 snake_case 平面字段。
+  /// 下载筛选设置：本项目 `{settings, movieDir, tvDir}` → 上层的 snake_case 平面字段。
   static Map<String, dynamic> _filterOf(PtDownloadSettingsResponse res) {
     final s = res.settings;
     return <String, dynamic>{
@@ -586,7 +586,7 @@ class CompatApi {
       'tv_save_path': res.tvDir,
       'movie_library_id': s.movieLibraryId,
       'tv_library_id': s.tvLibraryId,
-      // 参考页里所有 id 都是 int：站点列表由 _ensureItems 把 base64url 文本 id 哈希成
+      // 上层所有 id 都是 int：站点列表由 _ensureItems 把 base64url 文本 id 哈希成
       // int，设置页也按 int 存 _siteIds 并用 int.tryParse 回填勾选。这里必须同口径转换，
       // 否则保存能写进库（_rawId 会把 int 还原成真实 id），但重进页面时字符串 id 解析失败
       // ⇒ 勾选恒为空，表现为「保存了又变回不勾选」。
@@ -602,7 +602,7 @@ class CompatApi {
     };
   }
 
-  /// 参考页存的是「保存目录路径」，本项目存的是影视库 id：按源目录路径反查。
+  /// 上层存的是「保存目录路径」，本项目存的是影视库 id：按源目录路径反查。
   /// 查不到就返回 null（= 不改），绝不能传空串把已配好的库清掉。
   static Future<String?> _libraryIdForPath(dynamic raw) async {
     final path = (raw ?? '').toString().trim();
@@ -628,7 +628,7 @@ class CompatApi {
   static String _normPath(String p) =>
       p.replaceAll('\\', '/').replaceAll(RegExp(r'/+$'), '').toLowerCase();
 
-  /// unix 秒 / 毫秒 或 ISO 串 → `yyyy-MM-dd HH:mm`（参考页原样展示这个字符串）
+  /// unix 秒 / 毫秒 或 ISO 串 → `yyyy-MM-dd HH:mm`（上层原样展示这个字符串）
   static String _fmtTime(dynamic v) {
     if (v == null) return '';
     if (v is String && v.contains('-')) {
@@ -658,12 +658,12 @@ class CompatApi {
       'total_results': items.length,
       'degraded': json['degraded'] ?? false,
       'reason': json['reason'] ?? '',
-      // 参考页按 rating_provider 决定评分取 vote_average 还是 rating_douban。
+      // 上层按 rating_provider 决定评分取 vote_average 还是 rating_douban。
       'rating_provider': json['ratingProvider'] ?? 'tmdb',
     };
   }
 
-  /// 本项目 camelCase 媒体卡 → 既有实现 snake_case 条目（补齐参考页会读的字段）。
+  /// 本项目 camelCase 媒体卡 → snake_case 条目（补齐页面会读的字段）。
   static Map<String, dynamic> _card(Map<String, dynamic> c) {
     final id = c['id'];
     final year = c['year'];
@@ -683,7 +683,7 @@ class CompatApi {
       'release_date': date,
       'first_air_date': date,
       'vote_average': c['rating'] ?? 0,
-      // 豆瓣分单独一列：没补齐时是 0，参考页 ratingOf 会返回 null（显示 '-'）
+      // 豆瓣分单独一列：没补齐时是 0，上层 ratingOf 会返回 null（显示 '-'）
       'rating_douban': c['ratingDouban'] ?? 0,
       'douban_id': c['doubanId'],
       'douban_url': c['doubanUrl'],
@@ -723,7 +723,7 @@ class CompatApi {
       'genres': r.genres
           .map((g) => <String, dynamic>{'id': 0, 'name': g})
           .toList(),
-      // 演员：优先用带角色名 + 头像的 castMembers（参考页按 profile_url 渲染头像）
+      // 演员：优先用带角色名 + 头像的 castMembers（上层按 profile_url 渲染头像）
       'cast': (r.castMembers?.isNotEmpty == true
               ? r.castMembers!
                   .map((m) => <String, dynamic>{
@@ -793,7 +793,7 @@ class CompatApi {
     return const <dynamic>[];
   }
 
-  /// 既有实现 全用 int id，本项目是 base64url 文本 id / guid。
+  /// 兼容层用 int id，本项目是 base64url 文本 id / guid。
   /// 下发列表时把字符串映射成稳定整数，动作回传时再反查，避免运行时类型错误。
   static final Map<int, String> _idMap = <int, String>{};
 
@@ -813,7 +813,7 @@ class CompatApi {
 
   /// 路径里那段 id → 真实 id。
   ///
-  /// 既有实现把 id 直接拼进 URL（`'/api/pt/sites/$id/test'`），而本项目站点 id 是
+  /// 兼容层把 id 直接拼进 URL（`'/api/pt/sites/$id/test'`），而本项目站点 id 是
   /// base64 字符串；UI 手里拿到的是 `_ensureItems` 哈希后的 int，拼进路径就成了纯数字。
   /// 拿这个数字去 `/api/v1/pt/sites/<id>/test` 必然 404，所以按 `_idMap` 还原。
   static String _pathId(String seg) {
@@ -827,7 +827,7 @@ class CompatApi {
 
   static Map<String, dynamic> _ensureItems(dynamic v) {
     final items = _itemsOf(v).map((e) {
-      // 本项目接口是 camelCase，参考页读 snake_case：两套键都给，省得每处再手写映射
+      // 本项目接口是 camelCase，上层读 snake_case：两套键都给，省得每处再手写映射
       final m = <String, dynamic>{..._snake(_asMap(e)), ..._asMap(e)};
       final raw = (m['id'] ?? m['guid'] ?? m['feedId'] ?? m['torrentId'])?.toString() ?? '';
       if (raw.isNotEmpty) {

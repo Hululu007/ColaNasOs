@@ -75,7 +75,7 @@ class _DiscoverPageState extends State<DiscoverPage> {
   String _country = '';
   double _minVote = 0;
 
-  /// 浏览态：显示筛选行；榜单态只显示榜单胶囊与信息条（既有实现的三态之一）
+  /// 浏览态：显示筛选行；榜单态只显示榜单胶囊与信息条（三态之一）
   bool _browse = false;
 
   bool get _hasFilters =>
@@ -244,7 +244,7 @@ class _DiscoverPageState extends State<DiscoverPage> {
     _load();
   }
 
-  /// 评分分色（既有实现：<6 灰 / 6 蓝 / 7 绿 / 8+ 橙）
+  /// 评分分色（<6 灰 / 6 蓝 / 7 绿 / 8+ 橙）
   static Color _ratingColor(double? rating) {
     if (rating == null || rating < 6) return const Color(0xFF6B7280);
     if (rating < 7) return const Color(0xFF3B82F6);
