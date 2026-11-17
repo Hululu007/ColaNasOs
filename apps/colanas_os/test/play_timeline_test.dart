@@ -230,4 +230,33 @@ void main() {
       );
     });
   });
+
+  /// 「等转码追上」的预算。
+  ///
+  /// 给多了就是无声冻屏：2026-11-17 用户报「按右键跳 30 秒会卡住」，
+  /// 日志里那条路径其实等到了片（over=17687ms、4.5 秒后原地 seek），
+  /// 但那十几秒画面停在已转出末尾、界面上又没有任何提示 —— 体验上就是卡住。
+  /// 给少了等于白发一次重建会话。所以按「差多远 / 转码倍速」算，夹在 3~10 秒。
+  group('clampWaitBudget：等片预算按差距给，但有上下限', () {
+    test('差 14 秒 → 等 6 秒（14000/3.5 + 2 秒）', () {
+      expect(
+        clampWaitBudget(const Duration(seconds: 14)),
+        const Duration(seconds: 6),
+      );
+    });
+
+    test('差再多也不超过 10 秒上限（宁可重建会话也别无声冻屏）', () {
+      expect(
+        clampWaitBudget(const Duration(seconds: 300)),
+        const Duration(seconds: 10),
+      );
+    });
+
+    test('只差一点点也至少等 3 秒：25ms 连一次请求都不够', () {
+      expect(
+        clampWaitBudget(const Duration(milliseconds: 200)),
+        const Duration(seconds: 3),
+      );
+    });
+  });
 }

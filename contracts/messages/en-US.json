@@ -1641,6 +1641,8 @@
     "player.tv.subtitleTitle": "Subtitles",
     "player.transcoding": "Transcoding (progressive)",
     "player.tryOriginal": "Try original anyway",
+    "player.waitingTarget": "Transcoding up to {time}…",
+    "player.seekNotReady": "Still transcoding here — jump skipped",
     "player.unlock": "Unlock",
     "player.videoCodec": "Video codec",
     "player.volume": "Volume",

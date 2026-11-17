@@ -2338,7 +2338,11 @@
     "player.tv.subtitleSmaller": {},
     "player.tv.subtitleTitle": {},
     "player.tryOriginal": {},
+    "player.waitingTarget": {
+      "time": {}
+    },
     "player.unlock": {},
+    "player.seekNotReady": {},
     "player.videoCodec": {},
     "player.volume": {},
     "settings.about": {},

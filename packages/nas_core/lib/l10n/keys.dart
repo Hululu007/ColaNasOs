@@ -1722,7 +1722,9 @@ class I18nKeys {
   static const playerTvSubtitleSmaller = 'player.tv.subtitleSmaller';
   static const playerTvSubtitleTitle = 'player.tv.subtitleTitle';
   static const playerTryOriginal = 'player.tryOriginal';
+  static const playerWaitingTarget = 'player.waitingTarget';
   static const playerUnlock = 'player.unlock';
+  static const playerSeekNotReady = 'player.seekNotReady';
   static const playerVideoCodec = 'player.videoCodec';
   static const playerVolume = 'player.volume';
   // ---- settings ----
@@ -2965,4 +2967,4 @@ class I18nKeys {
 }
 
 /// 契约键总数（生成时确定），供完整性自检使用。
-const int i18nKeyCount = 2916;
+const int i18nKeyCount = 2918;

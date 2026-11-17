@@ -1641,6 +1641,8 @@
     "player.tv.subtitleTitle": "字幕",
     "player.transcoding": "转码中（边转边播）",
     "player.tryOriginal": "仍要尝试原画",
+    "player.waitingTarget": "正在转码到 {time}…",
+    "player.seekNotReady": "这一段还在转码，已跳过本次跳转",
     "player.unlock": "解锁",
     "player.videoCodec": "视频编码",
     "player.volume": "音量",

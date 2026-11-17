@@ -78,6 +78,23 @@ int seekBaseMs({
   return startMs + (playerPosMs > 0 ? playerPosMs : 0);
 }
 
+/// 「等转码追上」该给多久（跳转目标超出已转出末尾时用）。
+///
+/// 同机实测转码约 **3.5 倍实时**（2 秒一片、约 0.6 秒出一片），所以追上 [gap]
+/// 大约要 `gap / 3.5`，再留 2 秒余量。上下夹紧：太短会白重建会话（新会话首片
+/// 要等好几秒），太长用户就是在看静止画面 —— 2026-11-17 反馈的「卡住」就是
+/// 旧版本动辄等 14~20 秒造成的。
+Duration clampWaitBudget(
+  Duration gap, {
+  Duration min = const Duration(seconds: 3),
+  Duration max = const Duration(seconds: 10),
+}) {
+  final need = (gap.inMilliseconds / 3.5).round() + 2000;
+  return Duration(
+    milliseconds: need.clamp(min.inMilliseconds, max.inMilliseconds).toInt(),
+  );
+}
+
 /// 目标位置是否需要「另起一个中途起转的会话」。
 ///
 /// 需要的情况只有两种：

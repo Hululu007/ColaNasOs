@@ -293,10 +293,36 @@ class _PlayerPageState extends State<PlayerPage> {
   /// 跳转进行中又有新目标：只保留最后一个，等当前这次完成后再跳。
   Duration? _pendingJump;
 
-  /// 播放停滞看门狗（见 [_armStallWatch]）。
-  /// 代际号用来作废旧的那一个定时器：连续拖进度条会连开好几轮。
-  Timer? _seekWatchdog;
-  int _seekWatchdogGen = 0;
+  /// 播放停滞看门狗：**页面级常驻**，整个播放页只有一个，任何路径都不许 cancel
+  /// （除了 dispose）。
+  ///
+  /// 以前是「每次 seek 挂一个 Timer、换流就 cancel、用代际号作废旧表」的写法，
+  /// 于是出现了三次**同一形状**的事故（`795ee81b` 冻 6 分钟 / `8550c2c2` 冻 96 秒 /
+  /// `c16e2aeb` 静默 116 秒）：每多一个 `cancel()` 就多一个能让看门狗死掉的地方，
+  /// 而 `playing` 流不会重发同一个值 —— 死了就永远没人再挂表，之后冻多久都
+  /// 一条日志都没有。现在只在 initState 起一次、dispose 收一次；seek / 换流
+  /// 只做判定重置（[_armStallWatch]），不动定时器本身。
+  Timer? _stallTicker;
+
+  /// 看门狗盯的目标（片源绝对），只用于日志。
+  Duration? _stallTarget;
+
+  /// 最近一次「跳过这一拍」的原因与记录时间。跳过的原因必须能在日志里看见，
+  /// 否则又回到「静默冻死、没有证据」的老路上（[stallSkipQuiet] 里的几种
+  /// 是用户自己造成的，不刷日志）。
+  String? _stallSkipWhy;
+  DateTime _stallSkipLoggedAt = DateTime.fromMillisecondsSinceEpoch(0);
+
+  /// 用户按暂停 / 已播完 / 首帧准备：这些「画面不动」是预期内的。
+  static const Set<String> stallSkipQuiet = {'用户暂停', '已播完', '首帧准备'};
+
+  /// `_jumping` 置 true 的时刻。跳转若卡在 [_ensureTranscode] / open 上不返回，
+  /// `_jumping` 会永远是 true，看门狗每拍都被跳过 —— 那也是卡住，得有硬超时。
+  DateTime? _jumpingSince;
+
+  /// 上一次「强制复位卡死的跳转」的时刻。限速用：万一是服务端一直不回，
+  /// 每 15 秒重跳一次只会把 ffmpeg 反复掐死。1 分钟最多硬掰一次。
+  DateTime? _jumpResetAt;
 
   /// 停滞判定的水位计（判据：**历史最大位置**在多少秒内没涨过）。
   /// 换成纯 Dart 的 [PlayStallDetector] 是为了能单独写单测 —— 这段逻辑
@@ -320,6 +346,28 @@ class _PlayerPageState extends State<PlayerPage> {
   /// 最近一次 `_seekTo` 的目标（片源绝对）。[_pendingStartMs] 非空时拿它当
   /// 快进 / 快退的基准 —— 此时 position 属于旧流，不可信。
   Duration _lastSeekTarget = Duration.zero;
+
+  /// 正在「等转码追上」的目标（片源绝对）。非空时右上角显示
+  /// 「正在转码到 xx:xx」—— 等待期间画面会停在已转出末尾不动，
+  /// 没有这个提示用户只会觉得卡死了（2026-11-17 反馈）。
+  Duration? _waitingTarget;
+
+  /// 设置 / 清除「正在等转码」提示（只在变化时 setState，避免抖）。
+  void _markWaitingTarget(Duration? t) {
+    if (_waitingTarget == t) return;
+    if (!mounted) {
+      _waitingTarget = t;
+      return;
+    }
+    setState(() => _waitingTarget = t);
+  }
+
+  /// 收尾时只清自己那个目标：用户连按时新的一轮已经写进 [_waitingTarget]，
+  /// 旧那轮的 finally 不能把它抹掉（否则新目标就没了提示）。
+  void _clearWaitingTarget(Duration t) {
+    if (_waitingTarget != t) return;
+    _markWaitingTarget(null);
+  }
 
   /// 第几次 `open()`。同一个 open 只允许「首片没到就补开」一次 ——
   /// 没有这个计数的话，失败→重开→再失败会把画面刷成闪烁（早期线上问题）。
@@ -449,6 +497,11 @@ class _PlayerPageState extends State<PlayerPage> {
     _url = widget.url;
     _directUrl = widget.url;
     _player = Player();
+    // 停滞看门狗**在这里起一次**，之后整页生命周期内不再取消（除 dispose）。
+    // 以前是每个 seek / 每次 open 各挂一个、还互相 cancel，于是留下了三次
+    // 「画面冻住了但日志里一条告警都没有」的事故。常驻之后，任何一条路径都
+    // 只能重置判定基准（[_armStallWatch]），不能让它消失。
+    _armStallWatch();
     // 开硬件解码：media_kit 默认不设 hwdec，libmpv 会走软解。H.264 720p 软解
     // 还撑得住，但 AV1 走 dav1d 软解、同时服务端在做 4K tonemap + AV1 编码，
     // 客户端会掉到 0.5fps（实测 30s 只有 12~16 帧，而 raster 仅 2.3ms ——
@@ -473,9 +526,10 @@ class _PlayerPageState extends State<PlayerPage> {
       _player.stream.playing.listen((playing) {
         // TV 的播放/暂停按钮图标要跟着变（索引式控制层不是 StreamBuilder）
         if (mounted && _tvMode) setState(() {});
-        // 暂停会顺手关掉停滞看门狗（用户自己的意愿，不该被判成卡住）；
-        // 恢复播放要重新挂上，否则「暂停一下再播」之后就又变成静默冻住了。
-        if (playing && !(_seekWatchdog?.isActive ?? false)) _armStallWatch();
+        // 暂停期间画面不动是用户自己的意愿，看门狗会跳过判定（[stallSkipQuiet]）；
+        // 恢复播放要把判定基准挪到当前位置重新计数，否则「暂停一下再播」之后
+        // 会把暂停那段累进停滞计数里。
+        if (playing) _armStallWatch();
         // 播放器自己停了、而用户并没有按过暂停（[_wantPlay] 仍为 true）：
         // 典型就是拖进度条触发换源后浏览器把这次播放丢了。补一次，别让人手点。
         // 用户点暂停时 `_togglePlay` 会先把 _wantPlay 置 false，所以不会抢。
@@ -727,7 +781,7 @@ class _PlayerPageState extends State<PlayerPage> {
     _hideTimer?.cancel();
     _seekHintTimer?.cancel();
     _noticeTimer?.cancel();
-    _seekWatchdog?.cancel();
+    _stallTicker?.cancel();
     _seekByTimer?.cancel();
     _tryOriginalTimer?.cancel();
     for (final sub in _logSubs) {
@@ -754,9 +808,10 @@ class _PlayerPageState extends State<PlayerPage> {
   }) async {
     _url = u;
     _lastOpenAt = DateTime.now();
-    // 换了播放源：上一次原地 seek 的看门狗作废，别让它在新的流上误判「没动」
-    _seekWatchdog?.cancel();
-    _seekWatchdogGen += 1;
+    // 换了播放源：位置不再连续，判定基准要挪到新流的起点。
+    // ⛔ 只重置判定，**不取消看门狗** —— 以前这里 cancel，换流期间一旦出岔子
+    // 看门狗就永久缺席（`c16e2aeb` 116 秒静默就是这么来的）。
+    _stall.reset(Duration.zero);
     _openGen += 1;
     final openSw = Stopwatch()..start();
     // 要不要在打开后自动播：默认沿用用户意图（跳转 / 首播 = 想播，暂停中换档 = 不想播）
@@ -2064,7 +2119,11 @@ class _PlayerPageState extends State<PlayerPage> {
     );
     _seekByTimer?.cancel();
     _seekByTimer = Timer(const Duration(milliseconds: 260), () {
-      if (mounted) unawaited(_seekTo(_seekByTarget));
+      // soft：键盘 / 遥控器的 ±N 秒。等不到片就**放弃这次跳转**，
+      // 保持当前播放不动 —— 用户原话「没加载到，可以直接不跳这 30 秒，
+      // 或就当是我点了时间条，也行，怎么都不能卡住」。±30 秒这种小步
+      // 不值得为它重建一条会话（重建要重新等首片，反而像卡死）。
+      if (mounted) unawaited(_seekTo(_seekByTarget, soft: true));
     });
   }
 
@@ -2207,7 +2266,13 @@ class _PlayerPageState extends State<PlayerPage> {
     return end + _startOffset;
   }
 
-  Future<void> _seekTo(Duration target, {bool allowJump = true}) async {
+  /// [soft] = 这次跳转「可以不做」（键盘 / 遥控器的 ±N 秒）。
+  /// 等不到片就原地不动，宁可不跳也不要重建会话卡十几秒。
+  Future<void> _seekTo(
+    Duration target, {
+    bool allowJump = true,
+    bool soft = false,
+  }) async {
     _lastSeekAt = DateTime.now();
     // 连续按 → / 连续拖：只让最后一次真正落地。中间那次可能在
     // [_awaitProduced] 里等转码（最多 8 秒），等回来时用户早就换了目标 ——
@@ -2292,22 +2357,27 @@ class _PlayerPageState extends State<PlayerPage> {
     // 用户要的就是「没加载你就转码加载」——等片，别让播放器去要空气。
     final over = t - producedEnd;
     if (over > Duration.zero && over <= const Duration(seconds: 30)) {
-      // 预算按「差多远」给：差 9 秒却只等 8 秒就重建会话，等于白扔一次首片
-      // （2026-11-17 实测：over=9020ms → 立刻重建 → 黑屏 9.6 秒）。
-      // 转码 2 秒一片、同机 H.264 约 1.1s/片，差 30 秒最多等 20 秒也就追上了，
-      // 比新建会话（新 ffmpeg + 首片）划算得多。
-      final budget = over > const Duration(seconds: 10)
-          ? const Duration(seconds: 20)
-          : const Duration(seconds: 14);
-      var produced = await _awaitProduced(t, budget: budget);
-      // 等的这十几秒里用户又按了 → 直接作废，别把旧目标盖到新目标上
-      if (!mounted || gen != _seekGen) return;
-      if (!produced && over > Duration.zero) {
-        // 会话可能刚才还是 paused（转完一段停手了）：明确催一次再给 5 秒。
-        // `_awaitProduced` 里每拍都在报位置，但服务端要下一个 pump 周期才动。
-        _nudgeTranscode(t);
-        produced = await _awaitProduced(t, budget: const Duration(seconds: 5));
+      // 预算按「差多远」给：同机转码实测 ~3.5 倍速（2s 一片、约 0.6s 出一片），
+      // 差 30 秒大约 9 秒就追上。原来给 14/20 秒太久 —— 那十几秒里画面停在
+      // 已转出末尾不动，用户看到的就是「卡住」（2026-11-17 反馈）。
+      // 现在：最多等 10 秒，而且**等待期间右上角有「正在转码到 xx:xx」**，
+      // 不再是无声冻屏；等不到就按「点了时间条」重建会话。
+      final budget = clampWaitBudget(over);
+      bool produced;
+      _markWaitingTarget(t);
+      try {
+        produced = await _awaitProduced(t, budget: budget);
+        // 等的这几秒里用户又按了 → 直接作废，别把旧目标盖到新目标上
         if (!mounted || gen != _seekGen) return;
+        if (!produced) {
+          // 会话可能刚才还是 paused（转完一段停手了）：明确催一次再给 2 秒。
+          // `_awaitProduced` 里每拍都在报位置，但服务端要下一个 pump 周期才动。
+          _nudgeTranscode(t);
+          produced = await _awaitProduced(t, budget: const Duration(seconds: 2));
+          if (!mounted || gen != _seekGen) return;
+        }
+      } finally {
+        _clearWaitingTarget(t);
       }
       if (produced) {
         ClientLogger.instance.info(
@@ -2319,9 +2389,22 @@ class _PlayerPageState extends State<PlayerPage> {
       }
       ClientLogger.instance.info(
         '等转码追上超时 ${t.inMilliseconds}ms'
-        '（over=${over.inMilliseconds}ms produced=${_loadedEnd.inMilliseconds}ms）',
+        '（over=${over.inMilliseconds}ms produced=${_loadedEnd.inMilliseconds}ms）'
+        '${soft ? ' → 本次按键跳转作废，保持当前播放' : ''}',
         route: 'player.seek/${_sessionId ?? 'direct'}',
       );
+      // 键盘 / 遥控器的 ±N 秒：等不到就**别跳了**。往下走去重建会话要重新
+      // 等首片（同机 1~10s、AV1 更久），用户看到的反而更像「卡死」。
+      // 保持原位置继续播 + 一条提示，是「怎么都不能卡住」最便宜的兑现。
+      if (soft) {
+        _lastSeekTarget = _absPosition(_player.state.position);
+        final messenger = ScaffoldMessenger.maybeOf(context);
+        if (messenger != null && mounted) {
+          NasSnack.showOn(messenger, tr('player.seekNotReady'));
+        }
+        if (_wantPlay) unawaited(_ensurePlayingAfterOpen());
+        return;
+      }
     }
     if (!mounted || gen != _seekGen) return;
     if (over > Duration.zero) {
@@ -2357,75 +2440,147 @@ class _PlayerPageState extends State<PlayerPage> {
   ///
   /// [target] 只用于日志（`_jumpTo` 用的位置从播放器实时读，不用它）。
   void _armStallWatch({Duration? target}) {
-    _seekWatchdog?.cancel();
-    final gen = ++_seekWatchdogGen;
+    if (target != null) _stallTarget = target;
     _stall.reset(_player.state.position);
-    _seekWatchdog = Timer.periodic(const Duration(seconds: 1), (timer) {
-      if (!mounted || gen != _seekWatchdogGen) {
-        timer.cancel();
-        return;
-      }
-      // 换档 / 新一轮跳转 / 用户按了暂停：都轮不到这个看门狗管
-      if (_jumping || _switching || !_wantPlay || _error != null) {
-        timer.cancel();
-        return;
-      }
-      if (_player.state.completed) {
-        timer.cancel();
-        return;
-      }
-      final action = _stall.tick(_player.state.position);
-      if (action == PlayStallAction.none) return;
-      final at = _absPosition(_player.state.position);
-      final detail =
-          'pos=${_player.state.position.inMilliseconds}ms '
-          'at=${at.inMilliseconds}ms '
-          'buffered=${_bufferedEndAbs().inMilliseconds}ms '
+    // 常驻：已经在跑就别重建（重建会让判定基准跟着漂）
+    if (_stallTicker?.isActive ?? false) return;
+    _stallTicker = Timer.periodic(const Duration(seconds: 1), _stallTick);
+  }
+
+  /// 这一拍该不该判；返回跳过原因（null = 该判）。
+  ///
+  /// 「用户自己造成的画面不动」（暂停 / 播完 / 首帧准备）不记日志；
+  /// 换档 / 跳转 / 等转码 / 错误页这几种**必须留痕** —— 连续的跳过之后如果
+  /// 画面还是不动，日志里得能区分「看门狗在跳过」和「看门狗已经死了」，
+  /// 这正是 `c16e2aeb` 那次查不出原因的地方（116 秒零日志）。
+  String? _stallSkipWhyNow() {
+    // 还没选好源 / 首帧还没出来：没有「在播」这回事，别去催转码
+    if (_url.isEmpty) return '首帧准备';
+    if (_preparing) return '首帧准备';
+    if (_switching) return '换档中';
+    if (_jumping) return '跳转中';
+    if (_waitingTarget != null) return '等转码追上';
+    if (!_wantPlay) return '用户暂停';
+    if (_error != null) return '错误页';
+    if (_player.state.completed) return '已播完';
+    return null;
+  }
+
+  void _logStallSkip(String why) {
+    if (stallSkipQuiet.contains(why)) return;
+    final now = DateTime.now();
+    // 同一个原因 20 秒内只记一条：换档 / 等片本来就会连续跳过好几拍
+    if (_stallSkipWhy == why &&
+        now.difference(_stallSkipLoggedAt) < const Duration(seconds: 20)) {
+      return;
+    }
+    _stallSkipWhy = why;
+    _stallSkipLoggedAt = now;
+    ClientLogger.instance.info(
+      '看门狗跳过（$why）',
+      route: 'player.stall/${_sessionId ?? 'direct'}',
+      detail: 'pos=${_player.state.position.inMilliseconds}ms '
+          'target=${_stallTarget?.inMilliseconds ?? '-'}ms '
           'produced=${_loadedEnd.inMilliseconds}ms '
-          'buffering=${_player.state.buffering} '
-          'want=${target?.inMilliseconds ?? '-'}ms';
-      if (action == PlayStallAction.nudge) {
-        ClientLogger.instance.warn(
-          '播放停滞 ${_stall.limitSeconds}s 画面不动 → 续转 + 重新 seek（$detail）',
-          route: 'player.stall/${_sessionId ?? 'direct'}',
-        );
-        unawaited(_stallRecover(at));
-        return;
-      }
-      // 二级补救（重建会话）只在这条前提成立时做：**服务端早就把内容转到当前位置
-      // 之后了**，也就是「片在磁盘上、播放器却不动」。反过来说，如果转码还落在
-      // 后面（外网慢 / 队列排队），重建只会把 ffmpeg 重新起一遍、更慢 ——
-      // 那种情况退回一级补救（续转 + 重 seek），等转码追上来。
-      if (_loadedEnd < at + const Duration(seconds: 10)) {
-        ClientLogger.instance.warn(
-          '播放停滞 ${_stall.limitSeconds * 2}s，但转码还在后面 → 继续等（$detail）',
-          route: 'player.stall/${_sessionId ?? 'direct'}',
-        );
-        unawaited(_stallRecover(at));
-        return;
-      }
-      // 防「卡 → 重建 → 又卡」的死循环：那种情况每 16 秒起一次 ffmpeg，
-      // 比冻住还糟（CPU 打满、别的会话全排队）。5 分钟内最多重开 5 次，
-      // 超了就收手，只留日志 —— 这时候需要的是换画质 / 换编码，不是再重开。
-      final now = DateTime.now();
-      _stallRebuiltAt.removeWhere(
-        (t) => now.difference(t) > const Duration(minutes: 5),
-      );
+          'buffering=${_player.state.buffering}',
+    );
+  }
+
+  /// 一秒一拍。**唯一**允许取消它的地方是 dispose —— 换流、跳转、报错都不许。
+  void _stallTick(Timer timer) {
+    if (!mounted) {
       timer.cancel();
-      if (_stallRebuiltAt.length >= 5) {
-        ClientLogger.instance.error(
-          '反复卡住（5 分钟内已重建 5 次）→ 停止自动重建（$detail）',
-          route: 'player.stall/${_sessionId ?? 'direct'}',
-        );
+      return;
+    }
+    // 跳转卡在 [_ensureTranscode] / open 上不返回时 `_jumping` 会永远是 true，
+    // 看门狗每拍都被跳过 —— 那也是一种「卡住」。15 秒还没复位就硬掰回来。
+    final since = _jumpingSince;
+    if (_jumping &&
+        since != null &&
+        DateTime.now().difference(since) > const Duration(seconds: 15)) {
+      final lastReset = _jumpResetAt;
+      if (lastReset != null &&
+          DateTime.now().difference(lastReset) < const Duration(minutes: 1)) {
+        // 刚硬掰过一次又卡住：别再掐 ffmpeg 了，留着日志等人看
+        _logStallSkip('跳转卡死（已强制复位过）');
         return;
       }
-      _stallRebuiltAt.add(now);
+      _jumpResetAt = DateTime.now();
+      _jumpingSince = null;
+      _pendingJump = null;
+      ClientLogger.instance.error(
+        '跳转卡住 15s 未复位 → 强制复位并重跳',
+        route: 'player.stall/${_sessionId ?? 'direct'}',
+        detail: 'target=${_lastSeekTarget.inMilliseconds}ms '
+            'pos=${_player.state.position.inMilliseconds}ms',
+      );
+      if (mounted) setState(() => _jumping = false);
+      _stall.reset(_player.state.position);
+      unawaited(_jumpTo(_lastSeekTarget));
+      return;
+    }
+    final why = _stallSkipWhyNow();
+    if (why != null) {
+      _logStallSkip(why);
+      // 暂停 / 播完期间画面本来就不动：把基准跟着挪走，
+      // 免得恢复播放后第一拍就被算成「这一拍没涨」
+      _stall.reset(_player.state.position);
+      return;
+    }
+    _stallSkipWhy = null;
+    final action = _stall.tick(_player.state.position);
+    if (action == PlayStallAction.none) return;
+    final at = _absPosition(_player.state.position);
+    final detail =
+        'pos=${_player.state.position.inMilliseconds}ms '
+        'at=${at.inMilliseconds}ms '
+        'buffered=${_bufferedEndAbs().inMilliseconds}ms '
+        'produced=${_loadedEnd.inMilliseconds}ms '
+        'buffering=${_player.state.buffering} '
+        'want=${_stallTarget?.inMilliseconds ?? '-'}ms';
+    if (action == PlayStallAction.nudge) {
       ClientLogger.instance.warn(
-        '播放停滞 ${_stall.limitSeconds * 2}s 仍未恢复 → 重建会话 target=${at.inMilliseconds}ms（$detail）',
+        '播放停滞 ${_stall.limitSeconds}s 画面不动 → 续转 + 重新 seek（$detail）',
         route: 'player.stall/${_sessionId ?? 'direct'}',
       );
-      unawaited(_jumpTo(at));
-    });
+      unawaited(_stallRecover(at));
+      return;
+    }
+    // 二级补救（重建会话）只在这条前提成立时做：**服务端早就把内容转到当前位置
+    // 之后了**，也就是「片在磁盘上、播放器却不动」。反过来说，如果转码还落在
+    // 后面（外网慢 / 队列排队），重建只会把 ffmpeg 重新起一遍、更慢 ——
+    // 那种情况退回一级补救（续转 + 重 seek），等转码追上来。
+    if (_loadedEnd < at + const Duration(seconds: 10)) {
+      ClientLogger.instance.warn(
+        '播放停滞 ${_stall.limitSeconds * 2}s，但转码还在后面 → 继续等（$detail）',
+        route: 'player.stall/${_sessionId ?? 'direct'}',
+      );
+      unawaited(_stallRecover(at));
+      return;
+    }
+    // 防「卡 → 重建 → 又卡」的死循环：那种情况每 16 秒起一次 ffmpeg，
+    // 比冻住还糟（CPU 打满、别的会话全排队）。5 分钟内最多重开 5 次，
+    // 超了就收手，只留日志 —— 这时候需要的是换画质 / 换编码，不是再重开。
+    final now = DateTime.now();
+    _stallRebuiltAt.removeWhere(
+      (t) => now.difference(t) > const Duration(minutes: 5),
+    );
+    if (_stallRebuiltAt.length >= 5) {
+      ClientLogger.instance.error(
+        '反复卡住（5 分钟内已重建 5 次）→ 停止自动重建（$detail）',
+        route: 'player.stall/${_sessionId ?? 'direct'}',
+      );
+      // 收手之后别每拍重复报错：把基准挪到当前位置，等它自己再攒 8 拍
+      _stall.reset(_player.state.position);
+      return;
+    }
+    _stallRebuiltAt.add(now);
+    ClientLogger.instance.warn(
+      '播放停滞 ${_stall.limitSeconds * 2}s 仍未恢复 → 重建会话 target=${at.inMilliseconds}ms（$detail）',
+      route: 'player.stall/${_sessionId ?? 'direct'}',
+    );
+    _stall.reset(_player.state.position);
+    unawaited(_jumpTo(at));
   }
 
   /// 1 级补救：让服务端把这个位置往后续转，同时重新 seek 一次。
@@ -2532,6 +2687,7 @@ class _PlayerPageState extends State<PlayerPage> {
     }
     final messenger = ScaffoldMessenger.maybeOf(context);
     setState(() => _jumping = true);
+    _jumpingSince = DateTime.now();
     try {
       final u = await _ensureTranscode(
         _preset,
@@ -2550,6 +2706,7 @@ class _PlayerPageState extends State<PlayerPage> {
         NasSnack.showOn(messenger, tr('player.seekFailed', {'error': '$e'}));
       }
     } finally {
+      _jumpingSince = null;
       if (mounted) setState(() => _jumping = false);
       final next = _pendingJump;
       _pendingJump = null;
@@ -3839,7 +3996,16 @@ class _PlayerPageState extends State<PlayerPage> {
         ),
       );
     }
-    if (_switching || _jumping) {
+    if (_switching || _jumping || _waitingTarget != null) {
+      final String label;
+      if (_jumping) {
+        label = tr('player.seekingTarget');
+      } else if (_switching) {
+        label = tr('player.switching');
+      } else {
+        // 目标还没转出来：明确告诉用户「在转，别走」，而不是让画面静静冻着
+        label = tr('player.waitingTarget', {'time': _fmt(_waitingTarget!)});
+      }
       return Positioned(
         top: 16,
         right: 16,
@@ -3856,10 +4022,7 @@ class _PlayerPageState extends State<PlayerPage> {
                   child: CircularProgressIndicator(strokeWidth: 2),
                 ),
                 SizedBox(width: 8),
-                Text(
-                  tr(_jumping ? 'player.seekingTarget' : 'player.switching'),
-                  style: const TextStyle(color: Colors.white),
-                ),
+                Text(label, style: const TextStyle(color: Colors.white)),
               ],
             ),
           ),
