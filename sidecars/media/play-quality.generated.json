@@ -1,6 +1,6 @@
 {
   "defaultPreset": "1080p_3m",
-  "defaultCodec": "h264",
+  "defaultCodec": "h265",
   "audioBitrateKbps": 128,
   "presets": [
     {

@@ -1,3 +1,4 @@
+import 'app_settings.dart';
 import 'play_quality.dart';
 import 'settings_store.dart';
 
@@ -40,8 +41,17 @@ class PlayPreferences {
     final saved =
         SettingsStore.instance.getString(_codecKey) ??
         SettingsStore.instance.getString('video.codec');
-    return playCodecOf(saved ?? '')?.key ?? defaultPlayCodec;
+    return playCodecOf(saved ?? '')?.key ?? defaultCodecForPlatform;
   }
+
+  /// 没存过编码时用的默认值：**除 TV 端外一律 H.265**。
+  ///
+  /// 为什么 TV 例外：遥控器那套盒子 / 老电视的解码器参差不齐，HEVC 放不出来
+  /// 就是黑屏有声，用户没法自己救；桌面 / 手机 / Web 的 H.265 都有硬解兜底
+  /// （Web 端还能用 `codecPlayable()` 探到浏览器不支持时自动回落 H.264）。
+  /// 1080P + H.265 = 1.8Mbps，同画质比 H.264 省 40% 流量。
+  static String get defaultCodecForPlatform =>
+      AppSettings.instance.tvMode.value ? 'h264' : defaultPlayCodec;
 
   static bool get audioNormalize =>
       SettingsStore.instance.getBool(_normalizeKey) == true;

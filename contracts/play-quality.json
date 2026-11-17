@@ -1,7 +1,7 @@
 {
   "version": 2,
   "defaultPreset": "1080p_3m",
-  "defaultCodec": "h264",
+  "defaultCodec": "h265",
   "presets": [
     {
       "key": "original",

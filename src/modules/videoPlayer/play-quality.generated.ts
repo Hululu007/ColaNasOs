@@ -30,7 +30,7 @@ export const PLAY_CODECS = [
 export type PlayCodec = (typeof PLAY_CODECS)[number]['key'];
 
 export const DEFAULT_PLAY_PRESET: PlayPreset = '1080p_3m';
-export const DEFAULT_PLAY_CODEC: PlayCodec = 'h264';
+export const DEFAULT_PLAY_CODEC: PlayCodec = 'h265';
 export const PLAY_AUDIO_BITRATE_KBPS = 128;
 
 export function isPlayPreset(v: unknown): v is PlayPreset {

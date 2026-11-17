@@ -265,7 +265,7 @@ const List<PlayCodec> playCodecs = <PlayCodec>[
 ];
 
 const String defaultPlayPreset = '1080p_3m';
-const String defaultPlayCodec = 'h264';
+const String defaultPlayCodec = 'h265';
 const int playAudioBitrateKbps = 128;
 
 /// kbps → 紧凑文本：900 → `0.9`、1400 → `1.4`、7000 → `7`、15000 → `15`。
