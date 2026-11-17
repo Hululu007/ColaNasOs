@@ -12,6 +12,7 @@ import '../../core/session.dart';
 import '../../core/settings_store.dart';
 import '../photo/photo_download.dart';
 import 'video_card.dart';
+import 'video_collection_picker.dart';
 import 'video_item_actions.dart';
 import 'video_media_viewer_page.dart';
 
@@ -71,6 +72,12 @@ class _VideoImageLibraryPageState extends State<VideoImageLibraryPage> {
   int _reqSeq = 0;
   bool _refreshing = false;
 
+  /// 多选：全站统一由 `NasSelectionController` 承载（进入 / 切换 / 全选 / 退出），
+  /// 页面不再自己维护 `bool + Set`。图片库 / 混合库与普通影视列表共用一套操作条。
+  final NasSelectionController _selection = NasSelectionController();
+  bool get _selectionMode => _selection.active;
+  Set<String> get _selected => _selection.ids;
+
   String get _cacheKey => <String>[
         widget.libraryId,
         _folderMode ? 'folder' : 'all',
@@ -94,12 +101,20 @@ class _VideoImageLibraryPageState extends State<VideoImageLibraryPage> {
     _sortBy = SettingsStore.instance.getString(_k('sortBy')) ?? 'name';
     _sortOrder = SettingsStore.instance.getString(_k('sortOrder')) ?? 'asc';
     _letter = SettingsStore.instance.getString(_k('letter')) ?? '';
+    _selection.addListener(_onSelectionChanged);
     _scroll.addListener(_onScroll);
     _load(reset: true);
   }
 
+  void _onSelectionChanged() {
+    if (mounted) setState(() {});
+  }
+
   @override
   void dispose() {
+    _selection
+      ..removeListener(_onSelectionChanged)
+      ..dispose();
     _debounce?.cancel();
     _searchCtrl.dispose();
     _scroll.removeListener(_onScroll);
@@ -188,6 +203,11 @@ class _VideoImageLibraryPageState extends State<VideoImageLibraryPage> {
         _loading = false;
         _loadingMore = false;
         _refreshing = false;
+        // 紧接着就要拉文件夹聚合（最重的一条）：先把 loading 立起来，
+        // 否则中间会闪一帧「这里什么都没有」。
+        if (!more && snap == null && _folderMode && !_isSearching) {
+          _foldersLoading = true;
+        }
       });
       _saveCache(key);
       // 命中缓存时 folders 也是缓存的，不必再发那条最重的整库聚合；
@@ -381,6 +401,149 @@ class _VideoImageLibraryPageState extends State<VideoImageLibraryPage> {
     }
   }
 
+  /// 已选中的条目（按当前列表顺序，避免 Set 顺序随机导致下载顺序乱跳）
+  List<VideoItem> get _pickedItems =>
+      _items.where((e) => _selected.contains(e.id)).toList();
+
+  /// 已选里的视频 id：标记已看 / 加入合集只对影片有意义，图片直接排除
+  List<String> get _pickedVideoIds =>
+      _pickedItems.where((e) => e.mediaType != 'image').map((e) => e.id).toList();
+
+  String _downloadUrlOf(VideoItem item) =>
+      '${ApiSession.instance.baseUrl}/api/v1/files/download?path=${Uri.encodeComponent(item.path)}';
+
+  String _nameOf(VideoItem item) =>
+      item.fileTitle.isEmpty ? item.title : item.fileTitle;
+
+  /// 批量下载：桌面端只弹一次「选文件夹」，Web / 移动端退回到复制全部链接。
+  Future<void> _downloadSelected() async {
+    final items = _pickedItems;
+    if (items.isEmpty) return;
+    final urls = items.map(_downloadUrlOf).toList();
+    if (!PhotoDownload.folderBatch) {
+      await Clipboard.setData(ClipboardData(text: urls.join('\n')));
+      if (mounted) NasSnack.show(context, tr('video.media.copyLink'));
+      return;
+    }
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final res = await PhotoDownload.saveAll(
+        files: [
+          for (var i = 0; i < items.length; i++)
+            (url: urls[i], name: _nameOf(items[i])),
+        ],
+        headers: videoArtHeaders,
+      );
+      if (res == null || !mounted) return;
+      NasSnack.showOn(
+        messenger,
+        res.failed == 0
+            ? tr('video.media.downloadDone', {'count': '${res.saved}'})
+            : tr('video.media.downloadPartial', {
+                'saved': '${res.saved}',
+                'failed': '${res.failed}',
+              }),
+      );
+    } catch (e) {
+      if (mounted) NasSnack.show(context, '$e');
+    }
+  }
+
+  Future<void> _copySelectedPaths() async {
+    final paths = _pickedItems.map((e) => e.path).toList();
+    if (paths.isEmpty) return;
+    await Clipboard.setData(ClipboardData(text: paths.join('\n')));
+    if (mounted) NasSnack.show(context, tr('common.copied'));
+  }
+
+  Future<void> _markSelectedWatched(bool watched) async {
+    final ids = _pickedVideoIds;
+    if (ids.isEmpty) return;
+    try {
+      await ApiSession.instance.client.videoWatchMark(
+        body: VideoWatchBody(ids: ids, watched: watched),
+      );
+      if (!mounted) return;
+      _selection.exit();
+      await _load(reset: true);
+    } catch (e) {
+      if (mounted) NasSnack.show(context, '$e');
+    }
+  }
+
+  /// 批量删除：确认框带条数，走与单个删除同一条接口（`videoItemsDelete` 本就支持多 id）
+  Future<void> _deleteSelected() async {
+    final items = _pickedItems;
+    if (items.isEmpty) return;
+    final toTrash = await confirmVideoDelete(context, count: items.length);
+    if (toTrash == null || !mounted) return;
+    final ok = await deleteVideoItemsNow(
+      context,
+      items.map((e) => e.id).toList(),
+      toTrash: toTrash,
+    );
+    if (!mounted) return;
+    if (ok) {
+      _selection.exit();
+      await _load(reset: true);
+    }
+  }
+
+  Widget _selectionBar(BuildContext context) {
+    final ids = _items.map((e) => e.id);
+    final empty = _selection.isEmpty;
+    final hasVideo = _pickedVideoIds.isNotEmpty;
+    return NasSelectionBar(
+      title: tr('video.list.selected', {'count': '${_selection.count}'}),
+      allSelected: _selection.allSelected(ids),
+      onToggleAll: () => _selection.toggleAll(ids),
+      onClose: _selection.exit,
+      actions: [
+        NasSelectionAction(
+          label: tr('video.media.download'),
+          icon: Icons.download_outlined,
+          enabled: !empty,
+          onPressed: _downloadSelected,
+        ),
+        // 图片没有「已看」也没有合集，相关动作只在选中里有影片时出现
+        if (hasVideo) ...[
+          NasSelectionAction(
+            label: tr('video.action.markWatched'),
+            icon: Icons.done_all,
+            enabled: !empty,
+            onPressed: () => _markSelectedWatched(true),
+          ),
+          NasSelectionAction(
+            label: tr('video.action.markUnwatched'),
+            icon: Icons.remove_done,
+            enabled: !empty,
+            onPressed: () => _markSelectedWatched(false),
+          ),
+          NasSelectionAction(
+            label: tr('video.collection.addTo'),
+            icon: Icons.playlist_add,
+            enabled: !empty,
+            onPressed: () =>
+                showAddToCollectionDialog(context, itemIds: _pickedVideoIds),
+          ),
+        ],
+        NasSelectionAction(
+          label: tr('video.action.copyPath'),
+          icon: Icons.copy_all_outlined,
+          enabled: !empty,
+          onPressed: _copySelectedPaths,
+        ),
+        NasSelectionAction(
+          label: tr('common.delete'),
+          icon: Icons.delete_outline,
+          danger: true,
+          enabled: !empty,
+          onPressed: _deleteSelected,
+        ),
+      ],
+    );
+  }
+
   Future<void> _showItemMenu(VideoItem item, int index, Offset pos) async {
     final v = await showMenu<String>(
       context: context,
@@ -409,6 +572,11 @@ class _VideoImageLibraryPageState extends State<VideoImageLibraryPage> {
             child: Text(tr('video.action.scrape')),
           ),
         ],
+        if (!_selectionMode)
+          PopupMenuItem(
+            value: 'select',
+            child: Text(tr('video.list.multiSelect')),
+          ),
         PopupMenuItem(
           value: VideoItemAction.copyPath,
           child: Text(tr('video.action.copyPath')),
@@ -427,6 +595,11 @@ class _VideoImageLibraryPageState extends State<VideoImageLibraryPage> {
     }
     if (v == 'download') {
       await _downloadItem(item);
+      return;
+    }
+    if (v == 'select') {
+      // 长按 / 右键某一项直接进多选，并把这一项选上
+      _selection.enter(initialId: item.id);
       return;
     }
     // 删除 / 刮削 / 已看 / 复制路径与其它列表共用同一套动作与确认框
@@ -469,6 +642,7 @@ class _VideoImageLibraryPageState extends State<VideoImageLibraryPage> {
     final body = Column(
       children: [
         _toolbar(context),
+        if (_selectionMode) _selectionBar(context),
         if (_refreshing)
           const SizedBox(
             height: 2,
@@ -535,6 +709,11 @@ class _VideoImageLibraryPageState extends State<VideoImageLibraryPage> {
                   _folderMode ? Icons.grid_view_rounded : Icons.folder_rounded,
                   color: _folderMode ? null : scheme.primary,
                 ),
+              ),
+              NasSelectionToggleButton(
+                active: _selectionMode,
+                onPressed: () =>
+                    _selectionMode ? _selection.exit() : _selection.enter(),
               ),
               NasRefreshButton(
                 onPressed: () => _load(reset: true, force: true),
@@ -697,8 +876,15 @@ class _VideoImageLibraryPageState extends State<VideoImageLibraryPage> {
   }
 
   Widget _content(BuildContext context) {
-    final hasFolders = _folderMode && !_isSearching && _folders.isNotEmpty;
+    // 选择态下隐藏文件夹区：文件夹不可勾选，留着只会让「全选」和点击行为都变含糊
+    final hasFolders = _folderMode && !_isSearching && !_selectionMode &&
+        _folders.isNotEmpty;
     if (_items.isEmpty && !hasFolders) {
+      // 文件夹聚合还在跑时别先甩一个「这里什么都没有」：
+      // 混合库的整库聚合要几百毫秒，用户会看到空页闪一下、文件夹再突然冒出来。
+      if (_folderMode && !_isSearching && _foldersLoading) {
+        return const Center(child: NasLoading());
+      }
       return NasEmptyState(
         title: tr('video.media.empty'),
         icon: Icons.photo_library_outlined,
@@ -1022,10 +1208,22 @@ class _VideoImageLibraryPageState extends State<VideoImageLibraryPage> {
         // 视频条目同样要缩略图：不带 size 就是原图直出（SMB 上一张 1~2MB）
         : videoPosterUrl(item, size: (width * 2).round());
     final isImage = item.mediaType == 'image';
+    final selected = _selected.contains(item.id);
     final cell = InkWell(
       borderRadius: BorderRadius.circular(10),
-      onTap: () => _openItem(item, index),
+      onTap: () {
+        // 选择态下点卡片 = 勾选 / 取消勾选，不再打开
+        if (_selectionMode) {
+          _selection.toggle(item.id);
+          return;
+        }
+        _openItem(item, index);
+      },
       onLongPress: () {
+        if (_selectionMode) {
+          _selection.toggle(item.id);
+          return;
+        }
         final box = context.findRenderObject() as RenderBox?;
         final pos = box == null
             ? Offset.zero
@@ -1050,6 +1248,14 @@ class _VideoImageLibraryPageState extends State<VideoImageLibraryPage> {
                     icon: isImage ? Icons.image_outlined : Icons.movie_outlined,
                     cacheWidth: (width * 2).round(),
                   ),
+                  if (_selectionMode)
+                    Positioned(
+                      top: 6,
+                      left: 6,
+                      child: IgnorePointer(
+                        child: NasSelectChip(selected: selected),
+                      ),
+                    ),
                   if (!isImage)
                     Positioned(
                       left: 6,
@@ -1096,7 +1302,13 @@ class _VideoImageLibraryPageState extends State<VideoImageLibraryPage> {
       ),
     );
     return GestureDetector(
-      onSecondaryTapDown: (d) => _showItemMenu(item, index, d.globalPosition),
+      onSecondaryTapDown: (d) {
+        if (_selectionMode) {
+          _selection.toggle(item.id);
+          return;
+        }
+        _showItemMenu(item, index, d.globalPosition);
+      },
       child: cell,
     );
   }

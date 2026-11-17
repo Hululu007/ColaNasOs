@@ -2762,6 +2762,8 @@ class I18nKeys {
   static const videoMediaCopyLink = 'video.media.copyLink';
   static const videoMediaDelete = 'video.media.delete';
   static const videoMediaDownload = 'video.media.download';
+  static const videoMediaDownloadDone = 'video.media.downloadDone';
+  static const videoMediaDownloadPartial = 'video.media.downloadPartial';
   static const videoMediaEmpty = 'video.media.empty';
   static const videoMediaFolder = 'video.media.folder';
   static const videoMediaFolderCount = 'video.media.folderCount';
@@ -2967,4 +2969,4 @@ class I18nKeys {
 }
 
 /// 契约键总数（生成时确定），供完整性自检使用。
-const int i18nKeyCount = 2918;
+const int i18nKeyCount = 2920;

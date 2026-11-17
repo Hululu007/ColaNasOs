@@ -2720,6 +2720,8 @@
     "video.media.copyLink": "Copy download link",
     "video.media.delete": "Delete",
     "video.media.download": "Download",
+    "video.media.downloadDone": "Downloaded {count} files",
+    "video.media.downloadPartial": "{saved} downloaded, {failed} failed",
     "video.media.empty": "No images or videos in this folder",
     "video.media.folder": "Folder",
     "video.media.folderCount": "{count} items",

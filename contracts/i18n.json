@@ -3609,6 +3609,13 @@
     "video.media.copyLink": {},
     "video.media.delete": {},
     "video.media.download": {},
+    "video.media.downloadDone": {
+      "count": {}
+    },
+    "video.media.downloadPartial": {
+      "failed": {},
+      "saved": {}
+    },
     "video.media.empty": {},
     "video.media.folder": {},
     "video.media.folderCount": {

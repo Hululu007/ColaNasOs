@@ -2820,6 +2820,8 @@
     "video.media.copyLink": "复制下载链接",
     "video.media.delete": "删除",
     "video.media.download": "下载",
+    "video.media.downloadDone": "已下载 {count} 个文件",
+    "video.media.downloadPartial": "已下载 {saved} 个，{failed} 个失败",
     "video.media.empty": "这个目录还没有图片或视频",
     "video.media.folder": "文件夹",
     "video.media.folderCount": "{count} 项",
