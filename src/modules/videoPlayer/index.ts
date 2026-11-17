@@ -756,6 +756,45 @@ async function supersedeOlder(k: KernelApi, itemId: string): Promise<Handoff | n
   return handoff;
 }
 
+/**
+ * 用户换了**另一部片**时，把上一部片还在跑的转码收掉。
+ *
+ * `supersedeOlder` 只管同一部片的重复会话，所以「看完 A 直接点 B」时 A 的
+ * ffmpeg 会继续跑满一整段（leadMinutes = 3 分钟提前量）。而 sidecar 的
+ * GPU 零拷贝链是全局串行的（`withGpuGate`），A 不停，B 的 ffmpeg 就一直
+ * 在闸外排队 —— 用户看到的是「正在转码，准备起播…」等 30 秒直到超时。
+ * 2026-11-17 Web 端实测：会话 `1e5dbb09` 首片 30 秒 `transcoded=0`，
+ * 同一时间 `a51f4802` 正在转，两者在闸上互等。
+ *
+ * 判据用「最近 10 秒内还有没有客户端 pos 轮询」：有 = 那个播放器还开着
+ * （两台设备同时看不同的片），不动它；没有 = 用户早走了，直接收掉。
+ */
+async function reclaimGpuFromStaleItems(
+  k: KernelApi,
+  keepItemId: string,
+): Promise<number> {
+  const rows = (
+    await sql<{ id: string; item_id: string }>`
+      select id, item_id from player_sessions
+       where status = 'running' and item_id <> ${keepItemId}
+    `.execute(k.db)
+  ).rows;
+  const nowMs = Date.now();
+  let killed = 0;
+  for (const row of rows) {
+    const poll = lastPoll.get(row.id);
+    if (poll && nowMs - poll.at <= 10_000) continue;
+    lastPoll.delete(row.id);
+    await killSession(k, row.id, sessionOutDirOf(k, row.id));
+    killed += 1;
+    k.log.info(
+      { session: row.id, item: row.item_id },
+      '[player] 收掉上一部片的转码（腾出 GPU 闸）',
+    );
+  }
+  return killed;
+}
+
 async function itemPath(k: KernelApi, itemId: string): Promise<string | null> {
   // video_items.rel_path 已经包含库目录（相对 files 根），不要再拼 root_path
   const rows = (
@@ -1103,6 +1142,12 @@ export const videoPlayer: ServerModule = {
         // 换档 / 重试：同一部片还在排队或正在转的旧会话先取消，
         // 否则新会话只能排在它后面（4K 转不动的片实测能把队列堵 50 分钟）。
         const handoff = await supersedeOlder(k, body.id as string);
+        // 换的是**另一部片**时，上一部片的转码也得收掉：sidecar 的 GPU 零拷贝链
+        // 是全局串行的（withGpuGate），它不停，新会话的 ffmpeg 就一直在闸外排队。
+        // 等它做完再建会话，首片就不用排队了（这一步只是杀进程 + 删目录，几毫秒）。
+        await reclaimGpuFromStaleItems(k, body.id as string).catch((err) =>
+          k.log.warn({ err: String(err) }, 'player reclaim failed'),
+        );
         await sql`
           insert into player_sessions
             (id, item_id, preset, codec, subtitle, audio_normalize, audio_downmix,
