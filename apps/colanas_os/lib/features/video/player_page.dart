@@ -306,6 +306,21 @@ class _PlayerPageState extends State<PlayerPage> {
   /// 看门狗每次「重建会话」的时间戳（见 [_armStallWatch] 末尾的防抖）。
   final List<DateTime> _stallRebuiltAt = [];
 
+  /// 连按 → / ← 的合并计时器（260ms 内的连按只落一次，见 [_seekBy]）。
+  Timer? _seekByTimer;
+  Duration _seekByFrom = Duration.zero;
+  Duration _seekByTarget = Duration.zero;
+
+  /// 新建跳转会话后、新流真正 open 之前，`_startMs` 已经是新值，而播放器
+  /// 还停在**上一条流**上（首片要等好几秒）。这段时间不能拿 position 去算
+  /// 绝对位置 —— 两者一加就是翻倍（2026-11-17：目标 338040 = 149020 + 189020）。
+  /// 非空表示「新会话已建好但还没轮到它」，值为新会话起点。
+  Duration? _pendingStartMs;
+
+  /// 最近一次 `_seekTo` 的目标（片源绝对）。[_pendingStartMs] 非空时拿它当
+  /// 快进 / 快退的基准 —— 此时 position 属于旧流，不可信。
+  Duration _lastSeekTarget = Duration.zero;
+
   /// 第几次 `open()`。同一个 open 只允许「首片没到就补开」一次 ——
   /// 没有这个计数的话，失败→重开→再失败会把画面刷成闪烁（早期线上问题）。
   int _openGen = 0;
@@ -713,6 +728,7 @@ class _PlayerPageState extends State<PlayerPage> {
     _seekHintTimer?.cancel();
     _noticeTimer?.cancel();
     _seekWatchdog?.cancel();
+    _seekByTimer?.cancel();
     _tryOriginalTimer?.cancel();
     for (final sub in _logSubs) {
       sub.cancel();
@@ -760,6 +776,8 @@ class _PlayerPageState extends State<PlayerPage> {
       // `play: want` 显式给意图：media_kit 的默认值是 true，换档时如果用户
       // 本来是暂停状态（在挑画质），默认值会莫名其妙自己播起来。
       await _player.open(Media(u), play: want);
+      // open 返回后播放器手里的位置才属于这条新流，[_absPosition] 可以正常算了
+      _pendingStartMs = null;
       ClientLogger.instance.info(
         'open 完成 ${openSw.elapsedMilliseconds}ms',
         route: 'player.open/${_sessionId ?? 'direct'}',
@@ -811,6 +829,9 @@ class _PlayerPageState extends State<PlayerPage> {
         if (!mounted) return;
         return _openUrl(u, seekTo: seekTo, retries: retries - 1, autoPlay: want);
       }
+      // 彻底放弃了这条流：位置又回到「不可信」状态，别让 [_absPosition] 继续
+      // 按新会话起点报位置（进度条会显示一个根本没播到的点）。
+      _pendingStartMs = null;
       if (mounted) setState(() => _error = e.toString());
       _renewIfTokenExpired(e.toString());
     }
@@ -1187,6 +1208,9 @@ class _PlayerPageState extends State<PlayerPage> {
     _leadMs = PlayPreferences.leadMinutes * 60000;
     // 起转偏移以服务端回显为准（它可能夹取过），播放器时间轴 0 = 这个位置
     _startMs = created.startedMs ?? startMs;
+    // 新流还没 open：从这一刻到 `_openUrl` 的 `player.open` 返回之前，播放器
+    // 位置属于**上一条流**，不能再加 `_startMs`（会翻倍）。见 [_absPosition]。
+    _pendingStartMs = _startOffset;
     // 实际编码换会话后必须清空，否则换了档还显示上一轮的结果
     _actualCodec = null;
     // 后台只盯失败：转码挂了要明确说出来，别让用户对着无限缓冲猜。
@@ -2014,14 +2038,51 @@ class _PlayerPageState extends State<PlayerPage> {
     }
   }
 
-  Future<void> _seekBy(int seconds) async {
-    final p = _absPosition(_player.state.position);
-    await _seekTo(p + Duration(seconds: seconds));
+  /// 快进 / 快退（键盘 →、← 与遥控器那套）。
+  ///
+  /// 两个坑都在这里，2026-11-17 实测（会话 `505793bd` / `b74d94b1`）：
+  ///
+  /// 1. **连按必须合并**。一秒里连发 6 次 `player.seek()` 会把 mpv 的 seek 队列
+  ///    彻底打乱，最后**一次都没落地**，画面僵在那儿 —— 日志里 12:01:19~21
+  ///    连着 6 条「原地 seek」，之后就是「转码没追上 → 重建会话」。
+  ///    现在 260ms 内的连按只累加目标，落一次。
+  /// 2. **基准位置不能用 `_absPosition(position)` 硬算**。新建跳转会话时
+  ///    `_startMs` 已经换成新起点，而播放器还停在旧流上（首片要等 9 秒），
+  ///    两者一加就是**翻倍**：日志里 `目标 338040 = 149020 + 189020`，
+  ///    用户按 4 次 → 结果跳到 5 分半。基准见 [_seekBaseAbs]。
+  void _seekBy(int seconds) {
+    final base = _seekBaseAbs;
+    final chained = _seekByTimer?.isActive ?? false;
+    if (!chained) _seekByFrom = base;
+    _seekByTarget = (chained ? _seekByTarget : base) + Duration(seconds: seconds);
+    final delta = _seekByTarget - _seekByFrom;
+    // 提示立刻更新（累计值），别让人连按 4 次只看到最后一个「+30 秒」
     _flashSeek(
-      seconds > 0
-          ? tr('player.seekForward', {'n': '$seconds'})
-          : tr('player.seekBack', {'n': '${-seconds}'}),
+      delta < Duration.zero
+          ? tr('player.seekBack', {'n': '${-delta.inSeconds}'})
+          : tr('player.seekForward', {'n': '${delta.inSeconds}'}),
     );
+    _seekByTimer?.cancel();
+    _seekByTimer = Timer(const Duration(milliseconds: 260), () {
+      if (mounted) unawaited(_seekTo(_seekByTarget));
+    });
+  }
+
+  /// 快进 / 快退的基准位置（片源绝对）。
+  ///
+  /// 只有「播放器时间轴确实还属于当前会话」时才能用 position：
+  ///   - 正在跳转（[_jumping]）或新会话还没 open（[_pendingStartMs] 非空）→
+  ///     position 还是上一条流的，用最近一次目标当基准；
+  ///   - 其余情况 → 播放器当前位置，这是最准的。
+  Duration get _seekBaseAbs {
+    final ms = seekBaseMs(
+      playerPosMs: _player.state.position.inMilliseconds,
+      startMs: _startMs,
+      lastTargetMs: _lastSeekTarget.inMilliseconds,
+      jumping: _jumping,
+      streamPending: _pendingJump != null || _pendingStartMs != null,
+    );
+    return Duration(milliseconds: ms < 0 ? 0 : ms);
   }
 
   // ------------------------------------------------------------ 进度手势
@@ -2137,6 +2198,8 @@ class _PlayerPageState extends State<PlayerPage> {
   /// `PlayerState.buffer` 两端语义不同：Web 是 `element.buffered.end(最后一段)`
   /// （会话时间轴上的绝对位置），原生 libmpv 是「当前位置之后还有多少秒」。
   Duration _bufferedEndAbs() {
+    // 新流还没 open：缓冲还是上一条流的，算出来的绝对位置毫无意义
+    if (_pendingStartMs != null) return Duration.zero;
     final pos = _player.state.position;
     final buf = _player.state.buffer;
     final end = kIsWeb ? buf : pos + buf;
@@ -2154,6 +2217,9 @@ class _PlayerPageState extends State<PlayerPage> {
     var t = target;
     if (t < Duration.zero) t = Duration.zero;
     if (total > Duration.zero && t > total) t = total;
+    // 目标先落账：`_jumping`（新会话还没 open）期间播放器位置属于**旧流**，
+    // 快进 / 快退只能拿它当基准（见 [_seekBaseAbs]）。
+    _lastSeekTarget = t;
     if (!_isTranscode || widget.itemId == null) {
       // 直链 / 没有条目 id（详情页指定的 HLS 地址）没法重建会话，只能按老规矩夹取
       final limit = _seekLimit(_player.state.duration);
@@ -2163,6 +2229,13 @@ class _PlayerPageState extends State<PlayerPage> {
       // Web 上 seek 会把当前 play() 打断（"interrupted by a new load request"），
       // 浏览器不会自己续上；想让位置动起来只能显式再 play。仅当用户意图是播。
       if (_wantPlay) unawaited(_ensurePlayingAfterOpen());
+      return;
+    }
+    // 新会话正在建 / 正在 open 时又来一个目标：此时 `_startMs` 已经是**新会话**
+    // 的起点，而 `position` / `_transcodedMs` 还是旧流的值 —— 在当前会话上算
+    // 「在不在已转区间里」全是错的，直接交给 [_jumpTo] 合并成最后一次。
+    if (_jumping || _pendingStartMs != null) {
+      await _jumpTo(t);
       return;
     }
     // 进度条上**已经变粗**的那一段（服务端已转出的分片）一律原地 seek。
@@ -2219,9 +2292,23 @@ class _PlayerPageState extends State<PlayerPage> {
     // 用户要的就是「没加载你就转码加载」——等片，别让播放器去要空气。
     final over = t - producedEnd;
     if (over > Duration.zero && over <= const Duration(seconds: 30)) {
-      final produced = await _awaitProduced(t);
-      // 等的这 8 秒里用户又按了 → 直接作废，别把旧目标盖到新目标上
+      // 预算按「差多远」给：差 9 秒却只等 8 秒就重建会话，等于白扔一次首片
+      // （2026-11-17 实测：over=9020ms → 立刻重建 → 黑屏 9.6 秒）。
+      // 转码 2 秒一片、同机 H.264 约 1.1s/片，差 30 秒最多等 20 秒也就追上了，
+      // 比新建会话（新 ffmpeg + 首片）划算得多。
+      final budget = over > const Duration(seconds: 10)
+          ? const Duration(seconds: 20)
+          : const Duration(seconds: 14);
+      var produced = await _awaitProduced(t, budget: budget);
+      // 等的这十几秒里用户又按了 → 直接作废，别把旧目标盖到新目标上
       if (!mounted || gen != _seekGen) return;
+      if (!produced && over > Duration.zero) {
+        // 会话可能刚才还是 paused（转完一段停手了）：明确催一次再给 5 秒。
+        // `_awaitProduced` 里每拍都在报位置，但服务端要下一个 pump 周期才动。
+        _nudgeTranscode(t);
+        produced = await _awaitProduced(t, budget: const Duration(seconds: 5));
+        if (!mounted || gen != _seekGen) return;
+      }
       if (produced) {
         ClientLogger.instance.info(
           '等转码追上 ${t.inMilliseconds}ms（over=${over.inMilliseconds}ms）→ 原地 seek',
@@ -2230,11 +2317,23 @@ class _PlayerPageState extends State<PlayerPage> {
         await seekHere();
         return;
       }
+      ClientLogger.instance.info(
+        '等转码追上超时 ${t.inMilliseconds}ms'
+        '（over=${over.inMilliseconds}ms produced=${_loadedEnd.inMilliseconds}ms）',
+        route: 'player.seek/${_sessionId ?? 'direct'}',
+      );
     }
     if (!mounted || gen != _seekGen) return;
     if (over > Duration.zero) {
       ClientLogger.instance.info(
         '转码没追上 ${t.inMilliseconds}ms（over=${over.inMilliseconds}ms）→ 重建会话',
+        route: 'player.seek/${_sessionId ?? 'direct'}',
+      );
+    } else if (t < _startOffset) {
+      // 回退越过会话起点（多半是刚「快进」建过会话）：时间轴没有负数，
+      // 只能再建一条从目标起转的会话 —— 这一步要重新等首片，日志里必须留下证据。
+      ClientLogger.instance.info(
+        '回退越界 ${t.inMilliseconds}ms（start=${_startMs}ms）→ 重建会话',
         route: 'player.seek/${_sessionId ?? 'direct'}',
       );
     }
@@ -2359,11 +2458,33 @@ class _PlayerPageState extends State<PlayerPage> {
     Duration t, {
     Duration budget = const Duration(seconds: 8),
   }) async {
+    // 每一处「不等了」都要留一行：2026-11-17 日志里有一次 `over=9020ms` 只等了
+    // 25ms 就去重建会话（25ms 连一次请求都不够），却看不出是哪个条件退的场，
+    // 只能靠猜。「等片」是这条链上最贵的动作，放弃的理由必须可查。
+    void giveUp(String why) {
+      ClientLogger.instance.warn(
+        '等转码放弃 ${t.inMilliseconds}ms（$why）',
+        route: 'player.await/${_sessionId ?? 'direct'}',
+      );
+    }
+
     final id = _sessionId;
-    if (id == null || !_isTranscode) return false;
+    if (id == null || !_isTranscode) {
+      giveUp('id=$id transcode=$_isTranscode');
+      return false;
+    }
     final sw = Stopwatch()..start();
     while (sw.elapsed < budget) {
-      if (!mounted || !_wantPlay) return false;
+      if (!mounted) {
+        giveUp('页面已关闭');
+        return false;
+      }
+      // 只看 `_wantPlay` 太脆：一次误置（比如点画面唤出控件）就会把等待直接
+      // 短路成「立刻重建会话」。真暂停了位置本来就不动，多等这一轮没损失。
+      if (!_wantPlay && !_player.state.playing && !_player.state.buffering) {
+        giveUp('用户已暂停');
+        return false;
+      }
       if (_loadedEnd >= t + const Duration(seconds: 1)) return true;
       try {
         // 顺手把位置报上去：服务端据此知道「有人在等这一段」，会立刻往前铺
@@ -2375,12 +2496,16 @@ class _PlayerPageState extends State<PlayerPage> {
         if (transcoded > _transcodedMs) _transcodedMs = transcoded;
         if (_loadedEnd >= t + const Duration(seconds: 1)) return true;
         final st = '${job.status}';
-        if (st == 'failed' || st == 'canceled') return false;
+        if (st == 'failed' || st == 'canceled') {
+          giveUp('会话状态 $st');
+          return false;
+        }
       } catch (_) {
         /* 网络抖动：下一拍再试 */
       }
       await Future<void>.delayed(const Duration(milliseconds: 400));
     }
+    giveUp('等满 ${budget.inSeconds}s，produced=${_loadedEnd.inMilliseconds}ms');
     return false;
   }
 
@@ -2396,6 +2521,9 @@ class _PlayerPageState extends State<PlayerPage> {
   /// 跳到还没转出来的位置：另建一条从 [target] 起转的会话。
   Future<void> _jumpTo(Duration target) async {
     _lastSeekAt = DateTime.now();
+    // 连按计时器里攒的目标已经落到这次跳转上了，别再让它在跳转之后再补一刀
+    _seekByTimer?.cancel();
+    _lastSeekTarget = target;
     // 跳转中又有新目标（用户连续拖进度条）：只保留最后一个，
     // 等当前会话起完再跳一次，别每一下拖拽都掐掉 ffmpeg 重来。
     if (_jumping) {
@@ -2537,6 +2665,12 @@ class _PlayerPageState extends State<PlayerPage> {
   /// 播放器在拿不到时长时会吐负数哨兵值，这种一律按「就是起点」处理，
   /// 不然进度条会显示成 -106751991167 小时。
   Duration _absPosition(Duration raw) {
+    // 新会话已建好、但新流还没 open：播放器手里的位置属于上一条流，
+    // 加上 `_startMs` 就是**翻倍**（2026-11-17：149020 + 189020 = 338040，
+    // 用户按了 4 次 → 直接飞到 5 分半）。这段时间一律按新会话起点算 ——
+    // 那也正是播放器马上就要停的位置。
+    final pending = _pendingStartMs;
+    if (pending != null) return pending;
     if (raw <= Duration.zero) return _startOffset;
     final abs = _startOffset + raw;
     // HLS EVENT 列表首片未就绪时，mpv 可能把分片绝对 PTS 当成 time-pos

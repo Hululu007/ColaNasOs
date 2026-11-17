@@ -173,4 +173,61 @@ void main() {
       );
     });
   });
+
+  group('seekBaseMs：快进 / 快退的基准不能翻倍', () {
+    test('正常在播：位置 + 起转偏移', () {
+      expect(
+        seekBaseMs(
+          playerPosMs: 20_000,
+          startMs: 0,
+          lastTargetMs: 0,
+          jumping: false,
+          streamPending: false,
+        ),
+        20_000,
+      );
+    });
+
+    // 2026-11-17 线上事故：会话 505793bd 看完第 149 秒，按 → 建了 start=189020 的
+    // 新会话，首片还没到，紧接着又按 →，于是 149020 + 189020 = 338040 ——
+    // 用户按键后直接飞到 5 分半。
+    test('新会话还没 open：不许把旧流位置加上新起点（翻倍事故）', () {
+      expect(
+        seekBaseMs(
+          playerPosMs: 149_020,
+          startMs: 189_020,
+          lastTargetMs: 189_020,
+          jumping: false,
+          streamPending: true,
+        ),
+        189_020,
+      );
+    });
+
+    test('正在跳转：同样退回上一次的目标', () {
+      expect(
+        seekBaseMs(
+          playerPosMs: 149_020,
+          startMs: 189_020,
+          lastTargetMs: 219_020,
+          jumping: true,
+          streamPending: false,
+        ),
+        219_020,
+      );
+    });
+
+    test('播放器吐负数哨兵值时按起点算，不加出负数', () {
+      expect(
+        seekBaseMs(
+          playerPosMs: -106751991167,
+          startMs: 189_020,
+          lastTargetMs: 0,
+          jumping: false,
+          streamPending: false,
+        ),
+        189_020,
+      );
+    });
+  });
 }

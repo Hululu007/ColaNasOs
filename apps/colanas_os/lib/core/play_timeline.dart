@@ -58,6 +58,26 @@ int loadedEndMs({
   return byServer > byPlayer ? byServer : byPlayer;
 }
 
+/// 快进 / 快退（键盘 →、←，遥控器，双击左右）的基准位置。
+///
+/// 不能一律拿「播放器位置 + 起转偏移」：新建跳转会话时 `startMs` 已经换成
+/// 新起点，而播放器还停在**上一条流**上（首片要等好几秒），两者一加就是
+/// 翻倍 —— 2026-11-17 实测：目标 338040 = 149020 + 189020，用户按 4 次 →、
+/// 直接飞到 5 分半，然后一路卡死。
+///
+/// 只要「播放器手里的时间轴不属于当前会话」（正在跳转 / 新流还没 open），
+/// 基准就退回最近一次 seek 的目标。
+int seekBaseMs({
+  required int playerPosMs,
+  required int startMs,
+  required int lastTargetMs,
+  required bool jumping,
+  required bool streamPending,
+}) {
+  if (jumping || streamPending) return lastTargetMs;
+  return startMs + (playerPosMs > 0 ? playerPosMs : 0);
+}
+
 /// 目标位置是否需要「另起一个中途起转的会话」。
 ///
 /// 需要的情况只有两种：
