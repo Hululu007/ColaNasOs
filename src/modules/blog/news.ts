@@ -37,6 +37,10 @@ const UA =
 const MAX_XML = 4 * 1024 * 1024;
 const TIMEOUT_MS = 12_000;
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 /** 顺序即播报顺序：综合 → 科技 → AI → 财经（与 OPML 的 8 个分组一一对应） */
 export const CATEGORIES: CategoryDef[] = [
   {
@@ -224,7 +228,20 @@ export function parseFeed(xml: string): ParsedEntry[] {
   return out;
 }
 
-async function fetchFeed(url: string): Promise<string> {
+/** 抓不到就退避重试：04:00 定时任务那会儿代理偶尔抖一下，一次失败就等于整类没素材 */
+const FETCH_ATTEMPTS = 3;
+const FETCH_RETRY_MS = [700, 2000];
+
+/** 4xx（除 429 限流）是源本身的问题，重试只是白等，直接抛 */
+function retriable(err: unknown): boolean {
+  const msg = String((err as Error)?.message || err);
+  const m = /^http (\d{3})$/.exec(msg);
+  if (!m) return true;
+  const code = Number(m[1]);
+  return code === 429 || code >= 500;
+}
+
+async function fetchFeedOnce(url: string): Promise<string> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   try {
@@ -244,6 +261,21 @@ async function fetchFeed(url: string): Promise<string> {
   } finally {
     clearTimeout(timer);
   }
+}
+
+async function fetchFeed(url: string): Promise<string> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < FETCH_ATTEMPTS; attempt += 1) {
+    try {
+      return await fetchFeedOnce(url);
+    } catch (e) {
+      lastErr = e;
+      const wait = FETCH_RETRY_MS[attempt];
+      if (wait == null || !retriable(e)) break;
+      await sleep(wait);
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 }
 
 /**
@@ -346,6 +378,59 @@ function sameEvent(a: Set<string>, b: Set<string>): boolean {
 }
 
 /**
+ * 时效窗口：2 天 → 5 天 → 10 天，取够就停。
+ *
+ * 为什么必须放宽：OpenAI / DeepMind / Hugging Face 这类博客一周才更一篇，
+ * 卡死 2 天会让整类空掉 —— 2026-11-15 / 16 / 17 连续三天「国际AI 只抓到 0~1/3」，
+ * 成稿条数从 30 掉到 26 / 25 / 24 就是这个原因。放宽后仍按时间倒序取，最新的优先；
+ * 且放宽只在**粗筛后条数不够**时发生（`composeScript` 会把提示词的时间窗口跟着放宽，
+ * 否则模型按「素材不在窗口内不得使用」的规则照样一条不用）。
+ */
+const FRESH_WINDOWS = [5, 10];
+const ALL_WINDOWS = [2, ...FRESH_WINDOWS];
+
+/** 某类素材不够时，隔几秒把失败的源再抓一次（04:00 那期 13 个境外源同时抖动，几秒后就好了） */
+const REFILL_PAUSE_MS = 4000;
+
+interface PoolEntry extends ParsedEntry {
+  source: string;
+}
+
+function datedWithin(pool: PoolEntry[], nowSec: number, days: number): PoolEntry[] {
+  return pool.filter((e) => typeof e.published === 'number' && e.published > nowSec - days * 86400);
+}
+
+/** 抓一组源，失败不抛错：能用的进 pool，失败的分开收集（optional 只记日志，不算故障） */
+async function fetchPool(
+  sources: NewsSource[],
+  log: ((msg: string) => void) | undefined,
+  quiet = false,
+): Promise<{ pool: PoolEntry[]; failed: string[]; failedSources: NewsSource[] }> {
+  const settled = await Promise.allSettled(
+    sources.map(async (src) => ({ src, entries: parseFeed(await fetchFeed(src.url)) })),
+  );
+  const pool: PoolEntry[] = [];
+  const failed: string[] = [];
+  const failedSources: NewsSource[] = [];
+  settled.forEach((r, i) => {
+    const src = sources[i];
+    if (r.status === 'fulfilled') {
+      for (const e of r.value.entries) pool.push({ ...e, source: src.name });
+      return;
+    }
+    const why = String((r.reason as Error)?.message || r.reason);
+    if (!src.optional) {
+      failed.push(`${src.name}: ${why}`);
+      failedSources.push(src);
+    }
+    if (!quiet) {
+      log?.(`[blog] ${src.name} 抓取失败${src.optional ? '（已知失效源，忽略）' : ''}：${why}`);
+    }
+  });
+  return { pool, failed, failedSources };
+}
+
+/**
  * 按类别抓取。每类取 `counts[key]` 条，跨源去重、按发布时间倒序。
  * 返回的 items 顺序 = 播报顺序（与 CATEGORIES 一致）。
  */
@@ -370,33 +455,12 @@ export async function fetchNews(
     if (need <= 0) continue;
     // 模型要"挑"，所以多给素材；上限 15 条，别把 prompt 撑爆
     const want = Math.min(need * Math.max(1, multiplier), 15);
-
-    const settled = await Promise.allSettled(
-      cat.sources.map(async (src) => ({ src, entries: parseFeed(await fetchFeed(src.url)) })),
-    );
-    const pool: Array<ParsedEntry & { source: string }> = [];
-    settled.forEach((r, i) => {
-      const src = cat.sources[i];
-      if (r.status === 'fulfilled') {
-        for (const e of r.value.entries) pool.push({ ...e, source: src.name });
-      } else {
-        const msg = `${src.name}: ${String((r.reason as Error)?.message || r.reason)}`;
-        if (!src.optional) failed.push(msg);
-        log?.(`[blog] ${src.name} 抓取失败${src.optional ? '（已知失效源，忽略）' : ''}：${String(r.reason)}`);
-      }
-    });
-
-    // 只保留近两天：有些源（新华网 politics.xml）是几年前的静态文件，
-    // 不按时间过滤就会出现「2026 年的节目里播 2022 年新冠新闻」
     const nowSec = Math.floor(Date.now() / 1000);
-    const fresh = pool.filter(
-      (e) => typeof e.published === 'number' && e.published > nowSec - 2 * 86400,
-    );
-    const stale = pool.length - fresh.length;
-    if (fresh.length === 0 && pool.length > 0) {
-      failed.push(`${cat.spoken}: ${cat.sources.map((s) => s.name).join('/')} 的条目都超过 2 天`);
-    }
-    if (stale > 0) log?.(`[blog] ${cat.spoken} 丢弃 ${stale} 条过期素材`);
+
+    const first = await fetchPool(cat.sources, log);
+    let pool = first.pool;
+    let bad = first.failed;
+    const badSources = first.failedSources;
 
     // 三步粗筛（顺序有意义：聚合稿先剔，再看内容相关性，最后才看地域）：
     //   1. 早报 / 晨报 / 实时更新这类**聚合稿**——一篇里十几条不相关新闻，
@@ -404,55 +468,117 @@ export async function fetchNews(
     //   2. 科技 / AI 类的**内容相关性**——「铁路车次」「送货上门新规」是 IT之家
     //      发的，但不是科技新闻；
     //   3. 国内类的**地域**——微软 / Anthropic / CoreWeave 的稿子不能播进「国内科技」。
-    const reasons = { roundup: 0, promo: 0, irrelevant: 0, foreign: 0 };
-    const screened = fresh.filter((e) => {
-      const why = screenItem(cat.key, e.title, e.summary);
-      if (why) {
-        reasons[why] += 1;
-        return false;
+    const rank = (entries: PoolEntry[], report: boolean): PoolEntry[] => {
+      const reasons = { roundup: 0, promo: 0, irrelevant: 0, foreign: 0 };
+      const screened = entries.filter((e) => {
+        const why = screenItem(cat.key, e.title, e.summary);
+        if (why) {
+          reasons[why] += 1;
+          return false;
+        }
+        return true;
+      });
+      if (report) {
+        if (reasons.roundup > 0) {
+          log?.(`[blog] ${cat.spoken} 剔除 ${reasons.roundup} 条聚合稿（早报/晨报/实时更新）`);
+        }
+        if (reasons.promo > 0) {
+          log?.(`[blog] ${cat.spoken} 剔除 ${reasons.promo} 条导购/促销稿`);
+        }
+        if (reasons.irrelevant > 0) {
+          log?.(`[blog] ${cat.spoken} 剔除 ${reasons.irrelevant} 条内容不相关素材`);
+        }
+        if (reasons.foreign > 0) {
+          log?.(`[blog] ${cat.spoken} 剔除 ${reasons.foreign} 条境外素材`);
+        }
       }
-      return true;
-    });
-    if (reasons.roundup > 0) {
-      log?.(`[blog] ${cat.spoken} 剔除 ${reasons.roundup} 条聚合稿（早报/晨报/实时更新）`);
-    }
-    if (reasons.promo > 0) {
-      log?.(`[blog] ${cat.spoken} 剔除 ${reasons.promo} 条导购/促销稿`);
-    }
-    if (reasons.irrelevant > 0) {
-      log?.(`[blog] ${cat.spoken} 剔除 ${reasons.irrelevant} 条内容不相关素材`);
-    }
-    if (reasons.foreign > 0) {
-      log?.(`[blog] ${cat.spoken} 剔除 ${reasons.foreign} 条境外素材`);
-    }
-
-    // 发布时间缺失的排在最后（不要因为没 pubDate 就丢掉）
-    screened.sort((a, b) => (b.published ?? 0) - (a.published ?? 0));
+      // 发布时间缺失的排在最后（不要因为没 pubDate 就丢掉）
+      screened.sort((a, b) => (b.published ?? 0) - (a.published ?? 0));
+      return screened;
+    };
 
     let taken = 0;
-    for (const e of screened) {
-      if (taken >= want) break;
-      const k = titleKey(e.title);
-      if (!k) continue;
-      // 同一条新闻不同媒体的写法不同（标题对不上），用 2-gram 包含率再兜一层
-      const grams = bigrams(k);
-      if (seenGlobal.has(k) || seenGlobalGrams.some((g) => sameEvent(grams, g))) {
-        dropped += 1;
-        continue;
+    // 本类已经收下的标题：补抓后二次取用时跳过它们，别算进「全局去重丢弃」里
+    const takenKeys = new Set<string>();
+    const take = (screened: PoolEntry[]) => {
+      for (const e of screened) {
+        if (taken >= want) break;
+        const key = titleKey(e.title);
+        if (!key || takenKeys.has(key)) continue;
+        // 同一条新闻不同媒体的写法不同（标题对不上），用 2-gram 包含率再兜一层
+        const grams = bigrams(key);
+        if (seenGlobal.has(key) || seenGlobalGrams.some((g) => sameEvent(grams, g))) {
+          dropped += 1;
+          continue;
+        }
+        seenGlobal.add(key);
+        takenKeys.add(key);
+        seenGlobalGrams.push(grams);
+        items.push({
+          key: cat.key,
+          spoken: cat.spoken,
+          title: e.title,
+          summary: e.summary,
+          link: e.link,
+          source: e.source,
+          published: e.published,
+        });
+        taken += 1;
       }
-      seenGlobal.add(k);
-      seenGlobalGrams.push(grams);
-      items.push({
-        key: cat.key,
-        spoken: cat.spoken,
-        title: e.title,
-        summary: e.summary,
-        link: e.link,
-        source: e.source,
-        published: e.published,
-      });
-      taken += 1;
+    };
+
+    // 时效窗口从紧到松逐级试：[2, 5, 10] 天。
+    //
+    // 必须用「过完粗筛后实际取到的条数」判断够不够，不能用原始素材数：
+    // 2 天窗口里常有 9 条，剔掉聚合稿 / 导购稿 / 不相关 / 境外之后只剩 5 条，
+    // 2026-11-15 起「国外科技 1/3、国际AI 0/3」就是这么漏的。
+    let windowDays: number = ALL_WINDOWS[0];
+    const fill = () => {
+      for (let i = 0; i < ALL_WINDOWS.length; i += 1) {
+        windowDays = ALL_WINDOWS[i];
+        const last = i === ALL_WINDOWS.length - 1;
+        let list = datedWithin(pool, nowSec, windowDays);
+        // 没有发布时间的条目判不了时效：只在最宽窗口仍不够时垫底（排序后自然落到最后，
+        // 不会顶掉真·新新闻）。原实现把它们整批丢掉了，和「不要因为没 pubDate 就丢掉」自相矛盾。
+        if (last && list.length < want) {
+          const undated = pool.filter((e) => e.published === null);
+          if (undated.length) list = [...list, ...undated];
+        }
+        take(rank(list, i === 0));
+        if (taken >= want) return;
+      }
+    };
+    fill();
+
+    const datedCount = pool.filter((e) => typeof e.published === 'number').length;
+    const stale = datedCount - datedWithin(pool, nowSec, windowDays).length;
+    if (windowDays > 2) {
+      log?.(`[blog] ${cat.spoken} 近两天不够 ${want} 条，时效放宽到 ${windowDays} 天（取到 ${taken} 条）`);
     }
+    if (stale > 0) log?.(`[blog] ${cat.spoken} 丢弃 ${stale} 条过期素材`);
+    if (taken === 0 && pool.length > 0) {
+      failed.push(
+        `${cat.spoken}: ${cat.sources.map((s) => s.name).join('/')} 的条目都超过 ${windowDays} 天`,
+      );
+    }
+
+    // 还是不够 → 等几秒把刚才失败的源再抓一次（抖动型失败占绝大多数：
+    // 2026-11-17 04:00 那期 13 个境外源同时 fetch failed，事后同一批地址全通）
+    if (taken < want && badSources.length > 0) {
+      log?.(`[blog] ${cat.spoken} 只取到 ${taken}/${want} 条，${REFILL_PAUSE_MS / 1000} 秒后补抓失败的源`);
+      await sleep(REFILL_PAUSE_MS);
+      const again = await fetchPool(badSources, log);
+      if (again.pool.length > 0) {
+        pool = [...pool, ...again.pool];
+        const before = taken;
+        fill();
+        log?.(
+          `[blog] ${cat.spoken} 补抓成功：取回 ${again.pool.length} 条素材，本类补进 ${taken - before} 条`,
+        );
+      }
+      bad = again.failed;
+    }
+    failed.push(...bad);
     if (taken < need) failed.push(`${cat.spoken}: 只抓到 ${taken}/${need} 条`);
   }
 

@@ -452,6 +452,7 @@ function categoryPrompt(
     '',
     `分类：${cat.spoken}`,
     `条数要求：${want} 条（素材不足时按 gaps 说明，不要编造）`,
+    '素材的发布日期可能早于昨天（低频源隔几天才更一篇）：事件日期早于昨天的条目，正文里要用「11月8日」这样的日期点明，不能当成今天的新闻。',
     '',
     '【新闻素材】（唯一事实来源）',
     materialOf(items),
@@ -694,6 +695,26 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promis
   return out;
 }
 
+/**
+ * 本类素材实际覆盖的时间窗口：默认是「昨天 ~ 今天」，素材更老时只把**起点**往前挪。
+ *
+ * SYSTEM_PROMPT 有一条硬规则「素材时间不在窗口内的不得使用」，所以窗口和素材
+ * 必须对得上：抓取阶段为补足条数放宽了时效，这里不跟着放宽模型就整类返 gaps。
+ * 终点不动——不能让模型把未来日期的事件写进来。
+ */
+function windowFor(
+  list: NewsItem[],
+  base: { from: string; to: string },
+): { from: string; to: string } {
+  let from = base.from;
+  for (const it of list) {
+    if (!it.published) continue;
+    const day = ymd(new Date(it.published * 1000));
+    if (day && day < from) from = day;
+  }
+  return { from, to: base.to };
+}
+
 export async function composeScript(
   items: NewsItem[],
   counts: BlogCounts,
@@ -717,12 +738,18 @@ export async function composeScript(
   }
 
   // 按类别分桶；`want` 用用户设置的条数（素材可能抓了 2 倍让模型挑）
-  const buckets = CATEGORIES.map((cat) => ({
-    key: cat.key,
-    spoken: cat.spoken,
-    want: counts[cat.key] || 0,
-    items: items.filter((it) => it.key === cat.key),
-  })).filter((b) => b.want > 0);
+  const buckets = CATEGORIES.map((cat) => {
+    const list = items.filter((it) => it.key === cat.key);
+    return {
+      key: cat.key,
+      spoken: cat.spoken,
+      want: counts[cat.key] || 0,
+      items: list,
+      // 抓取阶段为了补足条数会把时效放宽（news.ts#FRESH_WINDOWS），提示词窗口
+      // 不跟着放宽的话，模型按「素材时间不在窗口内不得使用」整批拒用，白抓
+      win: windowFor(list, win),
+    };
+  }).filter((b) => b.want > 0);
 
   if (buckets.length === 0) {
     throw new Error('没有可用的新闻素材（所有源都失败了）');
@@ -741,7 +768,7 @@ export async function composeScript(
         bucket,
         bucket.items,
         bucket.want,
-        win,
+        bucket.win,
         target,
         usage,
         log,
