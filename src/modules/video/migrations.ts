@@ -824,4 +824,29 @@ export const VIDEO_MIGRATIONS: Migration[] = [
         }
       },
     },
+    {
+      // 「混合库同名封面排除」的表达式索引。
+      //
+      // 混合库的列表和文件夹聚合都会执行这么一段：
+      //   not exists (select 1 from video_items v
+      //                where v.library_id = i.library_id
+      //                  and v.dir_path = i.dir_path
+      //                  and lower(replace(replace(v.title,' ',''),'_',''))
+      //                    = lower(replace(replace(i.title,' ',''),'_','')))
+      // 内层比较的是**列上的函数**，`idx_video_items_dir` 只能命中
+      // (library_id, dir_path) 这一段，同目录下的影片仍要逐条现算归一化名字。
+      // 实测 `other`（5313 部影片 / 5291 张图片，几乎全挤在同一个目录）：
+      // 列表 656ms、文件夹聚合 643ms；给内层表达式建索引后两个接口都降到 5ms 上下。
+      //
+      // ⚠️ 索引表达式必须与 SQL 里的写法逐字一致，否则优化器不认；
+      // 改 `image-scope.ts#hideSameNameImageCond()` 时这里要一起改。
+      id: '179_video_same_name_idx',
+      async up(db) {
+        await sql.raw(`
+          create index if not exists idx_video_items_dir_titlekey
+            on video_items(library_id, dir_path,
+                           lower(replace(replace(title, ' ', ''), '_', '')))
+        `).execute(db);
+      },
+    },
 ];

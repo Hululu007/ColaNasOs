@@ -216,6 +216,8 @@ export const MIGRATION_ORDER: readonly string[] = Object.freeze([
   '177_photo_shared_source',
   // 清「库已删除但条目还在」的孤儿（删库没清残留 + 扫描中途写回的历史脏数据）
   '178_video_orphan_purge',
+  // 混合库「同名封面排除」的表达式索引（内层是列上的函数，不建索引就是整目录逐条现算）
+  '179_video_same_name_idx',
 ]);
 
 export interface OrderCheck {

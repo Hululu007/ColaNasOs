@@ -104,8 +104,12 @@ export function scopeCond(
 
 /**
  * 图片与视频同名时，图片不再单独出现在混合库里。
- * 目录相等判断改用预写的 dir_path 列，配合 idx_video_items_dir 只回查同目录的影片，
- * 不再对每张图片扫一遍整张 video_items。
+ *
+ * 目录相等判断改用预写的 dir_path 列，配合 idx_video_items_dir 只回查同目录的影片。
+ * 名字归一化是**列上的函数**，`(library_id, dir_path)` 只能把范围缩到同目录，
+ * 同一目录下的影片仍要逐条现算 —— 混合库整库列表实测 656ms。
+ * 迁移 `179_video_same_name_idx` 给这个表达式建了索引，内层变成一次索引点查，
+ * 因此下面的表达式必须与那条索引**逐字一致**，改这里要一起改。
  */
 export function hideSameNameImageCond(alias = 'i'): ReturnType<typeof sql> {
   return sql`not exists (
