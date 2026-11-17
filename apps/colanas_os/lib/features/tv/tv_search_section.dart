@@ -8,6 +8,7 @@ import 'package:nas_ui/nas_ui.dart';
 import '../../core/session.dart';
 import '../../core/settings_store.dart';
 import '../music/music_playback.dart';
+import '../video/series_display.dart';
 import '../video/video_card.dart';
 import '../video/video_series_widgets.dart' show seriesArtUrl;
 import 'tv_focus.dart';
@@ -142,6 +143,15 @@ class _TvSearchSectionState extends State<TvSearchSection> {
     _query.addListener(_onQueryChanged);
     _loadHistory();
     _loadHot();
+    // 中文剧名：服务端 `series` 列是英文发布名，展示要换成 TMDB / 路径里的中文名。
+    unawaited(
+      SeriesDisplayStore.ensure().then((_) {
+        if (!_canSetState) return;
+        setState(() {});
+        // 热门搜索用的是剧名，中文名到位后重算一次，避免热词还是英文。
+        _loadHot();
+      }),
+    );
   }
 
   @override
@@ -270,7 +280,9 @@ class _TvSearchSectionState extends State<TvSearchSection> {
       final res = await client.videoList(limit: 16);
       for (final item in res.items) {
         final series = (item.series ?? '').trim();
-        final name = series.isNotEmpty ? series : item.title.trim();
+        final name = series.isNotEmpty
+            ? (SeriesDisplayStore.nameOf(series) ?? series)
+            : item.title.trim();
         if (name.isNotEmpty && !out.contains(name)) out.add(name);
         if (out.length >= 8) break;
       }
@@ -681,7 +693,12 @@ class _TvSearchSectionState extends State<TvSearchSection> {
       if (!mounted) return;
       if (res.items.isEmpty) {
         setState(() => _loading = false);
-        NasSnack.show(context, tr('tv.search.noResult', {'q': card.name}));
+        NasSnack.show(
+          context,
+          tr('tv.search.noResult', {
+            'q': SeriesDisplayStore.nameOf(card.name) ?? card.name,
+          }),
+        );
         return;
       }
       final first = res.items.first;
@@ -1102,7 +1119,7 @@ class _TvSearchSectionState extends State<TvSearchSection> {
     add('tv', tr('tv.search.group.tv'), _series.length, (i) {
       final card = _series[i];
       return TvSearchCard(
-        title: card.name,
+        title: SeriesDisplayStore.nameOf(card.name) ?? card.name,
         subtitle: card.episodes > 0 ? '${card.episodes} 集' : '',
         coverUrl: card.coverId == null ? null : seriesArtUrl(card.coverId!),
         focusNode: _cards['tv']?[i],

@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:nas_ui/nas_ui.dart';
 
 import '../../../core/session.dart';
+import '../../video/series_display.dart';
 import '../../video/video_card.dart';
 import '../../video/video_series_widgets.dart';
 import '../tv_focus.dart';
@@ -72,12 +73,18 @@ class _TvSeriesHomeState extends State<TvSeriesHome> {
   static const String _recentLane = 'recent';
   static const String _allLane = 'all';
 
+  /// 「全部剧集」一行 6 列，往下排任意多行。
+  static const int _columns = 6;
+
   final Map<String, FocusNode> _nodes = <String, FocusNode>{};
   final Map<String, int> _lastIndex = <String, int>{};
   final FocusNode _ownedFirst = FocusNode(debugLabel: 'tv-series-first');
 
   List<({String id, int count})> _lanes = const [];
   String? _focusedLane;
+
+  /// 网格里上次停留的位置：从泳道 ↓ 落进网格时接着上次的卡片。
+  int _lastGridIndex = 0;
 
   FocusNode get _firstFocus => widget.firstFocusNode ?? _ownedFirst;
 
@@ -123,6 +130,26 @@ class _TvSeriesHomeState extends State<TvSeriesHome> {
     if (changed && mounted) setState(() {});
   }
 
+  /// 网格卡片：`_focusedLane = null` 表示 ↑↓ 交给外壳的方向遍历，
+  /// 网格内部按行按列自由移动，不再被「泳道切换」拦走。
+  void _rememberGrid(int index) {
+    _lastGridIndex = index;
+    _focusedLane = null;
+  }
+
+  void _ensureVisible(FocusNode node) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final context = node.context;
+      if (context == null || !mounted) return;
+      Scrollable.ensureVisible(
+        context,
+        alignment: 0.5,
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOutCubic,
+      );
+    });
+  }
+
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
       return KeyEventResult.ignored;
@@ -135,6 +162,19 @@ class _TvSeriesHomeState extends State<TvSeriesHome> {
     if (current == null) return KeyEventResult.ignored;
     final index = _lanes.indexWhere((lane) => lane.id == current);
     if (index < 0) return KeyEventResult.ignored;
+
+    // 最后一条泳道 ↓：落进「全部剧集」网格里上次停留的卡片。
+    if (down && index == _lanes.length - 1) {
+      if (widget.all.isEmpty) return KeyEventResult.ignored;
+      final target = _node(
+        _allLane,
+        _lastGridIndex.clamp(0, widget.all.length - 1),
+      );
+      target.requestFocus();
+      _ensureVisible(target);
+      return KeyEventResult.handled;
+    }
+
     final targetIndex = index + (down ? 1 : -1);
     if (targetIndex < 0 || targetIndex >= _lanes.length) {
       return KeyEventResult.ignored;
@@ -146,16 +186,7 @@ class _TvSeriesHomeState extends State<TvSeriesHome> {
       (_lastIndex[target.id] ?? 0).clamp(0, target.count - 1),
     );
     targetNode.requestFocus();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      final context = targetNode.context;
-      if (context == null || !mounted) return;
-      Scrollable.ensureVisible(
-        context,
-        alignment: 0.5,
-        duration: const Duration(milliseconds: 220),
-        curve: Curves.easeOutCubic,
-      );
-    });
+    _ensureVisible(targetNode);
     return KeyEventResult.handled;
   }
 
@@ -164,70 +195,20 @@ class _TvSeriesHomeState extends State<TvSeriesHome> {
     final m = TvMetricsScope.of(context);
     final showContinue = widget.continueItems.isNotEmpty;
     final showRecent = _showRecent;
-    final showAll = widget.all.isNotEmpty;
+    final showGrid = widget.all.isNotEmpty;
     _lanes = <({String id, int count})>[
       if (showContinue)
         (id: _continueLane, count: widget.continueItems.length),
       if (showRecent) (id: _recentLane, count: widget.recent.length),
-      if (showAll) (id: _allLane, count: widget.all.length),
     ];
 
-    if (_lanes.isEmpty) {
+    if (_lanes.isEmpty && !showGrid) {
       return NasEmptyState(
         title: tr('video.home.empty'),
         message: tr('video.home.emptyHint'),
         icon: Icons.video_library_outlined,
       );
     }
-
-    final rows = <Widget>[
-      if (showContinue)
-        TvCardRow(
-          title: tr('video.home.continue'),
-          children: [
-            for (var i = 0; i < widget.continueItems.length; i += 1)
-              _TvContinueCard(
-                entry: widget.continueItems[i],
-                focusNode: _node(_continueLane, i),
-                onFocused: () => _remember(_continueLane, i),
-                onTap: () => widget.onPlayContinue(widget.continueItems[i]),
-              ),
-          ],
-        ),
-      if (showRecent)
-        TvCardRow(
-          title: tr('video.series.sort.updated'),
-          children: [
-            for (var i = 0; i < widget.recent.length; i += 1)
-              _TvSeriesPosterCard(
-                card: widget.recent[i],
-                focusNode: _node(_recentLane, i),
-                onFocused: () => _remember(_recentLane, i),
-                onTap: () => widget.onOpenSeries(widget.recent[i]),
-              ),
-          ],
-        ),
-      if (showAll)
-        TvCardRow(
-          title: tr('tv.series.all'),
-          trailing: Text(
-            tr('tv.series.count', {'n': '${widget.all.length}'}),
-            style: TextStyle(
-              fontSize: m.px(14),
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
-            ),
-          ),
-          children: [
-            for (var i = 0; i < widget.all.length; i += 1)
-              _TvSeriesPosterCard(
-                card: widget.all[i],
-                focusNode: _node(_allLane, i),
-                onFocused: () => _remember(_allLane, i),
-                onTap: () => widget.onOpenSeries(widget.all[i]),
-              ),
-          ],
-        ),
-    ];
 
     return Focus(
       canRequestFocus: false,
@@ -238,13 +219,88 @@ class _TvSeriesHomeState extends State<TvSeriesHome> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            for (var i = 0; i < rows.length; i += 1) ...[
-              if (i > 0) SizedBox(height: m.px(22)),
-              rows[i],
+            if (showContinue) ...[
+              TvCardRow(
+                title: tr('video.home.continue'),
+                children: [
+                  for (var i = 0; i < widget.continueItems.length; i += 1)
+                    _TvContinueCard(
+                      entry: widget.continueItems[i],
+                      focusNode: _node(_continueLane, i),
+                      onFocused: () => _remember(_continueLane, i),
+                      onTap: () =>
+                          widget.onPlayContinue(widget.continueItems[i]),
+                    ),
+                ],
+              ),
+              SizedBox(height: m.px(22)),
             ],
+            if (showRecent) ...[
+              TvCardRow(
+                title: tr('video.series.sort.updated'),
+                children: [
+                  for (var i = 0; i < widget.recent.length; i += 1)
+                    _TvSeriesPosterCard(
+                      card: widget.recent[i],
+                      focusNode: _node(_recentLane, i),
+                      onFocused: () => _remember(_recentLane, i),
+                      onTap: () => widget.onOpenSeries(widget.recent[i]),
+                    ),
+                ],
+              ),
+              SizedBox(height: m.px(22)),
+            ],
+            if (showGrid) _buildGrid(m),
           ],
         ),
       ),
+    );
+  }
+
+  /// 全部剧集：一行 6 列、不限行数。
+  ///
+  /// 用 `Wrap` 而不是 `GridView`：方向键要先能走到还没构建的卡片上，
+  /// 列表的懒加载会让遥控器走不到第二屏。
+  Widget _buildGrid(TvMetrics m) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        TvSectionHeader(
+          title: tr('tv.series.all'),
+          trailing: Text(
+            tr('tv.series.count', {'n': '${widget.all.length}'}),
+            style: TextStyle(
+              fontSize: m.px(14),
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+        Padding(
+          padding: EdgeInsets.symmetric(horizontal: m.px(8)),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final gap = m.px(20);
+              // 减 1px 余量：浮点误差会让第 6 张刚好溢出、掉到下一行。
+              final width =
+                  (constraints.maxWidth - gap * (_columns - 1)) / _columns - 1;
+              return Wrap(
+                spacing: gap,
+                runSpacing: m.px(22),
+                children: [
+                  for (var i = 0; i < widget.all.length; i += 1)
+                    _TvSeriesPosterCard(
+                      card: widget.all[i],
+                      width: width,
+                      focusNode: _node(_allLane, i),
+                      onFocused: () => _rememberGrid(i),
+                      onTap: () => widget.onOpenSeries(widget.all[i]),
+                    ),
+                ],
+              );
+            },
+          ),
+        ),
+      ],
     );
   }
 }
@@ -268,6 +324,8 @@ class _TvContinueCard extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final width = m.px(340);
     final height = width * 9 / 16;
+    // 剧名统一走展示名：服务端 series 列是英文发布名。
+    final title = SeriesDisplayStore.nameOf(entry.seriesName) ?? entry.seriesName;
     return SizedBox(
       width: width,
       child: Column(
@@ -293,7 +351,7 @@ class _TvContinueCard extends StatelessWidget {
                       ),
                       episodeStillFallbackUrl(entry.item.id),
                     ],
-                    fallbackText: entry.seriesName,
+                    fallbackText: title,
                     icon: Icons.play_circle_outline_rounded,
                     cacheWidth: (width * 2).round(),
                     borderRadius: m.px(14),
@@ -326,7 +384,7 @@ class _TvContinueCard extends StatelessWidget {
                         children: [
                           Expanded(
                             child: Text(
-                              entry.seriesName,
+                              title,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
@@ -402,6 +460,7 @@ class _TvSeriesPosterCard extends StatelessWidget {
     required this.onTap,
     required this.onFocused,
     this.focusNode,
+    this.width,
   });
 
   final TvSeriesCard card;
@@ -409,15 +468,19 @@ class _TvSeriesPosterCard extends StatelessWidget {
   final VoidCallback onFocused;
   final FocusNode? focusNode;
 
+  /// 网格按 6 列算出来的卡片宽度；泳道不传，用设计稿默认值。
+  final double? width;
+
   @override
   Widget build(BuildContext context) {
     final m = TvMetricsScope.of(context);
     final scheme = Theme.of(context).colorScheme;
-    final width = m.px(190);
-    final height = width * 3 / 2;
-    final urls = seriesCoverUrls(card, size: 480);
+    final w = width ?? m.px(190);
+    final height = w * 3 / 2;
+    final urls = seriesCoverUrls(card, size: (w * 2).round());
+    final title = SeriesDisplayStore.nameOf(card.name) ?? card.name;
     return SizedBox(
-      width: width,
+      width: w,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -427,16 +490,16 @@ class _TvSeriesPosterCard extends StatelessWidget {
             onFocused: onFocused,
             radius: m.px(14),
             child: SizedBox(
-              width: width,
+              width: w,
               height: height,
               child: Stack(
                 fit: StackFit.expand,
                 children: [
                   TvMediaCover(
                     urls: urls,
-                    fallbackText: card.name,
+                    fallbackText: title,
                     icon: Icons.video_library_outlined,
-                    cacheWidth: (width * 2).round(),
+                    cacheWidth: (w * 2).round(),
                     borderRadius: m.px(14),
                   ),
                   if (card.unwatched > 0)
@@ -489,7 +552,7 @@ class _TvSeriesPosterCard extends StatelessWidget {
           ),
           SizedBox(height: m.px(9)),
           Text(
-            card.name,
+            title,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(

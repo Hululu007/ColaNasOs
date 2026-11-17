@@ -12,10 +12,10 @@ import 'tv_movie_models.dart';
 import 'tv_movie_widgets.dart';
 
 /// 电影库首页：顶部沉浸式剧照墙 + 继续观看 / 最近添加 / 系列电影泳道 +
-/// A-Z 分组网格与右侧字母索引条。
+/// 「全部影片」网格（一行 6 列）。
 ///
-/// 全库影片不再一屏平铺：只有「全部影片」按首字母分组，右侧索引条可
-/// 直接用方向键进入、确认键跳到对应分组；索引条始终可见但不抢默认焦点。
+/// 全库影片不再一屏平铺、也不再按首字母分组：列表按「未看优先 + 添加时间倒序」
+/// 排列，一行 6 列、往下任意多行。
 class TvMovieHome extends StatefulWidget {
   const TvMovieHome({
     super.key,
@@ -52,15 +52,16 @@ class _TvMovieHomeState extends State<TvMovieHome> {
   static const String _recentLane = 'recent';
   static const String _collectionLane = 'collections';
 
+  /// 「全部影片」一行 6 列，往下排任意多行。
+  static const int _columns = 6;
+
   final Map<String, FocusNode> _nodes = <String, FocusNode>{};
   final Map<String, int> _lastLaneIndex = <String, int>{};
-  final Map<String, GlobalKey> _groupKeys = <String, GlobalKey>{};
   final FocusNode _ownedFirst = FocusNode(debugLabel: 'tv-movie-first');
 
   /// 背景剧照与 Hero 文案共用的当前影片（焦点变化只重建这两块）。
   final ValueNotifier<VideoItem?> _hero = ValueNotifier<VideoItem?>(null);
 
-  Map<String, List<TvMovieEntry>> _groups = const <String, List<TvMovieEntry>>{};
   List<({String id, int count})> _lanes = const <({String id, int count})>[];
   String? _focusLane;
   String? _lastEntryId;
@@ -132,11 +133,6 @@ class _TvMovieHomeState extends State<TvMovieHome> {
     _setHero(entry.heroMovie);
   }
 
-  void _rememberRail(String letter) {
-    _focusLane = null;
-    _scrollToGroup(letter);
-  }
-
   void _ensureVisible(FocusNode node) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final context = node.context;
@@ -148,28 +144,6 @@ class _TvMovieHomeState extends State<TvMovieHome> {
         curve: Curves.easeOutCubic,
       );
     });
-  }
-
-  void _scrollToGroup(String letter) {
-    final key = _groupKeys.putIfAbsent(letter, () => GlobalKey());
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      final context = key.currentContext;
-      if (context == null || !mounted) return;
-      Scrollable.ensureVisible(
-        context,
-        alignment: 0.08,
-        duration: const Duration(milliseconds: 220),
-        curve: Curves.easeOutCubic,
-      );
-    });
-  }
-
-  void _jumpToGroup(String letter) {
-    final list = _groups[letter];
-    if (list == null || list.isEmpty) return;
-    final node = _node(_gridKey(list.first));
-    node.requestFocus();
-    _ensureVisible(node);
   }
 
   TvMovieEntry? get _firstGridEntry {
@@ -236,18 +210,6 @@ class _TvMovieHomeState extends State<TvMovieHome> {
         (id: _collectionLane, count: widget.collections.length),
     ];
 
-    final groups = <String, List<TvMovieEntry>>{};
-    for (final entry in widget.entries) {
-      groups.putIfAbsent(entry.letter, () => <TvMovieEntry>[]).add(entry);
-    }
-    _groups = groups;
-    final letters = groups.keys.toList()
-      ..sort((a, b) {
-        if (a == '#') return 1;
-        if (b == '#') return -1;
-        return a.compareTo(b);
-      });
-
     if (_lanes.isEmpty && !showGrid) {
       return NasEmptyState(
         title: tr('video.home.empty'),
@@ -268,7 +230,7 @@ class _TvMovieHomeState extends State<TvMovieHome> {
             child: SingleChildScrollView(
               padding: EdgeInsets.only(
                 top: m.px(6),
-                right: m.px(42),
+                right: m.px(8),
                 bottom: m.px(28),
               ),
               child: Column(
@@ -340,13 +302,11 @@ class _TvMovieHomeState extends State<TvMovieHome> {
                     ),
                     SizedBox(height: m.px(22)),
                   ],
-                  if (showGrid) _buildGrid(m, letters),
+                  if (showGrid) _buildGrid(m),
                 ],
               ),
             ),
           ),
-          if (showGrid && letters.length > 1)
-            Positioned(right: m.px(2), top: 0, bottom: 0, child: _buildRail(m, letters)),
         ],
       ),
     );
@@ -484,7 +444,10 @@ class _TvMovieHomeState extends State<TvMovieHome> {
     );
   }
 
-  Widget _buildGrid(TvMetrics m, List<String> letters) {
+  /// 全部影片：一行 6 列、不限行数。
+  ///
+  /// 用 `Wrap` 而不是 `GridView`：方向键要能走到还没构建出来的卡片。
+  Widget _buildGrid(TvMetrics m) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -498,57 +461,36 @@ class _TvMovieHomeState extends State<TvMovieHome> {
             ),
           ),
         ),
-        for (final letter in letters) ...[
-          Padding(
-            key: _groupKeys.putIfAbsent(letter, () => GlobalKey()),
-            padding: EdgeInsets.fromLTRB(
-              m.px(10),
-              m.px(4),
-              m.px(8),
-              m.px(10),
-            ),
-            child: Row(
-              children: [
-                Text(
-                  letter,
-                  style: TextStyle(
-                    fontSize: m.px(20),
-                    fontWeight: FontWeight.w900,
-                    color: Theme.of(context).colorScheme.primary,
-                  ),
-                ),
-                SizedBox(width: m.px(10)),
-                Expanded(
-                  child: Container(
-                    height: 1,
-                    color: Colors.white.withValues(alpha: 0.12),
-                  ),
-                ),
-              ],
-            ),
+        Padding(
+          padding: EdgeInsets.symmetric(horizontal: m.px(8)),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final gap = m.px(20);
+              // 减 1px 余量：浮点误差会让第 6 张刚好溢出、掉到下一行。
+              final width =
+                  (constraints.maxWidth - gap * (_columns - 1)) / _columns - 1;
+              return Wrap(
+                spacing: gap,
+                runSpacing: m.px(22),
+                children: [
+                  for (final entry in widget.entries)
+                    _buildEntryCard(entry, width),
+                ],
+              );
+            },
           ),
-          Padding(
-            padding: EdgeInsets.only(left: m.px(8), bottom: m.px(12)),
-            child: Wrap(
-              spacing: m.px(20),
-              runSpacing: m.px(20),
-              children: [
-                for (final entry in _groups[letter] ?? const <TvMovieEntry>[])
-                  _buildEntryCard(entry),
-              ],
-            ),
-          ),
-        ],
+        ),
       ],
     );
   }
 
-  Widget _buildEntryCard(TvMovieEntry entry) {
+  Widget _buildEntryCard(TvMovieEntry entry, double width) {
     final movie = entry.movie;
     void onFocused() => _rememberEntry(entry);
     if (movie != null) {
       return TvMoviePosterCard(
         item: movie,
+        width: width,
         focusNode: _node(_gridKey(entry)),
         percent: widget.progressOf?.call(movie.id) ?? 0,
         onFocused: onFocused,
@@ -558,61 +500,10 @@ class _TvMovieHomeState extends State<TvMovieHome> {
     final collection = entry.collection!;
     return TvMovieCollectionCard(
       collection: collection,
+      width: width,
       focusNode: _node(_gridKey(entry)),
       onFocused: onFocused,
       onTap: () => widget.onOpenCollection(collection),
-    );
-  }
-
-  Widget _buildRail(TvMetrics m, List<String> letters) {
-    final scheme = Theme.of(context).colorScheme;
-    return Container(
-      width: m.px(30),
-      padding: EdgeInsets.symmetric(vertical: m.px(6)),
-      decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.3),
-        borderRadius: BorderRadius.circular(m.px(15)),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
-      ),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final slot = constraints.maxHeight / letters.length;
-          return Column(
-            children: [
-              for (final letter in letters)
-                SizedBox(
-                  height: slot,
-                  width: double.infinity,
-                  child: Center(
-                    child: TvFocusCard(
-                      focusNode: _node('rail:$letter'),
-                      onFocused: () => _rememberRail(letter),
-                      onTap: () => _jumpToGroup(letter),
-                      radius: m.px(6),
-                      focusScale: 1,
-                      child: Container(
-                        width: m.px(24),
-                        height: slot,
-                        alignment: Alignment.center,
-                        child: FittedBox(
-                          fit: BoxFit.scaleDown,
-                          child: Text(
-                            letter,
-                            style: TextStyle(
-                              fontSize: m.px(12),
-                              fontWeight: FontWeight.w800,
-                              color: scheme.onSurface.withValues(alpha: 0.78),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-            ],
-          );
-        },
-      ),
     );
   }
 }

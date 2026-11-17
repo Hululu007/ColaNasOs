@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:nas_core/nas_core.dart';
 import 'package:nas_ui/nas_ui.dart';
 
 import '../../../core/session.dart';
+import '../../video/series_display.dart';
 import '../../video/video_card.dart';
 import '../../video/video_series_widgets.dart';
 import '../tv_focus.dart';
@@ -48,6 +51,12 @@ class _TvSeriesDetailPageState extends State<TvSeriesDetailPage> {
   @override
   void initState() {
     super.initState();
+    // 从搜索页直接进来时中文剧名可能还在路上：到位后重绘一次标题。
+    unawaited(
+      SeriesDisplayStore.ensure().then((_) {
+        if (mounted) setState(() {});
+      }),
+    );
     _load();
   }
 
@@ -248,6 +257,8 @@ class _TvSeriesDetailPageState extends State<TvSeriesDetailPage> {
   Widget _buildHero(TvMetrics m) {
     final item = _heroItem;
     final card = widget.card;
+    // 剧名统一走展示名：`series` 列是英文发布名，中文名来自 TMDB / 路径提示。
+    final title = SeriesDisplayStore.nameOf(card.name) ?? card.name;
     final heroHeight = m.px(360);
     final urls = <String?>[
       if (item != null)
@@ -285,7 +296,7 @@ class _TvSeriesDetailPageState extends State<TvSeriesDetailPage> {
           children: [
           TvMediaCover(
             urls: urls,
-            fallbackText: card.name,
+            fallbackText: title,
             icon: Icons.live_tv_rounded,
             cacheWidth: 1600,
             borderRadius: m.px(20),
@@ -315,7 +326,7 @@ class _TvSeriesDetailPageState extends State<TvSeriesDetailPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  card.name,
+                  title,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(

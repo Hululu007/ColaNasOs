@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:nas_core/nas_core.dart';
 import 'package:nas_ui/nas_ui.dart';
 
 import '../../core/session.dart';
+import '../video/series_display.dart';
 import '../video/video_card.dart';
 import 'movie/tv_movie_collection_page.dart';
 import 'movie/tv_movie_detail.dart';
@@ -121,7 +124,14 @@ class _TvVideoLibrarySectionState extends State<TvVideoLibrarySection> {
     }
   }
 
-  Future<List<VideoItem>> _loadAllItems() async {
+  /// 拉整库条目。
+  ///
+  /// `sortBy: 'createTime' + sortOrder: 'desc'` 就是「最新入库在最前」：
+  /// 返回顺序即排序依据，客户端不再有入库时间字段，靠顺序当时间代理。
+  Future<List<VideoItem>> _loadAllItems({
+    String? sortBy,
+    String? sortOrder,
+  }) async {
     final client = ApiSession.instance.client;
     final out = <VideoItem>[];
     String? cursor;
@@ -130,6 +140,8 @@ class _TvVideoLibrarySectionState extends State<TvVideoLibrarySection> {
         libraryId: widget.library.id,
         limit: 200,
         cursor: cursor,
+        sortBy: sortBy,
+        sortOrder: sortOrder,
       );
       out.addAll(res.items);
       cursor = res.nextCursor;
@@ -140,6 +152,12 @@ class _TvVideoLibrarySectionState extends State<TvVideoLibrarySection> {
 
   Future<void> _loadSeries() async {
     final client = ApiSession.instance.client;
+    // 中文剧名是展示层补充：拉不到就继续用 series 原名，不能卡住首页。
+    unawaited(
+      SeriesDisplayStore.ensure().then((_) {
+        if (mounted) setState(() {});
+      }),
+    );
     try {
       final seriesRes = await _safe(
         client.videoSeriesList(
@@ -148,7 +166,11 @@ class _TvVideoLibrarySectionState extends State<TvVideoLibrarySection> {
           sortBy: 'updated',
         ),
       );
-      final items = await _loadAllItems();
+      // 条目按添加时间倒序：剧卡的「最新入库」直接取这部剧最靠前的那一集。
+      final items = await _loadAllItems(
+        sortBy: 'createTime',
+        sortOrder: 'desc',
+      );
       final progressRes = await _safe(
         client.videoProgressList(libraryId: widget.library.id, limit: 200),
       );
@@ -183,9 +205,7 @@ class _TvVideoLibrarySectionState extends State<TvVideoLibrarySection> {
         roots: roots,
         progressById: progressById,
       );
-      final recent = <TvSeriesCard>[...parsed, ...folder];
-      final all = <TvSeriesCard>[...parsed, ...folder]
-        ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+      final all = _orderSeries([...parsed, ...folder], items);
       final continueItems = buildContinueEntries(
         progress: progressRes?.items ?? const <VideoProgressItem>[],
         itemById: itemById,
@@ -195,7 +215,7 @@ class _TvVideoLibrarySectionState extends State<TvVideoLibrarySection> {
       setState(() {
         _itemsById = itemById;
         _progressById = progressById;
-        _recentSeries = recent.take(20).toList();
+        _recentSeries = all.take(20).toList();
         _allSeries = all;
         _continueItems = continueItems;
         _loading = false;
@@ -212,10 +232,55 @@ class _TvVideoLibrarySectionState extends State<TvVideoLibrarySection> {
     }
   }
 
+  /// 剧卡排序：**有未看的在前**，组内按「这部剧最新一集的添加时间」倒序。
+  ///
+  /// `items` 已经按入库时间倒序，所以「这部剧在列表里第一次出现的位置」就是
+  /// 它的最新添加时间。只要还有一集没看就算未看（`unwatched > 0`），
+  /// 不会再出现「看了一半的剧被压在已看完后面」。
+  List<TvSeriesCard> _orderSeries(
+    List<TvSeriesCard> cards,
+    List<VideoItem> items,
+  ) {
+    final itemIndex = <String, int>{
+      for (var i = 0; i < items.length; i += 1) items[i].id: i,
+    };
+    final seriesIndex = <String, int>{};
+    for (var i = 0; i < items.length; i += 1) {
+      final name = (items[i].series ?? '').trim();
+      if (name.isEmpty) continue;
+      seriesIndex.putIfAbsent(name, () => i);
+    }
+    final order = <TvSeriesCard, int>{};
+    for (final card in cards) {
+      if (!card.isFolder) {
+        order[card] = seriesIndex[card.name] ?? 1 << 30;
+        continue;
+      }
+      var best = 1 << 30;
+      for (final item in card.preloadedItems) {
+        final index = itemIndex[item.id];
+        if (index != null && index < best) best = index;
+      }
+      order[card] = best;
+    }
+    return [...cards]..sort((a, b) {
+      final aUnwatched = a.unwatched > 0;
+      final bUnwatched = b.unwatched > 0;
+      if (aUnwatched != bUnwatched) return aUnwatched ? -1 : 1;
+      final byOrder = (order[a] ?? 1 << 30).compareTo(order[b] ?? 1 << 30);
+      if (byOrder != 0) return byOrder;
+      return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+    });
+  }
+
   Future<void> _loadMovies() async {
     final client = ApiSession.instance.client;
     try {
-      final items = await _loadAllItems();
+      // 影片按添加时间倒序；未看的（含看到一半的）在下面再提到前面。
+      final items = await _loadAllItems(
+        sortBy: 'createTime',
+        sortOrder: 'desc',
+      );
       final progressRes = await _safe(
         client.videoProgressList(libraryId: widget.library.id, limit: 200),
       );
@@ -269,31 +334,22 @@ class _TvVideoLibrarySectionState extends State<TvVideoLibrarySection> {
 
       // 片名启发式合集（同基名 >= 2 部），用户合集里的影片不再重复参与。
       final heuristic = buildMovieCollections(items, excluded: excluded);
-      for (final collection in heuristic) {
-        excluded.addAll(collection.movies.map((movie) => movie.id));
-      }
       final collections = <TvMovieCollection>[
         ...userCollections,
         ...heuristic,
       ];
 
+      // 全部影片：未看（含看到一半）在前，组内保持入库时间倒序。
+      // 合集成员也在其中：合集是入口，不该让单部影片从列表里消失。
+      final ordered = _orderMovies(items, progressById);
       final entries = <TvMovieEntry>[
-        for (final collection in collections) TvMovieEntry.collection(collection),
-        for (final movie in items)
-          if (!excluded.contains(movie.id)) TvMovieEntry.movie(movie),
-      ]..sort((a, b) {
-          if (a.letter != b.letter) {
-            if (a.letter == '#') return 1;
-            if (b.letter == '#') return -1;
-            return a.letter.compareTo(b.letter);
-          }
-          return a.sortKey.compareTo(b.sortKey);
-        });
+        for (final movie in ordered) TvMovieEntry.movie(movie),
+      ];
 
       setState(() {
         _itemsById = itemById;
         _progressById = progressById;
-        _items = items;
+        _items = ordered;
         _recentMovies = recentRes?.items ?? const <VideoItem>[];
         _movieCollections = collections;
         _movieEntries = entries;
@@ -311,6 +367,21 @@ class _TvVideoLibrarySectionState extends State<TvVideoLibrarySection> {
         _error = '$e';
       });
     }
+  }
+
+  /// 影片排序：未看的在前（已看完 = `watched` 或进度 ≥ 95%），组内保持
+  /// 传进来的顺序 —— 调用方给的是「添加时间倒序」，所以最新的永远在最前。
+  List<VideoItem> _orderMovies(
+    List<VideoItem> items,
+    Map<String, VideoProgressItem> progressById,
+  ) {
+    final unwatched = <VideoItem>[];
+    final watched = <VideoItem>[];
+    for (final item in items) {
+      final percent = progressById[item.id]?.percent ?? 0;
+      (item.watched || percent >= 95 ? watched : unwatched).add(item);
+    }
+    return <VideoItem>[...unwatched, ...watched];
   }
 
   Future<void> _loadFlat() async {
@@ -347,17 +418,28 @@ class _TvVideoLibrarySectionState extends State<TvVideoLibrarySection> {
       };
       setState(() {
         _progressById = progressById;
+        // 看完一集 / 一部之后，「未看优先」的分组会变，列表要跟着重排，
+        // 否则刚看完的剧还赖在最前面。
+        final source = _itemsById.values.toList();
         if (_isSeriesLibrary) {
           _continueItems = buildContinueEntries(
             progress: res.items,
             itemById: _itemsById,
             roots: _roots,
           );
+          final all = _orderSeries(_allSeries, source);
+          _recentSeries = all.take(20).toList();
+          _allSeries = all;
         } else {
           _movieContinue = buildMovieContinue(
             progress: res.items,
             itemById: _itemsById,
           );
+          final ordered = _orderMovies(source, progressById);
+          _items = ordered;
+          _movieEntries = <TvMovieEntry>[
+            for (final movie in ordered) TvMovieEntry.movie(movie),
+          ];
         }
       });
     } catch (_) {
