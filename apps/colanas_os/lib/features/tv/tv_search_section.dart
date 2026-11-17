@@ -11,8 +11,10 @@ import '../music/music_playback.dart';
 import '../video/video_card.dart';
 import '../video/video_series_widgets.dart' show seriesArtUrl;
 import 'tv_focus.dart';
-import 'tv_video_section.dart';
+import 'tv_video_section.dart' show playTvVideo;
 import 'music/tv_music_detail.dart';
+import 'movie/tv_movie_detail.dart';
+import 'movie/tv_movie_models.dart';
 import 'video/tv_series_detail.dart';
 import 'video/tv_series_models.dart';
 
@@ -844,11 +846,17 @@ class _TvSearchSectionState extends State<TvSearchSection> {
   Widget build(BuildContext context) {
     final video = _videoDetail;
     if (video != null) {
-      return TvVideoDetailView(
-        item: video,
+      // 用电影 tab 同一个详情页：大图 + 简介 + **默认聚焦的播放按钮**，
+      // 进页面按一下 OK 就直接播（搜索页自带的精简版没有这个焦点）。
+      return TvMovieDetailPage(
+        key: ValueKey<String>('search-movie-${video.id}'),
+        movie: video,
+        all: _videos,
+        collections: const <TvMovieCollection>[],
+        percent: 0,
         preparing: _preparing,
         onPlay: () => _play(video),
-        onBack: _handleBack,
+        onSelectMovie: (next) => setState(() => _videoDetail = next),
       );
     }
     final series = _seriesDetail;
@@ -1221,17 +1229,19 @@ class TvSearchCard extends StatelessWidget {
     final width = m.px(150);
     // 竖版海报 3:2，但别到 1.5 —— 加上两行文字会超出栏目的固定高度
     final height = circular ? width : width * 1.4;
+    // 整张卡（封面 + 文字）都要能点：只把封面做成焦点卡时，点标题一行完全没反应，
+    // 用户会以为「搜索结果点了不管用」。
     return SizedBox(
       width: width,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          TvFocusCard(
-            focusNode: focusNode,
-            onTap: onTap,
-            radius: m.px(14),
-            focusScale: 1.05,
-            child: SizedBox(
+      child: TvFocusCard(
+        focusNode: focusNode,
+        onTap: onTap,
+        radius: m.px(14),
+        focusScale: 1.05,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(
               width: width,
               height: height,
               child: ClipRRect(
@@ -1255,25 +1265,25 @@ class TvSearchCard extends StatelessWidget {
                       ),
               ),
             ),
-          ),
-          SizedBox(height: m.px(10)),
-          Text(
-            title,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(fontSize: m.px(16), fontWeight: FontWeight.w600),
-          ),
-          if (subtitle.isNotEmpty)
+            SizedBox(height: m.px(10)),
             Text(
-              subtitle,
+              title,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: m.px(14),
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
+              style: TextStyle(fontSize: m.px(16), fontWeight: FontWeight.w600),
             ),
-        ],
+            if (subtitle.isNotEmpty)
+              Text(
+                subtitle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: m.px(14),
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }

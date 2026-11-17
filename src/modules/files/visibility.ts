@@ -128,9 +128,15 @@ export function pathWhere(v: Visibility, column: string) {
   if (v.unrestricted) return sql`1 = 1`;
   const prefs = likePrefixes(v);
   if (prefs.length === 0) return sql`1 = 0`;
+  // 列里的路径可能带反斜杠：库根是 `G:\music` 时条目存成 `G:\music/国语怀旧/a.flac`
+  // （根用 Windows 写法 + 拼接用 `/`），而规则前缀一律是正斜杠小写 —— 直接 LIKE
+  // 会因为一个 `\` 把整个音乐库滤空（列表返回空、专辑详情「没有曲目」，
+  // 但专辑 / 歌手聚合没走这个过滤，于是「有专辑、点进去空的」，2026-11-18 实测）。
+  // 两边都折成「小写 + 正斜杠」再比，不依赖数据写成哪种分隔符。
+  const norm = sql`replace(lower(${sql.ref(column)}), '\\', '/')`;
   let cond = sql`1 = 0`;
   for (const p of prefs) {
-    cond = sql`${cond} or ${sql.ref(column)} like ${`${p}%`}`;
+    cond = sql`${cond} or ${norm} like ${`${p.toLowerCase()}%`}`;
   }
   return cond;
 }
