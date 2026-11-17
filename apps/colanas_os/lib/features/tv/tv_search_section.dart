@@ -101,16 +101,22 @@ class _TvSearchSectionState extends State<TvSearchSection> {
     for (var r = 0; r < _rowChars.length; r += 1) {
       final row = <FocusNode>[];
       for (var c = 0; c < _rowChars[r].length; c += 1) {
-        if (r == 0 && c == 0 && widget.firstFocusNode != null) {
-          row.add(widget.firstFocusNode!);
-        } else {
-          final node = FocusNode(debugLabel: 'tv-key-$r-$c');
-          _ownedNodes.add(node);
-          row.add(node);
-        }
+        final node = (r == 0 && c == 0 && widget.firstFocusNode != null)
+            ? widget.firstFocusNode!
+            : FocusNode(debugLabel: 'tv-key-$r-$c');
+        _ownedNodes.add(node);
+        // 方向键挂在节点上，节点交给 TvFocusCard 独占使用。
+        // ⛔ 外面不能再套 Focus(focusNode: 同一个节点)：一个 FocusNode 只能挂一个
+        // Focus，否则直接抛 "Tried to make a child into a parent of itself"。
+        final rowIndex = r;
+        final colIndex = c;
+        node.onKeyEvent = (_, event) => _handleKey(event, rowIndex, colIndex);
+        row.add(node);
       }
       _keys.add(row);
     }
+    _clearKey.onKeyEvent = (_, event) => _handleActionKey(event, left: true);
+    _backspaceKey.onKeyEvent = (_, event) => _handleActionKey(event, left: false);
     widget.back.handler = _onBackPressed;
     widget.back.overlay = _hasOverlay;
     _query.addListener(_onQueryChanged);
@@ -527,10 +533,11 @@ class _TvSearchSectionState extends State<TvSearchSection> {
     _cards.clear();
     void build(String key, int count) {
       if (count <= 0) return;
-      _cards[key] = List<FocusNode>.generate(
-        count,
-        (_) => FocusNode(debugLabel: 'tv-card-$key'),
-      );
+      _cards[key] = List<FocusNode>.generate(count, (i) {
+        final node = FocusNode(debugLabel: 'tv-card-$key-$i');
+        node.onKeyEvent = (_, event) => _handleCardKey(key, i, event);
+        return node;
+      });
     }
 
     build('movie', _videos.length);
@@ -763,13 +770,12 @@ class _TvSearchSectionState extends State<TvSearchSection> {
                   Expanded(
                     child: Padding(
                       padding: EdgeInsets.symmetric(horizontal: m.px(4)),
-                      child: _TvKey(
+                      child: TvSearchKey(
                         label: _rowChars[r][c],
                         focusNode: _keys[r][c],
                         height: m.px(58),
                         fontSize: m.px(24),
                         onTap: () => _append(_rowChars[r][c]),
-                        onKey: (event) => _handleKey(event, r, c),
                       ),
                     ),
                   ),
@@ -780,7 +786,7 @@ class _TvSearchSectionState extends State<TvSearchSection> {
         Row(
           children: [
             Expanded(
-              child: _TvKey(
+              child: TvSearchKey(
                 label: tr('tv.search.clear'),
                 focusNode: _clearKey,
                 height: m.px(50),
@@ -789,18 +795,16 @@ class _TvSearchSectionState extends State<TvSearchSection> {
                   _query.clear();
                   _onQueryChanged();
                 },
-                onKey: (event) => _handleActionKey(event, left: true),
               ),
             ),
             SizedBox(width: m.px(10)),
             Expanded(
-              child: _TvKey(
+              child: TvSearchKey(
                 label: tr('tv.search.backspace'),
                 focusNode: _backspaceKey,
                 height: m.px(50),
                 fontSize: m.px(18),
                 onTap: _backspace,
-                onKey: (event) => _handleActionKey(event, left: false),
               ),
             ),
           ],
@@ -891,20 +895,13 @@ class _TvSearchSectionState extends State<TvSearchSection> {
       if (count <= 0) return;
       final shown = count > _sectionMax ? _sectionMax : count;
       sections.add(
-        _Section(
-          title: title,
-          count: shown,
-          itemBuilder: card,
-          focusNodes: _cards[key],
-          onKey: _handleCardKey,
-          sectionKey: key,
-        ),
+        TvSearchRow(title: title, count: shown, itemBuilder: card),
       );
     }
 
     add('movie', tr('tv.search.group.movie'), _videos.length, (i) {
       final item = _videos[i];
-      return _TvResultCard(
+      return TvSearchCard(
         title: item.title,
         subtitle: (item.year ?? 0) > 0 ? '${item.year}' : '',
         coverUrl: videoPosterUrl(item, size: 360),
@@ -915,7 +912,7 @@ class _TvSearchSectionState extends State<TvSearchSection> {
     });
     add('tv', tr('tv.search.group.tv'), _series.length, (i) {
       final card = _series[i];
-      return _TvResultCard(
+      return TvSearchCard(
         title: card.name,
         subtitle: card.episodes > 0 ? '${card.episodes} 集' : '',
         coverUrl: card.coverId == null ? null : seriesArtUrl(card.coverId!),
@@ -925,7 +922,7 @@ class _TvSearchSectionState extends State<TvSearchSection> {
     });
     add('track', tr('tv.search.group.track'), _tracks.length, (i) {
       final track = _tracks[i];
-      return _TvResultCard(
+      return TvSearchCard(
         title: track.title,
         subtitle: track.artist ?? '',
         coverUrl: musicCoverUrlForTv(track.id),
@@ -935,7 +932,7 @@ class _TvSearchSectionState extends State<TvSearchSection> {
     });
     add('album', tr('tv.search.group.album'), _albums.length, (i) {
       final album = _albums[i];
-      return _TvResultCard(
+      return TvSearchCard(
         title: album.name,
         subtitle: album.artist ?? '',
         coverUrl: album.coverTrackId == null ? null : musicCoverUrlForTv(album.coverTrackId!),
@@ -945,7 +942,7 @@ class _TvSearchSectionState extends State<TvSearchSection> {
     });
     add('artist', tr('tv.search.group.artist'), _artists.length, (i) {
       final artist = _artists[i];
-      return _TvResultCard(
+      return TvSearchCard(
         title: artist.name,
         subtitle: '${artist.albums} ${tr('tv.search.group.album')}',
         coverUrl: artist.coverTrackId == null ? null : musicCoverUrlForTv(artist.coverTrackId!),
@@ -961,22 +958,17 @@ class _TvSearchSectionState extends State<TvSearchSection> {
 }
 
 /// 一个栏目：标题 + 一行卡片（最多 5 张，不横向滚动）
-class _Section extends StatelessWidget {
-  const _Section({
+class TvSearchRow extends StatelessWidget {
+  const TvSearchRow({
+    super.key,
     required this.title,
     required this.count,
     required this.itemBuilder,
-    required this.focusNodes,
-    required this.onKey,
-    required this.sectionKey,
   });
 
   final String title;
   final int count;
   final Widget Function(int index) itemBuilder;
-  final List<FocusNode>? focusNodes;
-  final KeyEventResult Function(String sectionKey, int index, KeyEvent event) onKey;
-  final String sectionKey;
 
   @override
   Widget build(BuildContext context) {
@@ -986,7 +978,8 @@ class _Section extends StatelessWidget {
       children: [
         TvSectionHeader(title: title),
         SizedBox(
-          height: m.px(250),
+          // 海报 2:3（宽 150 → 高 210）+ 标题两行 + 副标题一行，留 20 余量
+          height: m.px(300),
           child: ListView.separated(
             scrollDirection: Axis.horizontal,
             // 卡片数已限到 5 张，一次放得下：关掉滚动，避免焦点跟着跑出屏幕
@@ -994,17 +987,8 @@ class _Section extends StatelessWidget {
             padding: EdgeInsets.symmetric(horizontal: m.px(8), vertical: m.px(6)),
             itemCount: count,
             separatorBuilder: (_, _) => SizedBox(width: m.px(12)),
-            itemBuilder: (context, i) {
-              final card = itemBuilder(i);
-              final node =
-                  focusNodes != null && i < focusNodes!.length ? focusNodes![i] : null;
-              if (node == null) return card;
-              return Focus(
-                focusNode: node,
-                onKeyEvent: (n, event) => onKey(sectionKey, i, event),
-                child: card,
-              );
-            },
+            // 卡片内部已经把节点交给 TvFocusCard，这里再包 Focus 会重复占用同一节点
+            itemBuilder: (context, i) => itemBuilder(i),
           ),
         ),
       ],
@@ -1013,8 +997,9 @@ class _Section extends StatelessWidget {
 }
 
 /// 结果卡片：封面 + 标题 + 副标题
-class _TvResultCard extends StatelessWidget {
-  const _TvResultCard({
+class TvSearchCard extends StatelessWidget {
+  const TvSearchCard({
+    super.key,
     required this.title,
     required this.subtitle,
     required this.coverUrl,
@@ -1036,7 +1021,8 @@ class _TvResultCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final m = TvMetricsScope.of(context);
     final width = m.px(150);
-    final height = circular ? width : width * 1.5;
+    // 竖版海报 3:2，但别到 1.5 —— 加上两行文字会超出栏目的固定高度
+    final height = circular ? width : width * 1.4;
     return SizedBox(
       width: width,
       child: Column(
@@ -1075,7 +1061,7 @@ class _TvResultCard extends StatelessWidget {
           SizedBox(height: m.px(10)),
           Text(
             title,
-            maxLines: 2,
+            maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(fontSize: m.px(16), fontWeight: FontWeight.w600),
           ),
@@ -1096,14 +1082,14 @@ class _TvResultCard extends StatelessWidget {
 }
 
 /// 屏上键盘的一个键：聚焦时描边 + 放大（TvFocusCard 自带焦点描边与缩放）
-class _TvKey extends StatelessWidget {
-  const _TvKey({
+class TvSearchKey extends StatelessWidget {
+  const TvSearchKey({
+    super.key,
     required this.label,
     required this.focusNode,
     required this.height,
     required this.fontSize,
     required this.onTap,
-    required this.onKey,
   });
 
   final String label;
@@ -1111,29 +1097,25 @@ class _TvKey extends StatelessWidget {
   final double height;
   final double fontSize;
   final VoidCallback onTap;
-  final KeyEventResult Function(KeyEvent event) onKey;
 
   @override
   Widget build(BuildContext context) {
     final m = TvMetricsScope.of(context);
-    return Focus(
+    return TvFocusCard(
       focusNode: focusNode,
-      onKeyEvent: (node, event) => onKey(event),
-      child: TvFocusCard(
-        onTap: onTap,
-        focusScale: 1.07,
-        radius: m.px(10),
-        child: Container(
-          height: height,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.surfaceContainerHighest,
-            borderRadius: BorderRadius.circular(m.px(10)),
-          ),
-          child: Text(
-            label,
-            style: TextStyle(fontSize: fontSize, fontWeight: FontWeight.w700),
-          ),
+      onTap: onTap,
+      focusScale: 1.07,
+      radius: m.px(10),
+      child: Container(
+        height: height,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(m.px(10)),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(fontSize: fontSize, fontWeight: FontWeight.w700),
         ),
       ),
     );

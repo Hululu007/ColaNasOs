@@ -70,4 +70,97 @@ void main() {
     expect(find.text('q'), findsNWidgets(2));
     expect(tester.takeException(), isNull);
   });
+
+  // ---------------------------------------------------------------- 有数据时
+  //
+  // 上一版就是因为「同一个 FocusNode 既给外层 Focus、又给 TvFocusCard」在真机上
+  // 直接崩（Tried to make a child into a parent of itself）。接口全挂时没有卡片，
+  // 测试也就抓不到 —— 这里直接构造栏目 + 卡片，把那条路径钉死。
+
+  testWidgets('栏目里的卡片能正常渲染（焦点节点只被一处占用）', (tester) async {
+    tester.view.physicalSize = const Size(1280 * 2, 720 * 2);
+    tester.view.devicePixelRatio = 2;
+    addTearDown(tester.view.reset);
+
+    final nodes = List<FocusNode>.generate(5, (i) => FocusNode(debugLabel: 'n$i'));
+    addTearDown(() {
+      for (final node in nodes) {
+        node.dispose();
+      }
+    });
+
+    await tester.pumpWidget(
+      TvMetricsScope(
+        metrics: TvMetrics.of(1280),
+        child: MaterialApp(
+          home: Scaffold(
+            body: ListView(
+              children: [
+                TvSearchRow(
+                  title: '电影',
+                  count: 5,
+                  itemBuilder: (i) => TvSearchCard(
+                    title: '影片 $i',
+                    subtitle: '2024',
+                    coverUrl: null,
+                    focusNode: nodes[i],
+                    onTap: () {},
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(tester.takeException(), isNull, reason: '卡片构建不应抛异常');
+    expect(find.text('电影'), findsOneWidget);
+    // 名字要显示出来（截图里就是因为异常整块变成红色报错）
+    expect(find.text('影片 0'), findsOneWidget);
+    expect(find.text('影片 4'), findsOneWidget);
+  });
+
+  testWidgets('键盘按键渲染并能响应确认键', (tester) async {
+    tester.view.physicalSize = const Size(1280 * 2, 720 * 2);
+    tester.view.devicePixelRatio = 2;
+    addTearDown(tester.view.reset);
+
+    final node = FocusNode(debugLabel: 'key');
+    addTearDown(node.dispose);
+    var tapped = 0;
+
+    await tester.pumpWidget(
+      TvMetricsScope(
+        metrics: TvMetrics.of(1280),
+        child: MaterialApp(
+          home: Scaffold(
+            body: Center(
+              child: SizedBox(
+                width: 120,
+                child: TvSearchKey(
+                  label: 'q',
+                  focusNode: node,
+                  height: 56,
+                  fontSize: 24,
+                  onTap: () => tapped += 1,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 200));
+
+    expect(tester.takeException(), isNull);
+    expect(find.text('q'), findsOneWidget);
+
+    node.requestFocus();
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(tapped, 1);
+  });
 }
