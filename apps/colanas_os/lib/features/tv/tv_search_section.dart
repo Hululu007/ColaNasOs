@@ -69,11 +69,22 @@ class _TvSearchSectionState extends State<TvSearchSection> {
   /// 栏目 → 每张卡的焦点节点
   final Map<String, List<FocusNode>> _cards = <String, List<FocusNode>>{};
 
+  /// 结果刷新时被换下来的旧节点：还要等这一帧用新节点建完才能 dispose
+  final Set<FocusNode> _retired = <FocusNode>{};
+
   String? _lastSection;
   int _lastIndex = 0;
 
   Timer? _debounce;
   int _searchSeq = 0;
+
+  /// 组件是否还活着。`mounted` 在元素 unmount 的瞬间仍是 true（`State._element`
+  /// 要等 `dispose()` 返回后才清空），异步回调正好落在那个窗口里 setState 就会撞
+  /// "markNeedsBuild on defunct element"。搜索页有几个 100ms 级的网络回调，
+  /// 退出页面时必然踩得到 —— 用自己维护的标记把这个窗口关掉。
+  bool _alive = true;
+
+  bool get _canSetState => _alive && mounted;
 
   bool _loading = false;
   String? _error;
@@ -126,6 +137,7 @@ class _TvSearchSectionState extends State<TvSearchSection> {
 
   @override
   void dispose() {
+    _alive = false;
     if (widget.back.handler == _onBackPressed) {
       widget.back.handler = null;
       widget.back.overlay = null;
@@ -144,6 +156,11 @@ class _TvSearchSectionState extends State<TvSearchSection> {
         node.dispose();
       }
     }
+    // 上一批卡片节点可能还在「等这一帧建完再收」的队列里
+    for (final node in _retired) {
+      node.dispose();
+    }
+    _retired.clear();
     super.dispose();
   }
 
@@ -172,7 +189,7 @@ class _TvSearchSectionState extends State<TvSearchSection> {
 
   void _restoreFocus() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _focusKeyboard();
+      if (_canSetState) _focusKeyboard();
     });
   }
 
@@ -209,7 +226,7 @@ class _TvSearchSectionState extends State<TvSearchSection> {
 
   Future<void> _loadHistory() async {
     final raw = SettingsStore.instance.getString(_historyKey) ?? '';
-    if (!mounted) return;
+    if (!_canSetState) return;
     setState(() {
       _history = raw
           .split('\u0000')
@@ -255,7 +272,7 @@ class _TvSearchSectionState extends State<TvSearchSection> {
         // 忽略
       }
     }
-    if (mounted) setState(() => _hot = out);
+    if (_canSetState) setState(() => _hot = out);
   }
 
   // ---------------------------------------------------------------- 搜索
@@ -263,6 +280,7 @@ class _TvSearchSectionState extends State<TvSearchSection> {
   Future<void> _search() async {
     final q = _query.text.trim();
     final seq = ++_searchSeq;
+    if (!_canSetState) return;
     if (q.isEmpty) {
       setState(() {
         _submitted = '';
@@ -300,7 +318,7 @@ class _TvSearchSectionState extends State<TvSearchSection> {
     }
     final results = await Future.wait<Object?>(futures);
     // 输入还在继续：这一批结果已经过期，直接丢掉（防抖后仍可能连发）
-    if (!mounted || seq != _searchSeq) return;
+    if (!_canSetState || seq != _searchSeq) return;
 
     final videoRes = results[0] as VideoListResponse?;
     final seriesRes = results[1] as VideoSeriesListResponse?;
@@ -469,7 +487,29 @@ class _TvSearchSectionState extends State<TvSearchSection> {
       _moveSection(sectionKey, index, 1);
       return KeyEventResult.handled;
     }
-    return KeyEventResult.ignored;
+    return _handleTypeKey(event);
+  }
+
+  /// 物理键盘直接输入（PC 客户端 / 网页预览）。
+  ///
+  /// 搜索框只回显、输入全靠屏上键盘 —— 在电脑上看着一个键盘却必须用鼠标一个个点，
+  /// 是最容易被当成「搜索坏了」的地方。字母 / 数字直接落进查询串，退格删一个字。
+  KeyEventResult _handleTypeKey(KeyEvent event) {
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    if (event.logicalKey == LogicalKeyboardKey.backspace) {
+      _backspace();
+      return KeyEventResult.handled;
+    }
+    final char = event.character;
+    if (char == null || char.isEmpty) return KeyEventResult.ignored;
+    // 控制字符（回车 / Tab / 方向键）交给外层的焦点逻辑，不当输入
+    if (char.codeUnits.any((unit) => unit < 0x20 || unit == 0x7f)) {
+      return KeyEventResult.ignored;
+    }
+    // 一个字符最多 4 个 code unit（emoji/组合符号），再多就是整句粘贴，忽略
+    if (char.length > 4) return KeyEventResult.ignored;
+    _append(char);
+    return KeyEventResult.handled;
   }
 
   KeyEventResult _handleKey(KeyEvent event, int row, int col) {
@@ -505,7 +545,7 @@ class _TvSearchSectionState extends State<TvSearchSection> {
       }
       return KeyEventResult.handled;
     }
-    return KeyEventResult.ignored;
+    return _handleTypeKey(event);
   }
 
   KeyEventResult _handleActionKey(KeyEvent event, {required bool left}) {
@@ -528,18 +568,26 @@ class _TvSearchSectionState extends State<TvSearchSection> {
       }
       return KeyEventResult.handled;
     }
-    return KeyEventResult.ignored;
+    return _handleTypeKey(event);
   }
 
   /// 结果变了就重建卡片节点，并在帧后把焦点校准到仍然存在的卡片上
   /// （否则输入一个字母让结果变少，焦点会掉回根节点，遥控器得从头按起）。
+  ///
+  /// 两条必须守住的规矩：
+  ///  1. 焦点本来不在结果里（用户在屏上键盘打字）就**不要**接焦点 —— 否则第一个
+  ///     字母搜出结果的一瞬间焦点被拽到卡片上，后面的字母全按在卡片上，
+  ///     「ads」永远只输得进「a」。
+  ///  2. 旧节点这一帧还挂在 `TvSearchCard` 上，立刻 dispose 会让下一帧的
+  ///     `FocusableActionDetector` 拿到已销毁的节点，直接抛
+  ///     "A FocusNode was used after being disposed"。等帧末再收。
   void _rebuildCards() {
     final previous = _lastSection;
     final previousIndex = _lastIndex;
+    // 必须在回收节点之前取：节点没了 hasFocus 就永远 false
+    final hadResultFocus = _resultsFocused;
     for (final list in _cards.values) {
-      for (final node in list) {
-        node.dispose();
-      }
+      _retired.addAll(list);
     }
     _cards.clear();
     void build(String key, int count) {
@@ -558,17 +606,32 @@ class _TvSearchSectionState extends State<TvSearchSection> {
     build('artist', _artists.length);
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      final keys = _visibleKeys;
-      if (keys.isEmpty) return;
-      final target = previous != null && keys.contains(previous) ? previous : keys.first;
-      final nodes = _cards[target];
-      if (nodes == null || nodes.isEmpty) return;
-      final index = previousIndex.clamp(0, nodes.length - 1);
-      _lastSection = target;
-      _lastIndex = index;
-      nodes[index].requestFocus();
+      if (hadResultFocus) {
+        final keys = _visibleKeys;
+        if (keys.isEmpty) {
+          // 结果被搜空了：别把焦点丢在根节点上，退回键盘继续输入
+          _focusKeyboard();
+        } else {
+          final target = previous != null && keys.contains(previous) ? previous : keys.first;
+          final nodes = _cards[target];
+          if (nodes != null && nodes.isNotEmpty) {
+            final index = previousIndex.clamp(0, nodes.length - 1);
+            _lastSection = target;
+            _lastIndex = index;
+            nodes[index].requestFocus();
+          }
+        }
+      }
+      _disposeRetired();
     });
+  }
+
+  /// 收掉换下来的旧节点（`dispose()` 里也会调，重复调用安全）
+  void _disposeRetired() {
+    for (final node in _retired.toList()) {
+      _retired.remove(node);
+      node.dispose();
+    }
   }
 
   // ---------------------------------------------------------------- 打开
@@ -631,7 +694,7 @@ class _TvSearchSectionState extends State<TvSearchSection> {
         SnackBar(content: Text(tr('video.playUrlFailed', {'error': '$e'}))),
       );
     } finally {
-      if (mounted) setState(() => _preparing = false);
+      if (_canSetState) setState(() => _preparing = false);
     }
   }
 
@@ -654,7 +717,7 @@ class _TvSearchSectionState extends State<TvSearchSection> {
       }
       _playTracks(res.items, 0);
     } catch (e) {
-      if (!mounted) return;
+      if (!_canSetState) return;
       NasSnack.show(context, tr('tv.search.failed', {'error': '$e'}));
     }
   }
@@ -672,7 +735,7 @@ class _TvSearchSectionState extends State<TvSearchSection> {
       }
       _playTracks(res.items, 0);
     } catch (e) {
-      if (!mounted) return;
+      if (!_canSetState) return;
       NasSnack.show(context, tr('tv.search.failed', {'error': '$e'}));
     }
   }

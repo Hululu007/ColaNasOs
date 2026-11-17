@@ -363,7 +363,7 @@ export async function registerVideoItems(app: FastifyInstance, k: KernelApi, h: 
               // FTS 命中标题原文；拼音键（原文+全拼+首字母）单独 OR 上来，
               // 否则「woai」这种三字以上的拼音输入走不到 LIKE 分支
               ? sql`${where} and (v.rowid in (select rowid from video_items_fts where video_items_fts match ${fts})
-                       or coalesce(v.search_pinyin, '') like ${keyword} escape '\')`
+                       or coalesce(v.search_pinyin, '') like ${keyword} escape '\\')`
               : sql`${where} and (coalesce(v.nfo_name, '') like ${keyword} escape '\\'
                          or coalesce(v.nfo_original_name, '') like ${keyword} escape '\\'
                          or v.title like ${keyword} escape '\\'
@@ -486,15 +486,19 @@ export async function registerVideoItems(app: FastifyInstance, k: KernelApi, h: 
         if (keyword) {
           // 搜索只查本地索引（nfo 已在扫描时缓存进库），覆盖名字 / 原名 / 番号 / 演员，
           // 不依赖 SMB 在线，也不用每次去网络盘找一遍。
+          // 拼音键（原文 + 全拼 + 首字母）必须 OR 上来：文件名是 `The.Odyssey.2026.mkv`
+          // 时，`ads` / `aodesai` 只能靠它命中「奥德赛」。
           where = fts
-            ? sql`${where} and rowid in (select rowid from video_items_fts where video_items_fts match ${fts})`
+            ? sql`${where} and (rowid in (select rowid from video_items_fts where video_items_fts match ${fts})
+                       or coalesce(search_pinyin, '') like ${keyword} escape '\\')`
             : sql`${where} and (coalesce(nfo_name, '') like ${keyword} escape '\\'
                        or coalesce(nfo_original_name, '') like ${keyword} escape '\\'
                        or title like ${keyword} escape '\\'
                        or rel_path like ${keyword} escape '\\'
                        or coalesce(code, '') like ${keyword} escape '\\'
                        or coalesce(nfo_actors, '') like ${keyword} escape '\\'
-                       or coalesce(nfo_directors, '') like ${keyword} escape '\\')`;
+                       or coalesce(nfo_directors, '') like ${keyword} escape '\\'
+                       or coalesce(search_pinyin, '') like ${keyword} escape '\\')`;
         }
         if (offline.length > 0) where = sql`${where} and ${offlineCond(offline, 'rel_path')}`;
         // 来源筛选：只认本库自己的来源。id 是客户端从 facets 拿的，正常不会越库，
@@ -599,7 +603,13 @@ export async function registerVideoItems(app: FastifyInstance, k: KernelApi, h: 
         where = sql`${where} and (${pathWhere(visibilityOf(k.config, req.user), 'v.rel_path')})`;
         if (q.libraryId) where = sql`${where} and v.library_id = ${q.libraryId}`;
         if (q.q && q.q.trim()) {
-          where = sql`${where} and v.series like ${likePattern(q.q.trim())} escape '\\'`;
+          // 剧名只有中文，拼音键存在**集**上（扫描时把 series 一起算进 search_pinyin）。
+          // 只 like v.series 的话，「ads」这种首字母输入永远打不开「奥德赛」。
+          const kw = likePattern(q.q.trim());
+          where = sql`${where} and (v.series like ${kw} escape '\\'
+                      or v.series in (select x.series from video_items x
+                                       where x.series is not null and x.series <> ''
+                                         and coalesce(x.search_pinyin, '') like ${kw} escape '\\'))`;
         }
         // 离线 SMB 来源的剧点进去是空的，列表里也别露出来（与选集接口同一口径）
         const offline = await offlineSmbPrefixes(k.db);
@@ -1072,15 +1082,18 @@ export async function registerVideoItems(app: FastifyInstance, k: KernelApi, h: 
           else if (q.series && q.series.trim())
             where = sql`${where} and v.series = ${q.series.trim()}`;
           if (keyword) {
+            // 与 videoList 同一口径：拼音键也算命中，否则列表搜得到、这里的计数是 0
             where = fts
-              ? sql`${where} and v.rowid in (select rowid from video_items_fts where video_items_fts match ${fts})`
+              ? sql`${where} and (v.rowid in (select rowid from video_items_fts where video_items_fts match ${fts})
+                           or coalesce(v.search_pinyin, '') like ${keyword} escape '\\')`
               : sql`${where} and (coalesce(v.nfo_name, '') like ${keyword} escape '\\'
                            or coalesce(v.nfo_original_name, '') like ${keyword} escape '\\'
                            or v.title like ${keyword} escape '\\'
                            or v.rel_path like ${keyword} escape '\\'
                            or coalesce(v.code, '') like ${keyword} escape '\\'
                            or coalesce(v.nfo_actors, '') like ${keyword} escape '\\'
-                           or coalesce(v.nfo_directors, '') like ${keyword} escape '\\')`;
+                           or coalesce(v.nfo_directors, '') like ${keyword} escape '\\'
+                           or coalesce(v.search_pinyin, '') like ${keyword} escape '\\')`;
           }
           if (offline.length > 0) where = sql`${where} and ${offlineCond(offline, 'v.rel_path')}`;
           const row = (

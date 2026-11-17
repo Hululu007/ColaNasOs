@@ -69,21 +69,28 @@ export async function backfillPinyin(
   k: KernelApi,
   label: string,
   opts: {
-    select: (limit: number) => Promise<Array<Record<string, any>>>;
+    /** 按 id 游标取一批待补行（`after` 传上一批最后一个 id，空串表示从头发） */
+    select: (limit: number, after: string) => Promise<Array<Record<string, any>>>;
     build: (row: Record<string, any>) => string;
     update: (id: string, key: string) => Promise<unknown>;
   },
 ): Promise<void> {
   const BATCH = 200;
+  // 用 id 游标一轮轮往后走，而不是「每轮都从头查同一个条件」：
+  // 万一某行的键补完仍然不满足判定条件（脏数据 / 判断条件写错），
+  // 从头查的写法会永远捞到同一批行、在后台空转。
+  const MAX_ROUNDS = 2000;
   let done = 0;
+  let after = '';
   try {
-    for (;;) {
-      const rows = await opts.select(BATCH);
+    for (let round = 0; round < MAX_ROUNDS; round += 1) {
+      const rows = await opts.select(BATCH, after);
       if (rows.length === 0) break;
       for (const row of rows) {
-        await opts.update(String(row.id), opts.build(row));
+        after = String(row.id);
+        await opts.update(after, opts.build(row));
+        done += 1;
       }
-      done += rows.length;
       if (rows.length < BATCH) break;
     }
   } catch (err) {
@@ -99,12 +106,15 @@ export function backfillTablePinyin(
   label: string,
   table: 'video_items' | 'music_tracks',
   columns: string[],
+  /** 待补判定；缺省「列还是空的」。必须是可重复执行不报错的布尔表达式。 */
+  needsWork = 'search_pinyin is null',
 ): void {
-  const select = async (limit: number) =>
+  const select = async (limit: number, after: string) =>
     (
       await sql<Record<string, any>>`
         select id, ${sql.raw(columns.join(', '))} from ${sql.table(table)}
-        where search_pinyin is null limit ${limit}
+        where (${sql.raw(needsWork)}) and id > ${after}
+        order by id limit ${limit}
       `.execute(k.db)
     ).rows;
   void backfillPinyin(k, label, {

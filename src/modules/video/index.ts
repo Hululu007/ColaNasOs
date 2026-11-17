@@ -552,7 +552,20 @@ export const video: ServerModule = {
     await registerVideoSmartAlbums(app, k, h);
     await registerVideoScrape(app, k, h);
     await registerVideoSettings(app, k);
-    // 老数据的 search_pinyin 是空的：后台补齐（不阻塞启动，也不抢任务槽位）
-    backfillTablePinyin(k, 'video', 'video_items', ['title', 'series', 'code']);
+    // 老数据的 search_pinyin 是空的（或只按文件名算过）：后台补齐，不阻塞启动。
+    // nfo 里的中文名必须算进键里 —— 文件名多半是英文，光按 title 算出来的键
+    // 拼音搜不到「奥德赛」这种中文名。判定条件写成「键里没有这个名字」而不是
+    // 一次性置空，重跑也不会重复扫全表（补完一次就不再有行命中）。
+    backfillTablePinyin(
+      k,
+      'video',
+      'video_items',
+      ['nfo_name', 'nfo_original_name', 'title', 'series', 'code'],
+      `search_pinyin is null
+        or (trim(coalesce(nfo_name, '')) <> ''
+            and instr(search_pinyin, lower(trim(nfo_name))) = 0)
+        or (trim(coalesce(nfo_original_name, '')) <> ''
+            and instr(search_pinyin, lower(trim(nfo_original_name))) = 0)`,
+    );
   },
 };

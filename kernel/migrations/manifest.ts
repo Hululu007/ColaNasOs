@@ -223,6 +223,8 @@ export const MIGRATION_ORDER: readonly string[] = Object.freeze([
   // 搜索拼音键：原文 + 全拼 + 首字母（影视 / 音乐各一列）
   '181_video_search_pinyin',
   '182_music_search_pinyin',
+  // 拼音键补 nfo 中文名：文件名是英文时「ads」也能搜到「奥德赛」
+  '183_video_search_pinyin_nfo',
 ]);
 
 export interface OrderCheck {

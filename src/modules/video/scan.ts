@@ -508,8 +508,16 @@ async function scanOneSource(
           const m = p.meta;
           const ep = parseEpisode(p.rel);
           const jp = jpMetaOf(p.rel);
-          // 拼音键也进库：搜索时不用现算（一算就是每键一次的字典遍历）
-          const searchPinyin = pinyinKey(titleOf(p.rel), ep.series, isJp ? jp.code : null);
+          // 拼音键也进库：搜索时不用现算（一算就是每键一次的字典遍历）。
+          // nfo 里的中文名一定要算进来 —— 文件名常是 `The.Odyssey.2026...mkv`
+          // 这种，只有把「奥德赛」转成 `aodesai ads` 才搜得到。
+          const searchPinyin = pinyinKey(
+            p.nfo.name,
+            p.nfo.originalName,
+            titleOf(p.rel),
+            ep.series,
+            isJp ? jp.code : null,
+          );
           await sql`
             insert into video_items
               (id, library_id, rel_path, dir_path, title, duration, width, height, video_codec,
@@ -729,7 +737,33 @@ async function applyNfo(
     }
     await syncActorLinks(trx, id, parseActorNames(ing.actors), nowSec, thumbs).catch(() => 0);
   }
+  // nfo 写了中文名就重算拼音键：NFO 覆盖（手改 nfo / 只补 NFO 通道）走的都是这里，
+  // 不重算的话库里还是文件名那串英文拼音，中文首字母永远搜不到。
+  if (ing.name || ing.originalName) await refreshSearchPinyin(trx, id);
   return Number(res.numAffectedRows ?? 0);
+}
+
+/**
+ * 按**当前库里生效的名字**重算 `search_pinyin`。
+ *
+ * 名字有三层：nfo_name（刮削 / 手写）> title（文件名）> 剧名。拼音键必须覆盖
+ * 前三者，否则搜索只能命中「哪一层刚好被写进了键里」的那一个。
+ */
+async function refreshSearchPinyin(trx: any, id: string): Promise<void> {
+  const row = (
+    await sql<{
+      title: string | null;
+      series: string | null;
+      code: string | null;
+      nfo_name: string | null;
+      nfo_original_name: string | null;
+    }>`
+      select title, series, code, nfo_name, nfo_original_name from video_items where id = ${id}
+    `.execute(trx)
+  ).rows[0];
+  if (!row) return;
+  const key = pinyinKey(row.nfo_name, row.nfo_original_name, row.title, row.series, row.code);
+  await sql`update video_items set search_pinyin = ${key} where id = ${id}`.execute(trx);
 }
 
 /** 清理「磁盘上已不存在」的视频/图片行（显式 prune 才走这里）；先清观看进度再删主行 */

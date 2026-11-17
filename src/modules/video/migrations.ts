@@ -3,6 +3,19 @@ import type { Migration } from '../../../kernel/migrator';
 
 export const VIDEO_MIGRATIONS: Migration[] = [
   {
+    // 拼音键只由「文件名 / 剧名」算出来的那批要重算：nfo 里的中文名没进键，
+    // 文件名是 `The.Odyssey.2026.mkv` 时中文名「奥德赛」直搜得到、`ads` 搜不到。
+    // 置空交给后台回填按新口径重来（回填列已含 nfo_name / nfo_original_name）。
+    // 没有 nfo 名的行键本来就对，不动它们，避免整库白转一遍拼音。
+    id: '183_video_search_pinyin_nfo',
+    async up(db) {
+      await sql`
+        update video_items set search_pinyin = null
+         where coalesce(nfo_name, '') <> '' or coalesce(nfo_original_name, '') <> ''
+      `.execute(db);
+    },
+  },
+  {
     // 搜索用拼音键（原文 + 全拼 + 首字母）：查询侧零开销，写入时算一次
     id: '181_video_search_pinyin',
     async up(db) {
