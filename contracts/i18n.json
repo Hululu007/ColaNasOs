@@ -176,6 +176,7 @@
     "music.search.backspace": {},
     "music.search.empty": {},
     "music.search.hint": {},
+    "music.search.hot": {},
     "music.search.placeholder": {},
     "music.search.recent": {},
     "music.search.recentClear": {},
@@ -228,6 +229,12 @@
     "transmission.uploadingTo": {
       "count": {}
     },
+    "tv.search.backspace": {},
+    "tv.search.clear": {},
+    "tv.search.group.movie": {},
+    "tv.search.group.tv": {},
+    "tv.search.history": {},
+    "tv.search.hot": {},
     "ui.book.020": {},
     "ui.book.hd9c32a": {},
     "transmission.seeding": {},

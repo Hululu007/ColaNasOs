@@ -11,16 +11,25 @@ import 'music_library_pages.dart';
 import 'music_playlists_page.dart';
 import 'music_track_view.dart';
 
-/// 音乐 · 统一搜索：一个输入框，结果按类型分栏目铺开（歌曲 / 专辑 / 歌手 / 歌单 / 合集）。
+/// 音乐 · 统一搜索。
 ///
-/// 为什么集中到一个页面：以前每个列表页各有一个搜索框，只能在本页的数据里过滤 ——
-/// 想找「某位歌手的某张专辑」得先知道该去专辑页还是歌曲页。现在一处输入、一处看全。
+/// 布局（TV / 大屏，`TvScope` 打开时）：
 ///
-/// 数据来源：歌曲 / 专辑 / 歌手走服务端 `q` 参数（已经过了索引），歌单与合集数量小，
-/// 直接取全量在本地过滤 —— 少两个接口，也不会出现「歌单搜不到」的割裂感。
+/// ```
+/// ┌──────────────────────────────────────────────┐
+/// │ [ 搜索框：已输入的字母 ]                        │
+/// ├───────────────────┬──────────────────────────┤
+/// │  Q W E R T Y ...  │  歌曲（栏目标题）           │
+/// │  A S D F G H ...  │  [卡][卡][卡][卡][卡]      │
+/// │  Z X C V B N M    │  专辑                      │
+/// │  [清空]  [退格]    │  [卡][卡]                  │
+/// └───────────────────┴──────────────────────────┘
+/// ```
 ///
-/// TV 端额外给一块屏上字母键盘（`TvScope` 打开时）：遥控器没有输入法，
-/// 不给自己一个键盘就完全没法搜。手机 / 桌面用系统输入法，不显示这块。
+/// 焦点只有两条路：键盘 ←→ 右侧栏目。遥控器「返回」在右侧先退回键盘，
+/// 在键盘上才退出页面 —— 一次返回直接退出会让人误触丢掉输入。
+///
+/// 手机 / 桌面不显示屏上键盘（系统输入法更好用），栏目分组与焦点规则一致。
 class MusicSearchPage extends StatefulWidget {
   const MusicSearchPage({super.key, this.embedded = true});
 
@@ -34,10 +43,27 @@ class _MusicSearchPageState extends State<MusicSearchPage> {
   static const String _recentKey = 'music.search.recent';
   static const int _recentMax = 8;
 
+  /// TV 端每个栏目最多 5 张卡、不横向滚动（设计约束：到最右直接拦住右键，
+  /// 否则焦点会跟着 ListView 滚出屏幕，遥控器体验极差）
+  static const int _tvSectionMax = 5;
+  static const int _wideSectionMax = 14;
+
   final TextEditingController _input = TextEditingController();
+  final FocusNode _inputFocus = FocusNode(debugLabel: 'music-search-input');
   final ScrollController _scroll = ScrollController();
-  final FocusNode _inputFocus = FocusNode();
   late final MusicSearchDebouncer _debounce = MusicSearchDebouncer(_run);
+
+  /// 屏上键盘：每行一套焦点节点
+  final List<List<FocusNode>> _keys = <List<FocusNode>>[];
+  final FocusNode _clearKey = FocusNode(debugLabel: 'key-clear');
+  final FocusNode _backspaceKey = FocusNode(debugLabel: 'key-backspace');
+
+  /// 右侧栏目：类型 → 每个卡片的焦点节点
+  final Map<String, List<FocusNode>> _cards = <String, List<FocusNode>>{};
+
+  /// 最近聚焦位置，结果变化后用它校准（栏目会被增删）
+  String? _lastSection;
+  int _lastIndex = 0;
 
   bool _loading = false;
   String? _error;
@@ -50,34 +76,38 @@ class _MusicSearchPageState extends State<MusicSearchPage> {
   List<MusicCollection> _collections = const [];
 
   List<String> _recent = const [];
-
-  /// 栏目的焦点节点：类型 → 每个卡片的 node（只在 TV 模式下建）
-  final Map<String, List<FocusNode>> _nodes = <String, List<FocusNode>>{};
-  final List<List<FocusNode>> _keyboardNodes = <List<FocusNode>>[];
-
-  bool get _tv => TvScope.of(context);
+  List<String> _hot = const [];
 
   @override
   void initState() {
     super.initState();
     _input.addListener(_onChanged);
     _loadRecent();
+    _loadHot();
+    // TV：初始焦点落在键盘第一个键上，遥控器一进来就能按方向键；
+    // 放帧后是因为键盘节点要到第一次 build 才建出来。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (TvScope.of(context)) _focusKeyboard();
+    });
   }
 
   @override
   void dispose() {
     _input.removeListener(_onChanged);
     _input.dispose();
+    _inputFocus.dispose();
     _scroll.dispose();
     _debounce.dispose();
-    _inputFocus.dispose();
-    for (final list in _nodes.values) {
-      for (final node in list) {
+    _clearKey.dispose();
+    _backspaceKey.dispose();
+    for (final row in _keys) {
+      for (final node in row) {
         node.dispose();
       }
     }
-    for (final row in _keyboardNodes) {
-      for (final node in row) {
+    for (final list in _cards.values) {
+      for (final node in list) {
         node.dispose();
       }
     }
@@ -91,6 +121,8 @@ class _MusicSearchPageState extends State<MusicSearchPage> {
     _debounce.run();
   }
 
+  // ---------------------------------------------------------------- 最近 / 热门
+
   Future<void> _loadRecent() async {
     final raw = SettingsStore.instance.getString(_recentKey) ?? '';
     if (!mounted) return;
@@ -101,6 +133,28 @@ class _MusicSearchPageState extends State<MusicSearchPage> {
           .where((e) => e.isNotEmpty)
           .toList();
     });
+  }
+
+  /// 热门搜索：本机最近播放过的艺人 / 专辑 / 曲名去重。
+  /// 真「全站热门」要额外的统计接口，不值得为搜索页加一个 —— 常听的更贴近自己。
+  Future<void> _loadHot() async {
+    try {
+      final res = await ApiSession.instance.client.musicHistory(limit: 40);
+      if (!mounted) return;
+      final seen = <String>{};
+      for (final track in res.items) {
+        for (final name in <String?>[track.artist, track.album, track.title]) {
+          final value = (name ?? '').trim();
+          if (value.isEmpty) continue;
+          seen.add(value);
+          if (seen.length >= 10) break;
+        }
+        if (seen.length >= 10) break;
+      }
+      setState(() => _hot = seen.toList());
+    } catch (_) {
+      // 拿不到就不显示「热门」栏目
+    }
   }
 
   Future<void> _remember(String query) async {
@@ -116,6 +170,8 @@ class _MusicSearchPageState extends State<MusicSearchPage> {
     await SettingsStore.instance.setString(_recentKey, null);
   }
 
+  // ---------------------------------------------------------------- 搜索
+
   Future<void> _run() async {
     final q = _query.trim();
     if (q.isEmpty) {
@@ -128,7 +184,7 @@ class _MusicSearchPageState extends State<MusicSearchPage> {
         _loading = false;
         _error = null;
       });
-      _rebuildNodes();
+      _rebuildCards();
       return;
     }
     setState(() {
@@ -137,33 +193,29 @@ class _MusicSearchPageState extends State<MusicSearchPage> {
     });
     try {
       final client = ApiSession.instance.client;
-      // 三类走服务端，两类本地过滤：四路并发，谁先回来都不影响整体
+      // 歌曲 / 专辑 / 歌手走服务端 q；歌单与合集量小，取全量本地过滤（少两个接口）
       final results = await Future.wait<Object>([
         client.musicList(q: q, limit: 30),
-        client.musicAlbums(q: q, limit: 18),
-        client.musicArtists(q: q, limit: 18),
+        client.musicAlbums(q: q, limit: 20),
+        client.musicArtists(q: q, limit: 20),
         client.musicPlaylistList(),
         client.musicCollectionList(),
       ]);
       if (!mounted) return;
       final lower = q.toLowerCase();
-      final playlists = (results[3] as MusicPlaylistListResponse).items
-          .where((p) => p.name.toLowerCase().contains(lower))
-          .take(18)
-          .toList();
-      final collections = (results[4] as MusicCollectionListResponse).items
-          .where((c) => c.name.toLowerCase().contains(lower))
-          .take(18)
-          .toList();
       setState(() {
         _tracks = (results[0] as MusicListResponse).items;
         _albums = (results[1] as MusicAlbumListResponse).items;
         _artists = (results[2] as MusicArtistListResponse).items;
-        _playlists = playlists;
-        _collections = collections;
+        _playlists = (results[3] as MusicPlaylistListResponse).items
+            .where((p) => p.name.toLowerCase().contains(lower))
+            .toList();
+        _collections = (results[4] as MusicCollectionListResponse).items
+            .where((c) => c.name.toLowerCase().contains(lower))
+            .toList();
         _loading = false;
       });
-      _rebuildNodes();
+      _rebuildCards();
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -173,18 +225,26 @@ class _MusicSearchPageState extends State<MusicSearchPage> {
     }
   }
 
-  /// 结果变了就重建焦点节点：旧的 node 挂在已经不存在的卡片上，留着只会跳空。
-  void _rebuildNodes() {
-    for (final list in _nodes.values) {
+  /// 结果变了就重建卡片焦点节点，并**在帧后把焦点校准到仍然存在的卡片上**。
+  ///
+  /// 不校准的后果：用户正停在第 3 个栏目第 4 张卡，输入一个字母让结果变少，
+  /// 旧节点被销毁 → 焦点掉回根节点，遥控器得从键盘重新按一遍。
+  void _rebuildCards() {
+    final previous = _lastSection;
+    final previousIndex = _lastIndex;
+    for (final list in _cards.values) {
       for (final node in list) {
         node.dispose();
       }
     }
-    _nodes.clear();
-    if (!_tv) return;
+    _cards.clear();
+
     void build(String key, int count) {
       if (count <= 0) return;
-      _nodes[key] = List<FocusNode>.generate(count, (_) => FocusNode(debugLabel: key));
+      _cards[key] = List<FocusNode>.generate(
+        count,
+        (_) => FocusNode(debugLabel: 'card-$key'),
+      );
     }
 
     build('songs', _tracks.length);
@@ -192,117 +252,23 @@ class _MusicSearchPageState extends State<MusicSearchPage> {
     build('artists', _artists.length);
     build('playlists', _playlists.length);
     build('collections', _collections.length);
-  }
 
-  // ---------------------------------------------------------------- 栏目
-
-  /// 栏目（类型 key + 标题 + 卡片行），顺序固定：歌曲 → 专辑 → 歌手 → 歌单 → 合集
-  List<Widget> _sections() {
-    final sections = <Widget>[];
-    void add(String key, String title, int count, Widget Function(int) card) {
-      if (count <= 0) return; // 空栏目直接不渲染，避免只有标题的空白块
-      sections.add(
-        _Section(
-          title: title,
-          count: count,
-          itemBuilder: card,
-          focusNodes: _nodes[key],
-          onKey: _handleCardKey,
-          sectionKey: key,
-        ),
-      );
-    }
-
-    add('songs', tr('music.search.sectionSongs'), _tracks.length, (i) {
-      final track = _tracks[i];
-      return _Card(
-        title: track.title,
-        subtitle: track.artist ?? '',
-        coverId: track.id,
-        onTap: () {
-          unawaited(_remember(_query));
-          musicPlayTracks(context, _tracks, i);
-        },
-        focusNode: _nodes['songs']?[i],
-      );
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final keys = _visibleKeys;
+      if (keys.isEmpty) return;
+      // 原来那个栏目还在就留在原地，否则回到第一个栏目的同一列
+      final target = previous != null && keys.contains(previous) ? previous : keys.first;
+      final nodes = _cards[target];
+      if (nodes == null || nodes.isEmpty) return;
+      final index = previousIndex.clamp(0, nodes.length - 1);
+      _lastSection = target;
+      _lastIndex = index;
+      nodes[index].requestFocus();
     });
-    add('albums', tr('music.search.sectionAlbums'), _albums.length, (i) {
-      final album = _albums[i];
-      return _Card(
-        title: album.name,
-        subtitle: album.artist ?? '',
-        coverId: album.coverTrackId,
-        onTap: () => _openGroup(title: album.name, album: album.name),
-        focusNode: _nodes['albums']?[i],
-      );
-    });
-    add('artists', tr('music.search.sectionArtists'), _artists.length, (i) {
-      final artist = _artists[i];
-      return _Card(
-        title: artist.name,
-        subtitle: '${artist.albums} ${tr('music.search.sectionAlbums')}',
-        coverId: artist.coverTrackId,
-        circular: true,
-        onTap: () => _openGroup(title: artist.name, artist: artist.name),
-        focusNode: _nodes['artists']?[i],
-      );
-    });
-    add('playlists', tr('music.search.sectionPlaylists'), _playlists.length, (i) {
-      final playlist = _playlists[i];
-      return _Card(
-        title: playlist.name,
-        subtitle: '${playlist.tracks}',
-        coverId: playlist.coverTrackId,
-        onTap: () => Navigator.of(context).push(
-          MaterialPageRoute<void>(
-            builder: (_) => MusicPlaylistDetailPage(playlist: playlist),
-          ),
-        ),
-        focusNode: _nodes['playlists']?[i],
-      );
-    });
-    add('collections', tr('music.search.sectionCollections'), _collections.length, (i) {
-      final collection = _collections[i];
-      return _Card(
-        title: collection.name,
-        subtitle: '${collection.tracks}',
-        coverId: collection.coverTrackId,
-        onTap: () => Navigator.of(context).push(
-          MaterialPageRoute<void>(
-            builder: (_) => MusicCollectionDetailPage(collection: collection),
-          ),
-        ),
-        focusNode: _nodes['collections']?[i],
-      );
-    });
-    return sections;
-  }
-
-  void _openGroup({required String title, String? album, String? artist}) {
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => MusicGroupTracksPage(title: title, album: album, artist: artist),
-      ),
-    );
   }
 
   // ---------------------------------------------------------------- 焦点
-
-  /// 栏目里按 ↑↓：跳到上/下一个栏目的**同一列**（不够就落最后一张）
-  void _moveSection(String key, int delta) {
-    final order = _visibleKeys;
-    final index = order.indexOf(key);
-    if (index < 0) return;
-    final target = index + delta;
-    if (target < 0 || target >= order.length) return;
-    final nodes = _nodes[order[target]];
-    if (nodes == null || nodes.isEmpty) return;
-    final currentCol = _colOf(key);
-    nodes[currentCol.clamp(0, nodes.length - 1)].requestFocus();
-  }
-
-  int _colOf(String key) => _focusedCol[key] ?? 0;
-  final Map<String, int> _focusedCol = <String, int>{};
 
   List<String> get _visibleKeys => [
     if (_tracks.isNotEmpty) 'songs',
@@ -312,186 +278,155 @@ class _MusicSearchPageState extends State<MusicSearchPage> {
     if (_collections.isNotEmpty) 'collections',
   ];
 
+  bool get _resultsFocused =>
+      _cards.values.any((list) => list.any((node) => node.hasFocus));
+
   void _focusKeyboard() {
-    if (!_tv) return;
-    final row = _keyboardNodes.isEmpty ? null : _keyboardNodes[0];
-    if (row == null || row.isEmpty) {
-      _inputFocus.requestFocus();
+    if (_keys.isNotEmpty && _keys[0].isNotEmpty) {
+      _keys[0][0].requestFocus();
       return;
     }
-    row[row.length - 1].requestFocus();
+    _inputFocus.requestFocus();
   }
 
-  /// 键盘最右列按 →：焦点进右侧第一栏目第一张
-  void _toResults() {
+  /// 键盘最右列按 →：进右侧第一栏目第一个卡片
+  void _focusFirstResult() {
     final keys = _visibleKeys;
     if (keys.isEmpty) return;
-    final nodes = _nodes[keys.first];
+    final nodes = _cards[keys.first];
     if (nodes == null || nodes.isEmpty) return;
+    _lastSection = keys.first;
+    _lastIndex = 0;
     nodes.first.requestFocus();
+  }
+
+  /// 栏目内 ↑↓：跳到上/下一个栏目的**同一列**，不够就落最后一张
+  void _moveSection(String sectionKey, int index, int delta) {
+    final keys = _visibleKeys;
+    final current = keys.indexOf(sectionKey);
+    if (current < 0) return;
+    final target = current + delta;
+    if (target < 0 || target >= keys.length) return;
+    final nodes = _cards[keys[target]];
+    if (nodes == null || nodes.isEmpty) return;
+    final next = index.clamp(0, nodes.length - 1);
+    _lastSection = keys[target];
+    _lastIndex = next;
+    nodes[next].requestFocus();
   }
 
   KeyEventResult _handleCardKey(String sectionKey, int index, KeyEvent event) {
     if (event is! KeyDownEvent) return KeyEventResult.ignored;
-    _focusedCol[sectionKey] = index;
-    final isFirst = index == 0;
-    if (event.logicalKey == LogicalKeyboardKey.arrowLeft && isFirst) {
-      _focusKeyboard();
+    _lastSection = sectionKey;
+    _lastIndex = index;
+    final key = event.logicalKey;
+
+    if (key == LogicalKeyboardKey.arrowLeft) {
+      if (index > 0) {
+        _cards[sectionKey]?[index - 1].requestFocus();
+        _lastIndex = index - 1;
+      } else {
+        // 最左列 ← 拉回键盘（设计：只有这一条回路，不做环形）
+        _focusKeyboard();
+      }
       return KeyEventResult.handled;
     }
-    if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
-      _moveSection(sectionKey, -1);
+    if (key == LogicalKeyboardKey.arrowRight) {
+      final nodes = _cards[sectionKey];
+      if (nodes == null) return KeyEventResult.handled;
+      if (index >= nodes.length - 1) {
+        // 到最右就拦住：不横向滚，也不跨栏目
+        return KeyEventResult.handled;
+      }
+      nodes[index + 1].requestFocus();
+      _lastIndex = index + 1;
       return KeyEventResult.handled;
     }
-    if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
-      _moveSection(sectionKey, 1);
+    if (key == LogicalKeyboardKey.arrowUp) {
+      _moveSection(sectionKey, index, -1);
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.arrowDown) {
+      _moveSection(sectionKey, index, 1);
       return KeyEventResult.handled;
     }
     return KeyEventResult.ignored;
   }
 
-  // ---------------------------------------------------------------- UI
+  // ---------------------------------------------------------------- 布局
 
   @override
   Widget build(BuildContext context) {
     final tv = TvScope.of(context);
-    final results = _resultsArea();
-    final body = tv
-        ? Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              SizedBox(width: 320, child: _keyboard(context)),
-              const VerticalDivider(width: 1),
-              Expanded(child: results),
-            ],
-          )
-        : results;
-
-    final page = Column(
+    final content = Column(
       children: [
-        _searchBar(context),
-        Expanded(child: body),
+        _searchBar(context, tv),
+        Expanded(
+          child: tv
+              ? Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // 左 ~35% 键盘 / 右 ~65% 结果（设计给的配比）
+                    Expanded(flex: 35, child: _keyboardPanel(context)),
+                    const VerticalDivider(width: 1),
+                    Expanded(flex: 65, child: _resultsPanel(context, tv: true)),
+                  ],
+                )
+              : _resultsPanel(context, tv: false),
+        ),
       ],
     );
-    if (widget.embedded) return page;
-    return Scaffold(
-      appBar: AppBar(title: Text(tr('music.search.title'))),
-      body: page,
+
+    return PopScope(
+      // TV：返回键先收回焦点，再退页面。非 TV 没有键盘面板，直接退出
+      canPop: !tv,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        if (_resultsFocused) {
+          _focusKeyboard();
+          return;
+        }
+        Navigator.of(context).maybePop();
+      },
+      child: widget.embedded
+          ? content
+          : Scaffold(
+              appBar: AppBar(title: Text(tr('music.search.title'))),
+              body: content,
+            ),
     );
   }
 
-  Widget _searchBar(BuildContext context) {
+  Widget _searchBar(BuildContext context, bool tv) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(
+      padding: EdgeInsets.fromLTRB(
         NasTokens.spaceMd,
-        NasTokens.spaceSm,
+        tv ? NasTokens.spaceMd : NasTokens.spaceSm,
         NasTokens.spaceMd,
         NasTokens.spaceXs,
       ),
-      child: Row(
-        children: [
-          Expanded(
-            child: NasSearchField(
-              controller: _input,
-              hintText: tr('music.search.placeholder'),
-              focusNode: _inputFocus,
-              autofocus: !_tv,
-              onSubmitted: (v) => unawaited(_remember(v)),
-              onClear: () => setState(() {}),
-            ),
-          ),
-        ],
+      child: NasSearchField(
+        controller: _input,
+        hintText: tr('music.search.placeholder'),
+        focusNode: _inputFocus,
+        autofocus: !tv,
+        onSubmitted: (v) => _remember(v),
+        onClear: () => setState(() {}),
       ),
     );
   }
 
-  Widget _resultsArea() {
-    if (_query.trim().isEmpty) return _recentArea();
-    if (_error != null) {
-      return NasErrorState(message: _error!, onRetry: _run);
+  // ---------------------------------------------------------------- 屏上键盘
+
+  static const List<String> _rowChars = <String>['qwertyuiop', 'asdfghjkl', 'zxcvbnm'];
+
+  Widget _keyboardPanel(BuildContext context) {
+    while (_keys.length < _rowChars.length) {
+      _keys.add(<FocusNode>[]);
     }
-    final sections = _sections();
-    if (sections.isEmpty) {
-      if (_loading) {
-        return Center(
-          child: Text(
-            tr('music.search.searching'),
-            style: TextStyle(color: context.nasTextSecondary),
-          ),
-        );
-      }
-      return Center(
-        child: Text(
-          tr('music.search.empty'),
-          style: TextStyle(color: context.nasTextSecondary),
-        ),
-      );
-    }
-    return ListView(
-      controller: _scroll,
-      padding: const EdgeInsets.only(bottom: NasTokens.spaceXl),
-      children: sections,
-    );
-  }
-
-  Widget _recentArea() {
-    return ListView(
-      padding: const EdgeInsets.all(NasTokens.spaceMd),
-      children: [
-        if (_recent.isNotEmpty) ...[
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  tr('music.search.recent'),
-                  style: const TextStyle(fontWeight: FontWeight.w600),
-                ),
-              ),
-              TextButton(
-                onPressed: _clearRecent,
-                child: Text(tr('music.search.recentClear')),
-              ),
-            ],
-          ),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              for (final keyword in _recent)
-                ActionChip(
-                  label: Text(keyword),
-                  onPressed: () {
-                    _input.text = keyword;
-                    _input.selection = TextSelection.collapsed(offset: keyword.length);
-                  },
-                ),
-            ],
-          ),
-        ] else
-          Padding(
-            padding: const EdgeInsets.only(top: NasTokens.spaceLg),
-            child: Text(
-              tr('music.search.hint'),
-              style: TextStyle(color: context.nasTextSecondary),
-            ),
-          ),
-      ],
-    );
-  }
-
-  // ---------------------------------------------------------------- TV 键盘
-
-  static const List<String> _rows = <String>['qwertyuiop', 'asdfghjkl', 'zxcvbnm'];
-
-  Widget _keyboard(BuildContext context) {
-    while (_keyboardNodes.length < _rows.length) {
-      _keyboardNodes.add(<FocusNode>[]);
-    }
-    for (var r = 0; r < _rows.length; r += 1) {
-      final row = _rows[r];
-      final nodes = _keyboardNodes[r];
-      while (nodes.length < row.length) {
-        nodes.add(FocusNode(debugLabel: 'key-$r-${nodes.length}'));
+    for (var r = 0; r < _rowChars.length; r += 1) {
+      while (_keys[r].length < _rowChars[r].length) {
+        _keys[r].add(FocusNode(debugLabel: 'key-$r-${_keys[r].length}'));
       }
     }
 
@@ -500,19 +435,20 @@ class _MusicSearchPageState extends State<MusicSearchPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          for (var r = 0; r < _rows.length; r += 1)
+          for (var r = 0; r < _rowChars.length; r += 1)
             Padding(
-              padding: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.only(bottom: 10),
               child: Row(
                 children: [
-                  for (var c = 0; c < _rows[r].length; c += 1)
+                  for (var c = 0; c < _rowChars[r].length; c += 1)
                     Expanded(
                       child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 3),
-                        child: _Key(
-                          label: _rows[r][c],
-                          focusNode: _keyboardNodes[r][c],
-                          onTap: () => _append(_rows[r][c]),
+                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                        child: _KeyCap(
+                          label: _rowChars[r][c],
+                          focusNode: _keys[r][c],
+                          big: true,
+                          onTap: () => _append(_rowChars[r][c]),
                           onKey: (event) => _handleKey(event, r, c),
                         ),
                       ),
@@ -524,19 +460,23 @@ class _MusicSearchPageState extends State<MusicSearchPage> {
           Row(
             children: [
               Expanded(
-                child: OutlinedButton(
-                  onPressed: () {
+                child: _KeyCap(
+                  label: tr('music.search.recentClear'),
+                  focusNode: _clearKey,
+                  onTap: () {
                     _input.clear();
                     _onChanged();
                   },
-                  child: Text(tr('music.search.recentClear')),
+                  onKey: (event) => _handleActionKey(event, left: true),
                 ),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 10),
               Expanded(
-                child: OutlinedButton(
-                  onPressed: _backspace,
-                  child: Text(tr('music.search.backspace')),
+                child: _KeyCap(
+                  label: tr('music.search.backspace'),
+                  focusNode: _backspaceKey,
+                  onTap: _backspace,
+                  onKey: (event) => _handleActionKey(event, left: false),
                 ),
               ),
             ],
@@ -563,40 +503,265 @@ class _MusicSearchPageState extends State<MusicSearchPage> {
   KeyEventResult _handleKey(KeyEvent event, int row, int col) {
     if (event is! KeyDownEvent) return KeyEventResult.ignored;
     final key = event.logicalKey;
-    final rows = _keyboardNodes;
+    final rows = _keys;
+
     if (key == LogicalKeyboardKey.arrowRight) {
-      if (col == rows[row].length - 1) {
-        _toResults();
-        return KeyEventResult.handled;
+      if (col >= rows[row].length - 1) {
+        // 该行最右 → 跳出键盘进结果区
+        _focusFirstResult();
+      } else {
+        rows[row][col + 1].requestFocus();
       }
-      rows[row][col + 1].requestFocus();
       return KeyEventResult.handled;
     }
     if (key == LogicalKeyboardKey.arrowLeft) {
-      if (col == 0) return KeyEventResult.handled;
-      rows[row][col - 1].requestFocus();
+      if (col > 0) rows[row][col - 1].requestFocus();
       return KeyEventResult.handled;
     }
     if (key == LogicalKeyboardKey.arrowUp) {
       if (row == 0) {
-        _inputFocus.requestFocus();
-        return KeyEventResult.handled;
+        _inputFocus.requestFocus(); // 回搜索框，方便改整串
+      } else {
+        final target = rows[row - 1];
+        target[col.clamp(0, target.length - 1)].requestFocus();
       }
-      final target = rows[row - 1];
-      target[col.clamp(0, target.length - 1)].requestFocus();
       return KeyEventResult.handled;
     }
     if (key == LogicalKeyboardKey.arrowDown) {
-      if (row == rows.length - 1) return KeyEventResult.handled;
-      final target = rows[row + 1];
-      target[col.clamp(0, target.length - 1)].requestFocus();
+      if (row == rows.length - 1) {
+        _clearKey.requestFocus();
+      } else {
+        final target = rows[row + 1];
+        target[col.clamp(0, target.length - 1)].requestFocus();
+      }
       return KeyEventResult.handled;
     }
     return KeyEventResult.ignored;
   }
+
+  KeyEventResult _handleActionKey(KeyEvent event, {required bool left}) {
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    final key = event.logicalKey;
+    if (key == LogicalKeyboardKey.arrowUp) {
+      final last = _keys.isEmpty ? null : _keys.last;
+      if (last != null && last.isNotEmpty) last[0].requestFocus();
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.arrowLeft) {
+      if (!left) _clearKey.requestFocus();
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.arrowRight) {
+      if (left) {
+        _backspaceKey.requestFocus();
+      } else {
+        _focusFirstResult();
+      }
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
+  // ---------------------------------------------------------------- 结果区
+
+  Widget _resultsPanel(BuildContext context, {required bool tv}) {
+    if (_query.trim().isEmpty) return _defaultSections(context, tv: tv);
+    if (_error != null) return NasErrorState(message: _error!, onRetry: _run);
+    final sections = _resultSections(context, tv: tv);
+    if (sections.isEmpty) {
+      return Center(
+        child: Text(
+          _loading ? tr('music.search.searching') : tr('music.search.empty'),
+          style: TextStyle(color: context.nasTextSecondary, fontSize: tv ? 22 : 16),
+        ),
+      );
+    }
+    return ListView(
+      controller: _scroll,
+      padding: const EdgeInsets.only(bottom: NasTokens.spaceXl),
+      children: sections,
+    );
+  }
+
+  /// 未输入时的默认栏目：热门搜索 + 历史记录（设计里的空状态）
+  Widget _defaultSections(BuildContext context, {required bool tv}) {
+    if (_hot.isEmpty && _recent.isEmpty) {
+      return Center(
+        child: Text(
+          tr('music.search.hint'),
+          style: TextStyle(color: context.nasTextSecondary, fontSize: tv ? 20 : 15),
+        ),
+      );
+    }
+    return ListView(
+      padding: const EdgeInsets.only(bottom: NasTokens.spaceXl),
+      children: [
+        if (_hot.isNotEmpty) _chipSection(context, tr('music.search.hot'), _hot, tv: tv),
+        if (_recent.isNotEmpty)
+          _chipSection(
+            context,
+            tr('music.search.recent'),
+            _recent,
+            tv: tv,
+            trailing: TextButton(
+              onPressed: _clearRecent,
+              child: Text(tr('music.search.recentClear')),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _chipSection(
+    BuildContext context,
+    String title,
+    List<String> keywords, {
+    required bool tv,
+    Widget? trailing,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(
+            NasTokens.spaceMd,
+            NasTokens.spaceMd,
+            NasTokens.spaceMd,
+            NasTokens.spaceXs,
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: tv ? 24 : 18,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              ?trailing,
+            ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: NasTokens.spaceMd),
+          child: Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              for (final keyword in keywords)
+                ActionChip(
+                  label: Text(keyword, style: TextStyle(fontSize: tv ? 18 : 14)),
+                  onPressed: () {
+                    _input.text = keyword;
+                    _input.selection = TextSelection.collapsed(offset: keyword.length);
+                    _onChanged();
+                  },
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// 结果栏目：歌曲 → 专辑 → 歌手 → 歌单 → 合集，空栏目不渲染
+  List<Widget> _resultSections(BuildContext context, {required bool tv}) {
+    final max = tv ? _tvSectionMax : _wideSectionMax;
+    final sections = <Widget>[];
+
+    void add(String key, String title, int count, Widget Function(int) card) {
+      if (count <= 0) return;
+      final shown = count > max ? max : count;
+      sections.add(
+        _Section(
+          title: title,
+          big: tv,
+          count: shown,
+          itemBuilder: card,
+          focusNodes: _cards[key],
+          onKey: _handleCardKey,
+          sectionKey: key,
+        ),
+      );
+    }
+
+    add('songs', tr('music.search.sectionSongs'), _tracks.length, (i) {
+      final track = _tracks[i];
+      return _ResultCard(
+        title: track.title,
+        subtitle: track.artist ?? '',
+        coverId: track.id,
+        focusNode: _cards['songs']?[i],
+        onTap: () {
+          unawaited(_remember(_query));
+          musicPlayTracks(context, _tracks, i);
+        },
+      );
+    });
+    add('albums', tr('music.search.sectionAlbums'), _albums.length, (i) {
+      final album = _albums[i];
+      return _ResultCard(
+        title: album.name,
+        subtitle: album.artist ?? '',
+        coverId: album.coverTrackId,
+        focusNode: _cards['albums']?[i],
+        onTap: () => _openGroup(title: album.name, album: album.name),
+      );
+    });
+    add('artists', tr('music.search.sectionArtists'), _artists.length, (i) {
+      final artist = _artists[i];
+      return _ResultCard(
+        title: artist.name,
+        subtitle: '${artist.albums} ${tr('music.search.sectionAlbums')}',
+        coverId: artist.coverTrackId,
+        circular: true,
+        focusNode: _cards['artists']?[i],
+        onTap: () => _openGroup(title: artist.name, artist: artist.name),
+      );
+    });
+    add('playlists', tr('music.search.sectionPlaylists'), _playlists.length, (i) {
+      final playlist = _playlists[i];
+      return _ResultCard(
+        title: playlist.name,
+        subtitle: '${playlist.tracks}',
+        coverId: playlist.coverTrackId,
+        focusNode: _cards['playlists']?[i],
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => MusicPlaylistDetailPage(playlist: playlist),
+          ),
+        ),
+      );
+    });
+    add('collections', tr('music.search.sectionCollections'), _collections.length, (i) {
+      final collection = _collections[i];
+      return _ResultCard(
+        title: collection.name,
+        subtitle: '${collection.tracks}',
+        coverId: collection.coverTrackId,
+        focusNode: _cards['collections']?[i],
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => MusicCollectionDetailPage(collection: collection),
+          ),
+        ),
+      );
+    });
+    return sections;
+  }
+
+  void _openGroup({required String title, String? album, String? artist}) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => MusicGroupTracksPage(title: title, album: album, artist: artist),
+      ),
+    );
+  }
 }
 
-/// 一个栏目：标题由外层渲染，这里只负责横向卡片行。
+/// 一个栏目：大号粗体标题 + 一行卡片（TV 不横向滚动，最多 5 张）
 class _Section extends StatelessWidget {
   const _Section({
     required this.title,
@@ -605,6 +770,7 @@ class _Section extends StatelessWidget {
     required this.focusNodes,
     required this.onKey,
     required this.sectionKey,
+    this.big = true,
   });
 
   final String title;
@@ -613,6 +779,7 @@ class _Section extends StatelessWidget {
   final List<FocusNode>? focusNodes;
   final KeyEventResult Function(String sectionKey, int index, KeyEvent event) onKey;
   final String sectionKey;
+  final bool big;
 
   @override
   Widget build(BuildContext context) {
@@ -628,16 +795,21 @@ class _Section extends StatelessWidget {
           ),
           child: Text(
             title,
-            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+            style: TextStyle(
+              fontSize: big ? 24 : 18,
+              fontWeight: FontWeight.w700,
+            ),
           ),
         ),
         SizedBox(
-          height: 196,
+          height: big ? 200 : 180,
           child: ListView.separated(
             scrollDirection: Axis.horizontal,
+            // TV 侧关掉滚动：卡片数已限到 5 张，一次放得下
+            physics: big ? const NeverScrollableScrollPhysics() : null,
             padding: const EdgeInsets.symmetric(horizontal: NasTokens.spaceMd),
             itemCount: count,
-            separatorBuilder: (_, _) => const SizedBox(width: 12),
+            separatorBuilder: (_, _) => SizedBox(width: big ? 14 : 12),
             itemBuilder: (context, i) {
               final card = itemBuilder(i);
               final node =
@@ -657,8 +829,10 @@ class _Section extends StatelessWidget {
 }
 
 /// 结果卡片：封面（或圆形头像）+ 标题 + 副标题。
-class _Card extends StatefulWidget {
-  const _Card({
+///
+/// 聚焦时描边 + 浅色底 + 自动滚进可视区 —— 遥控器上「焦点在哪」必须一眼看得见。
+class _ResultCard extends StatefulWidget {
+  const _ResultCard({
     required this.title,
     required this.subtitle,
     required this.coverId,
@@ -675,12 +849,11 @@ class _Card extends StatefulWidget {
   final FocusNode? focusNode;
 
   @override
-  State<_Card> createState() => _CardState();
+  State<_ResultCard> createState() => _ResultCardState();
 }
 
-class _CardState extends State<_Card> {
+class _ResultCardState extends State<_ResultCard> {
   bool _focused = false;
-  bool _hovered = false;
 
   @override
   void initState() {
@@ -695,95 +868,110 @@ class _CardState extends State<_Card> {
   }
 
   void _onFocus() {
-    if (mounted) setState(() => _focused = widget.focusNode?.hasFocus ?? false);
+    final focused = widget.focusNode?.hasFocus ?? false;
+    if (!mounted || focused == _focused) return;
+    setState(() => _focused = focused);
+    if (focused) {
+      // 跨栏目跳转后，新卡片可能还在屏幕外
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        Scrollable.ensureVisible(
+          context,
+          duration: const Duration(milliseconds: 160),
+          alignment: 0.5,
+        );
+      });
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final active = _focused || _hovered;
-    return MouseRegion(
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
-      child: GestureDetector(
-        onTap: widget.onTap,
-        child: Container(
-          width: 132,
-          padding: const EdgeInsets.all(4),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(NasTokens.radiusSm),
-            border: Border.all(
-              color: active ? scheme.primary : Colors.transparent,
-              width: 2,
-            ),
+    final size = widget.circular ? 92.0 : 128.0;
+    return GestureDetector(
+      onTap: widget.onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 120),
+        width: 140,
+        padding: const EdgeInsets.all(6),
+        decoration: BoxDecoration(
+          color: _focused ? scheme.primary.withValues(alpha: 0.12) : null,
+          borderRadius: BorderRadius.circular(NasTokens.radiusSm),
+          border: Border.all(
+            color: _focused ? scheme.primary : Colors.transparent,
+            width: 2,
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(widget.circular ? 48 : NasTokens.radiusSm),
-                child: widget.coverId == null
-                    ? Container(
-                        width: 124,
-                        height: widget.circular ? 96 : 124,
-                        color: context.nasStyle.panelColor,
-                        child: Icon(Icons.music_note, color: context.nasTextSecondary),
-                      )
-                    : SizedBox(
-                        width: widget.circular ? 96 : 124,
-                        height: widget.circular ? 96 : 124,
-                        child: NasCoverImage(
-                          url: musicCoverUrl(widget.coverId!),
-                          borderRadius: widget.circular ? 48 : NasTokens.radiusSm,
-                          cacheWidth: 300,
-                          fallbackText: widget.title,
-                        ),
-                      ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(
+                widget.circular ? size / 2 : NasTokens.radiusSm,
               ),
-              const SizedBox(height: 6),
+              child: widget.coverId == null
+                  ? Container(
+                      width: size,
+                      height: size,
+                      color: context.nasStyle.panelColor,
+                      child: Icon(Icons.music_note, color: context.nasTextSecondary),
+                    )
+                  : SizedBox(
+                      width: size,
+                      height: size,
+                      child: NasCoverImage(
+                        url: musicCoverUrl(widget.coverId!),
+                        borderRadius: widget.circular ? size / 2 : NasTokens.radiusSm,
+                        cacheWidth: 320,
+                        fallbackText: widget.title,
+                      ),
+                    ),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              widget.title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+            ),
+            if (widget.subtitle.isNotEmpty)
               Text(
-                widget.title,
+                widget.subtitle,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: NasTokens.fontBody, fontWeight: FontWeight.w600),
-              ),
-              if (widget.subtitle.isNotEmpty)
-                Text(
-                  widget.subtitle,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: NasTokens.fontCaption,
-                    color: context.nasTextSecondary,
-                  ),
+                style: TextStyle(
+                  fontSize: NasTokens.fontCaption,
+                  color: context.nasTextSecondary,
                 ),
-            ],
-          ),
+              ),
+          ],
         ),
       ),
     );
   }
 }
 
-/// 屏上键盘的一个键：Tap 输入；焦点态描边（遥控器看得见当前在哪）。
-class _Key extends StatefulWidget {
-  const _Key({
+/// 屏上键盘的一个键：聚焦时放大 + 描边 + 投影（遥控器要能看见当前在哪）。
+class _KeyCap extends StatefulWidget {
+  const _KeyCap({
     required this.label,
     required this.onTap,
     required this.onKey,
     this.focusNode,
+    this.big = false,
   });
 
   final String label;
   final VoidCallback onTap;
   final KeyEventResult Function(KeyEvent event) onKey;
   final FocusNode? focusNode;
+  final bool big;
 
   @override
-  State<_Key> createState() => _KeyState();
+  State<_KeyCap> createState() => _KeyCapState();
 }
 
-class _KeyState extends State<_Key> {
+class _KeyCapState extends State<_KeyCap> {
   bool _focused = false;
 
   @override
@@ -805,26 +993,46 @@ class _KeyState extends State<_Key> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return InkWell(
-      focusNode: widget.focusNode,
-      onTap: widget.onTap,
-      focusColor: scheme.primary.withValues(alpha: 0.18),
-      borderRadius: BorderRadius.circular(NasTokens.radiusSm),
-      child: Container(
-        height: 44,
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: _focused
-              ? scheme.primary.withValues(alpha: 0.18)
-              : context.nasStyle.panelColor,
+    return AnimatedScale(
+      scale: _focused ? 1.06 : 1.0,
+      duration: const Duration(milliseconds: 110),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          focusNode: widget.focusNode,
+          onTap: widget.onTap,
           borderRadius: BorderRadius.circular(NasTokens.radiusSm),
-          border: Border.all(
-            color: _focused ? scheme.primary : context.nasStyle.panelBorderColor,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 110),
+            height: widget.big ? 56 : 44,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: _focused
+                  ? scheme.primary.withValues(alpha: 0.22)
+                  : context.nasStyle.panelColor,
+              borderRadius: BorderRadius.circular(NasTokens.radiusSm),
+              border: Border.all(
+                color: _focused ? scheme.primary : context.nasStyle.panelBorderColor,
+                width: _focused ? 2 : 1,
+              ),
+              boxShadow: _focused
+                  ? <BoxShadow>[
+                      BoxShadow(
+                        color: scheme.primary.withValues(alpha: 0.45),
+                        blurRadius: 12,
+                        spreadRadius: 1,
+                      ),
+                    ]
+                  : null,
+            ),
+            child: Text(
+              widget.label,
+              style: TextStyle(
+                fontSize: widget.big ? 24 : 16,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
           ),
-        ),
-        child: Text(
-          widget.label,
-          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
         ),
       ),
     );

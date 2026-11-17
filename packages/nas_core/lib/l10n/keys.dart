@@ -156,6 +156,7 @@ class I18nKeys {
   static const musicSearchBackspace = 'music.search.backspace';
   static const musicSearchEmpty = 'music.search.empty';
   static const musicSearchHint = 'music.search.hint';
+  static const musicSearchHot = 'music.search.hot';
   static const musicSearchPlaceholder = 'music.search.placeholder';
   static const musicSearchRecent = 'music.search.recent';
   static const musicSearchRecentClear = 'music.search.recentClear';
@@ -195,6 +196,13 @@ class I18nKeys {
   static const transmissionActionFailed = 'transmission.actionFailed';
   static const transmissionCompleted = 'transmission.completed';
   static const transmissionUploadingTo = 'transmission.uploadingTo';
+  // ---- tv ----
+  static const tvSearchBackspace = 'tv.search.backspace';
+  static const tvSearchClear = 'tv.search.clear';
+  static const tvSearchGroupMovie = 'tv.search.group.movie';
+  static const tvSearchGroupTv = 'tv.search.group.tv';
+  static const tvSearchHistory = 'tv.search.history';
+  static const tvSearchHot = 'tv.search.hot';
   // ---- ui ----
   static const uiBook020 = 'ui.book.020';
   static const uiBookHd9c32a = 'ui.book.hd9c32a';
@@ -3050,4 +3058,4 @@ class I18nKeys {
 }
 
 /// 契约键总数（生成时确定），供完整性自检使用。
-const int i18nKeyCount = 3000;
+const int i18nKeyCount = 3007;
