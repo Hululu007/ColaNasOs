@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
-import { duplicateKey, extractDupCode, hasWord } from '../src/modules/video/routes/duplicates';
+import { duplicateKey, extractDupCode, hasWord, seqToken } from '../src/modules/video/routes/duplicates';
 
 describe('video · 重复片名归一化', () => {
   test('画质 / 编码 / 发布组 / 日系标记都归一到同一个 key', () => {
@@ -24,6 +24,32 @@ describe('video · 重复片名归一化', () => {
 
   test('只有噪声的文件名归一化为空（不参与分组）', () => {
     assert.equal(duplicateKey('1080p x264'), '');
+  });
+});
+
+describe('video · 同名不同序号不算重复', () => {
+  test('括号里的纯数字序号要单独识别出来', () => {
+    assert.equal(seqToken('街拍2023 (55).mp4'), 'seq55');
+    assert.equal(seqToken('街拍2023（57）'), 'seq57');
+    assert.equal(seqToken('街拍2023 (6).mp4'), 'seq6');
+    // 同一部片的不同序号必须能区分开（否则会被并成一组「重复」）
+    assert.notEqual(seqToken('街拍2023 (55)'), seqToken('街拍2023 (57)'));
+    assert.notEqual(seqToken('街拍2023 (6)'), seqToken('街拍2023 (60)'));
+  });
+
+  test('年份 / 分辨率 / 技术标记不是序号', () => {
+    assert.equal(seqToken('Alpha (2020)'), '');
+    assert.equal(seqToken('Alpha [2024]'), '');
+    assert.equal(seqToken('Alpha (1080)'), '');
+    assert.equal(seqToken('Alpha (2160)'), '');
+    assert.equal(seqToken('Alpha (720p)'), '');
+    assert.equal(seqToken('Alpha 1080p x264'), '');
+    assert.equal(seqToken('IPZ-947-C'), '');
+  });
+
+  test('归一化本身仍然剥掉括号，序号由 seqToken 单独承载', () => {
+    assert.equal(duplicateKey('街拍2023 (55)'), duplicateKey('街拍2023 (57)'));
+    assert.equal(duplicateKey('街拍2023 (55)'), '街拍2023');
   });
 });
 

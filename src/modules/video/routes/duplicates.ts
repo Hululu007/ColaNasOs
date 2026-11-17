@@ -27,12 +27,14 @@ import type { VideoHelpers } from '../helpers';
  * 为什么必须用并查集：同一部片可能有 A、B、C 三份，A 命中 imdb、B 命中标题、
  * C 谁都不命中但和 B 同名 —— 单键分组只能捞到一部分，并查集能把它们连成一组。
  *
- * 三条**反误报**守卫（都是实际踩过的坑）：
+ * 四条**反误报**守卫（都是实际踩过的坑）：
  *   - 标题里必须至少有一个字母 / 汉字 / 假名。录屏文件被写坏的标题
  *     （`2024-02-24 17.51.25` → `-02-24 17 51`）是纯数字，会把一整批录屏并成一部片；
  *   - 标题长度 < 4 不参与（「上」「前編」「无码」做键会到处误并）；
  *   - 年份不同不并（同名不同年 = 续集）。年份为 0 的只在「只有一种年份」时跟着并，
  *     否则挂到最早那一年 —— 绝不能挂到每一年，否则会通过「无年份」这条边把 2020 和 2022 连起来。
+ *   - 括号里的**纯数字序号**必须参与每一把钥匙（`街拍2023 (55)` / `(57)` 不是重复），
+ *     但年份 `(2020)` 与分辨率 `(1080)` 要排除，见 `seqToken()`。
  *
  * 性能：先只捞 7 个轻列在内存里分组，命中的 id 再回表补封面 / 大小 / 时长。
  * 不做 limit 截断（`limit 20000` 会静默漏掉后面的片子）。
@@ -61,6 +63,44 @@ export function duplicateKey(title: string): string {
  */
 export function nameSlug(text: string): string {
   return actorKey(text).replace(/[^a-z0-9\u4e00-\u9fff\u3040-\u30ff]/g, '');
+}
+
+/** 括号里「看起来像分辨率」的纯数字，不能当序号 */
+const RESOLUTION_NUMS = new Set([480, 540, 576, 720, 1080, 1440, 2160, 2880, 4320]);
+
+/**
+ * 序号令牌：`街拍2023 (55)` / `街拍2023（57）` 这种**括号里的纯数字序号**。
+ *
+ * 归一化会把所有括号整段剥掉，于是 `街拍2023 (55)`、`(57)`、`(6)`、`(60)`
+ * 全部变成 `街拍2023`，被并成一「重复」组 —— 用户看到的就是「名字相同、
+ * 序号不同的也被判成重复」。序号必须像季集号 `s01e04` 一样参与**每一把**钥匙，
+ * 否则某一部片只要命中 imdb / 番号就又会被并回去。
+ *
+ * 但括号里不都是序号，以下两类必须排除，否则反而把同一部片拆散：
+ *   - 年份 `(2020)` / `[2024]`
+ *   - 分辨率 `(720)` / `(1080)` / `(2160)`
+ *
+ * 所以这是一个「宁可少并、不可错并」的方向：只有括号内 1~4 位纯数字、
+ * 且不是年份和常见分辨率时才认作序号。
+ */
+export function seqToken(text: string): string {
+  const re = /[[(（【]\s*(\d{1,4})\s*[\])）】]/g;
+  const s = String(text || '');
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(s)) !== null) {
+    const n = Number(m[1]);
+    if (!Number.isFinite(n) || n <= 0) continue;
+    if (n >= 1900 && n <= 2099) continue;
+    if (RESOLUTION_NUMS.has(n)) continue;
+    return `seq${n}`;
+  }
+  return '';
+}
+
+/** 路径末段（文件名本身），用于从文件名兜底取序号 */
+function baseName(p: string): string {
+  const s = String(p || '').replace(/\\/g, '/');
+  return s.slice(s.lastIndexOf('/') + 1);
 }
 
 /** 技术标记前缀，不当番号用 */const CODE_PREFIX_BLACKLIST = new Set([
@@ -294,6 +334,10 @@ export async function registerVideoDuplicates(
         const titleOk = nfoTitle.length >= 4 && hasWord(nfoTitle);
         const part = partToken(`${r.rel_path} ${nfoName} ${nfoOriginal}`);
         const year = Number(r.nfo_year) || 0;
+        // 序号：`街拍2023 (55)` 这种。NFO 里没有时就退回文件名本身
+        // （无 NFO 的条目扫描时把 nfo_name 填成了文件名，两条路都要覆盖）。
+        const seq =
+          seqToken(nfoName) || seqToken(nfoOriginal) || seqToken(baseName(r.rel_path));
         return {
           imdb,
           douban,
@@ -303,6 +347,8 @@ export async function registerVideoDuplicates(
           part,
           // 季集号（电视剧）：拼进每一把钥匙，避免「同剧不同集」被并成一组
           se: seasonEpKey(r.season, r.episode, r.rel_path),
+          // 序号（同名不同号）：同样拼进每一把钥匙
+          seq,
           year: year > 1800 && year < 2200 ? year : 0,
         };
       });
@@ -327,22 +373,27 @@ export async function registerVideoDuplicates(
           union(prev, i);
         }
       };
+      /** 季集号 / 序号的统一后缀；两者都为空时返回空串（电影、番号片就是这种） */
+      const keySuffix = (m: (typeof meta)[number]): string =>
+        `${m.se ? `#${m.se}` : ''}${m.seq ? `@${m.seq}` : ''}`;
+
       for (let i = 0; i < rows.length; i += 1) {
         const m = meta[i];
-        // 季集号进钥匙：同一集的两份（1080p / 4K）仍然同组，不同集不再合并。
-        // 电影 / 番号片 `se` 为空，拼上去就是 `#`，不影响原来的行为。
-        const se = m.se ? `#${m.se}` : '';
-        if (m.imdb) addKey(`imdb:${m.imdb}${se}`, i);
-        if (m.douban) addKey(`douban:${m.douban}${se}`, i);
-        if (m.code) addKey(`code:${m.code}${se}`, i);
+        // 季集号 + 序号进钥匙：同一集的两份（1080p / 4K）仍然同组，
+        // 不同集、不同序号的绝不合并。
+        const sfx = keySuffix(m);
+        if (m.imdb) addKey(`imdb:${m.imdb}${sfx}`, i);
+        if (m.douban) addKey(`douban:${m.douban}${sfx}`, i);
+        if (m.code) addKey(`code:${m.code}${sfx}`, i);
       }
 
       // ④ 标题 + 年份（只对 NFO 标题生效；电视剧还要按季集分开）
       const byTitle = new Map<string, number[]>();
       for (let i = 0; i < rows.length; i += 1) {
         if (!meta[i].titleOk) continue;
-        // 电视剧带上季集号；电影 / 番号片不加后缀，免得界面里的 key 变成 `title:xx#`
-        const key = meta[i].se ? `${meta[i].title}#${meta[i].se}` : meta[i].title;
+        // 电视剧带季集号、同名系列带序号；都没有时不加后缀，
+        // 免得界面里的 key 变成 `title:xx#`
+        const key = `${meta[i].title}${keySuffix(meta[i])}`;
         const arr = byTitle.get(key);
         if (arr) arr.push(i);
         else byTitle.set(key, [i]);
