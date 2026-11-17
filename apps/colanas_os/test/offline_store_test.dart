@@ -192,4 +192,74 @@ void main() {
     // 编码假设：下载阶段只占后 70%
     expect(back.overall, closeTo(0.3 + 0.1 * 0.7, 0.001));
   });
+
+  // ---------------------------------------------------------------- 覆盖替换恢复
+  //
+  // 替换是「旧片 rename 成 .old」+「新片 rename 到位」两步。两步之间断电会留下
+  // 四种半成品组合，任何一种都必须收敛到「有一个能播的文件」，绝不能两边都没了。
+
+  Future<void> writeLog(String dst, String back, String part) async {
+    await File(p.join(tmp.path, 'index', 'replace.log')).writeAsString(
+      '{"dst":"$dst","back":"$back","part":"$part"}',
+    );
+  }
+
+  Future<void> write(String rel, String content) async {
+    final file = File(p.join(tmp.path, rel));
+    await file.parent.create(recursive: true);
+    await file.writeAsString(content);
+  }
+
+  test('替换恢复：只写了日志、还没退位 → 保持原样', () async {
+    await write('videos/a.mp4', 'old');
+    await writeLog('videos/a.mp4', 'videos/a.mp4.old', 'temp/a.part');
+    final store = OfflineStore(tmp.path);
+    expect(await store.recoverReplacement(), 'abort_before_swap');
+    expect(await File(p.join(tmp.path, 'videos', 'a.mp4')).readAsString(), 'old');
+    expect(await File(p.join(tmp.path, 'index', 'replace.log')).exists(), isFalse);
+  });
+
+  test('替换恢复：卡在两次 rename 之间 → 把新片放到位', () async {
+    await write('videos/a.mp4.old', 'old');
+    await write('temp/a.part', 'new');
+    await writeLog('videos/a.mp4', 'videos/a.mp4.old', 'temp/a.part');
+    final store = OfflineStore(tmp.path);
+    expect(await store.recoverReplacement(), 'complete_swap');
+    expect(await File(p.join(tmp.path, 'videos', 'a.mp4')).readAsString(), 'new');
+    expect(await File(p.join(tmp.path, 'videos', 'a.mp4.old')).exists(), isFalse);
+    expect(await File(p.join(tmp.path, 'temp', 'a.part')).exists(), isFalse);
+  });
+
+  test('替换恢复：新片已就位、旧片没删 → 只清旧的', () async {
+    await write('videos/a.mp4', 'new');
+    await write('videos/a.mp4.old', 'old');
+    await writeLog('videos/a.mp4', 'videos/a.mp4.old', 'temp/a.part');
+    final store = OfflineStore(tmp.path);
+    expect(await store.recoverReplacement(), 'drop_backup');
+    expect(await File(p.join(tmp.path, 'videos', 'a.mp4')).readAsString(), 'new');
+    expect(await File(p.join(tmp.path, 'videos', 'a.mp4.old')).exists(), isFalse);
+  });
+
+  test('替换恢复：新片丢了 → 回滚旧片（宁可留旧版本）', () async {
+    await write('videos/a.mp4.old', 'old');
+    await writeLog('videos/a.mp4', 'videos/a.mp4.old', 'temp/a.part');
+    final store = OfflineStore(tmp.path);
+    expect(await store.recoverReplacement(), 'rollback');
+    expect(await File(p.join(tmp.path, 'videos', 'a.mp4')).readAsString(), 'old');
+    expect(await File(p.join(tmp.path, 'videos', 'a.mp4.old')).exists(), isFalse);
+  });
+
+  test('替换恢复：日志写坏 → 什么都不动，只丢掉日志', () async {
+    await write('videos/a.mp4', 'old');
+    await File(p.join(tmp.path, 'index', 'replace.log')).writeAsString('{"dst":"videos/a');
+    final store = OfflineStore(tmp.path);
+    expect(await store.recoverReplacement(), 'log_corrupt');
+    expect(await File(p.join(tmp.path, 'videos', 'a.mp4')).readAsString(), 'old');
+    expect(await File(p.join(tmp.path, 'index', 'replace.log')).exists(), isFalse);
+  });
+
+  test('替换恢复：没有日志就是空操作', () async {
+    final store = OfflineStore(tmp.path);
+    expect(await store.recoverReplacement(), isNull);
+  });
 }

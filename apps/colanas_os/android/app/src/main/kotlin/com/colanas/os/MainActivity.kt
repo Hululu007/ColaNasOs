@@ -15,6 +15,7 @@ class MainActivity : AudioServiceActivity() {
     companion object {
         private const val BACKUP_CHANNEL = "com.colanas.os/photo_backup"
         private const val DISPLAY_CHANNEL = "com.colanas.os/display_caps"
+        private const val DOWNLOAD_CHANNEL = "com.colanas.os/offline_download"
         private const val REQ_NOTIFICATIONS = 1001
     }
 
@@ -48,6 +49,34 @@ class MainActivity : AudioServiceActivity() {
                         }.isSuccess)
                     }
                     // Android 13+ 不申请 POST_NOTIFICATIONS，前台服务跑着但通知栏看不到。
+                    "ensureNotificationPermission" -> ensureNotificationPermission(result)
+                    else -> result.notImplemented()
+                }
+            }
+
+        // 离线下载的前台服务：下载开始 / 进度 / 结束三件事。
+        // 失败一律返回 false，不抛给 Dart —— 没有通知栏也得能下载。
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, DOWNLOAD_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "start" -> {
+                        val title = call.argument<String>("title") ?: "正在下载"
+                        val text = call.argument<String>("text") ?: ""
+                        result.success(runCatching {
+                            DownloadForegroundService.start(this, title, text)
+                        }.isSuccess)
+                    }
+                    "update" -> {
+                        val text = call.argument<String>("text") ?: ""
+                        val progress = call.argument<Int>("progress") ?: -1
+                        val max = call.argument<Int>("max") ?: 100
+                        result.success(runCatching {
+                            DownloadForegroundService.update(this, text, progress, max)
+                        }.isSuccess)
+                    }
+                    "stop" -> result.success(runCatching {
+                        DownloadForegroundService.stop(this)
+                    }.isSuccess)
                     "ensureNotificationPermission" -> ensureNotificationPermission(result)
                     else -> result.notImplemented()
                 }

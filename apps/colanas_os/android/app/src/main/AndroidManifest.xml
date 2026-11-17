@@ -89,6 +89,12 @@
             android:name=".BackupForegroundService"
             android:foregroundServiceType="dataSync"
             android:exported="false" />
+        <!-- 离线下载前台服务：息屏 / 切后台时保活，通知栏显示「下载中」+ 进度。
+             与备份服务分开是因为一个 Service 只能有一个前台通知，共用会互相顶掉。 -->
+        <service
+            android:name=".DownloadForegroundService"
+            android:foregroundServiceType="dataSync"
+            android:exported="false" />
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

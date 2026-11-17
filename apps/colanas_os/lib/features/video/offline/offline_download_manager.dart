@@ -5,9 +5,11 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:nas_core/nas_core.dart';
+import 'package:nas_ui/nas_ui.dart' show formatBytes, tr;
 import 'package:path/path.dart' as p;
 
 import '../../../core/session.dart';
+import 'offline_background.dart';
 import 'offline_models.dart';
 import 'offline_storage.dart';
 import 'offline_store.dart';
@@ -126,6 +128,8 @@ class OfflineDownloadManager {
   bool _pumping = false;
   final Set<String> _canceled = <String>{};
   int _lastProgressAt = 0;
+  int _lastNotifyAt = 0;
+  String _lastNotifyState = '';
 
   OfflineStore? get store => _store;
 
@@ -147,6 +151,12 @@ class OfflineDownloadManager {
     await OfflineStorage.ensureLayout(root);
     final store = OfflineStore(root);
     await store.load();
+    // 先收拾上次没走完的覆盖替换，再跟磁盘对账（顺序不能反：
+    // 恢复可能把新旧文件换位，对账要看到最终结果）
+    final recovered = await store.recoverReplacement();
+    if (recovered != null) {
+      debugPrint('[offline] 覆盖替换恢复：$recovered');
+    }
     await store.reconcile();
     _store = store;
     _publishTasks();
@@ -280,6 +290,10 @@ class OfflineDownloadManager {
         : store.tasks.values.toList()
           ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
     tasks.value = List<OfflineTaskRecord>.unmodifiable(list);
+
+    // 通知栏跟着当前任务走（只在有活动任务时推）
+    final active = list.where((t) => t.active).toList();
+    if (active.isNotEmpty) _pushNotification(active.first);
   }
 
   void _schedulePump() {
@@ -290,6 +304,7 @@ class OfflineDownloadManager {
 
   /// 串行处理：一路编码 + 下载已经能把带宽和内网 IO 吃满，多路只会互相拖
   Future<void> _pump() async {
+    var foreground = false;
     try {
       while (true) {
         final store = _store;
@@ -299,10 +314,54 @@ class OfflineDownloadManager {
             .toList()
           ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
         if (next.isEmpty) break;
+        if (!foreground) {
+          // 第一条任务开跑就拉起前台服务：Android 息屏会冻结进程，
+          // 没有它下载会停在半路，用户回来看到「进度不动」。
+          foreground = true;
+          unawaited(
+            OfflineBackground.start(
+              tr('video.offline.title'),
+              '${next.first.title} · ${tr('video.offline.preparing')}',
+            ),
+          );
+        }
         await _run(store, next.first);
       }
     } finally {
       _pumping = false;
+      if (foreground) unawaited(OfflineBackground.stop());
+    }
+  }
+
+  /// 把当前任务的进度推到通知栏（2 秒节流；状态一变立刻推）。
+  void _pushNotification(OfflineTaskRecord task) {
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    if (task.state.name == _lastNotifyState && nowMs - _lastNotifyAt < 2000) return;
+    _lastNotifyAt = nowMs;
+    _lastNotifyState = task.state.name;
+    switch (task.state) {
+      case OfflineTaskState.queued:
+      case OfflineTaskState.transcoding:
+        unawaited(
+          OfflineBackground.update(
+            '${task.title} · ${tr('video.offline.preparing')}',
+            progress: (task.progress * 100).round(),
+          ),
+        );
+      case OfflineTaskState.downloading:
+      case OfflineTaskState.verifying:
+      case OfflineTaskState.replacing:
+        unawaited(
+          OfflineBackground.update(
+            '${task.title} · ${formatBytes(task.downloadedBytes)} / ${formatBytes(task.totalBytes)}',
+            progress: task.downloadedBytes,
+            max: task.totalBytes > 0 ? task.totalBytes : 1,
+          ),
+        );
+      case OfflineTaskState.done:
+      case OfflineTaskState.failed:
+      case OfflineTaskState.canceled:
+        break;
     }
   }
 
@@ -430,11 +489,14 @@ class OfflineDownloadManager {
     // 覆盖本机旧版本时先把旧文件挪开（同卷 rename 是原子的）：
     // 任一步崩溃都能从 replace.log 恢复，且旧片在提交前一直可播。
     final log = File(p.join(store.root, 'index', 'replace.log'));
+    final relBack = 'videos/${req.itemId}.$ext.old';
+    final relPart = 'temp/${req.itemId}.part';
     if (await dst.exists()) {
       final back = File('${dst.path}.old');
       await _deleteQuietly(back);
+      // 三个路径都记相对值：整个 Offline 目录搬走后照样能恢复
       await log.writeAsString(
-        jsonEncode({'dst': relVideo, 'back': 'videos/${req.itemId}.$ext.old', 'part': part.path}),
+        jsonEncode({'dst': relVideo, 'back': relBack, 'part': relPart}),
         flush: true,
       );
       await dst.rename(back.path);

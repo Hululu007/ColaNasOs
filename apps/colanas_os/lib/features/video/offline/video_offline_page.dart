@@ -432,6 +432,12 @@ class _VideoOfflinePageState extends State<VideoOfflinePage> {
           url: file.uri.toString(),
           title: item.title,
           durationMs: item.durationMs > 0 ? item.durationMs : null,
+          // 续播：少于 5 秒就当没看过，避免刚点开就被弹回开头
+          startAt: item.playbackMs > 5000 ? Duration(milliseconds: item.playbackMs) : null,
+          // 退出时把位置写进本地索引：断网时也能接着看
+          onPosition: (pos) => OfflineDownloadManager.instance
+              .savePlayback(item.id, pos.inMilliseconds)
+              .ignore(),
         ),
       ),
     );
@@ -588,6 +594,10 @@ class _VideoOfflineSeriesPageState extends State<VideoOfflineSeriesPage> {
           url: file.uri.toString(),
           title: item.title,
           durationMs: item.durationMs > 0 ? item.durationMs : null,
+          startAt: item.playbackMs > 5000 ? Duration(milliseconds: item.playbackMs) : null,
+          onPosition: (pos) => OfflineDownloadManager.instance
+              .savePlayback(item.id, pos.inMilliseconds)
+              .ignore(),
         ),
       ),
     );

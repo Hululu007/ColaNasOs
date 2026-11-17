@@ -56,6 +56,8 @@ class PlayerPage extends StatefulWidget {
     this.initialSessionId,
     this.playlist,
     this.playlistIsSeries = false,
+    this.startAt,
+    this.onPosition,
   });
 
   /// 带短期令牌的原画直链（`/api/v1/video/stream-url` 签发）
@@ -99,6 +101,14 @@ class PlayerPage extends StatefulWidget {
 
   /// 队列是否按剧集口径排（决定列表副标题显示 `S1 · E2` 还是文件名）。
   final bool playlistIsSeries;
+
+  /// 首次打开后跳到这个位置（本地播放续播用）。
+  /// 只对直连生效：转码流的 0 点是分段起转点，不能拿源片位置直接 seek。
+  final Duration? startAt;
+
+  /// 退出时回传最后的播放位置。本地播放靠它把进度写进本地索引 ——
+  /// 播放器自己不落库，是因为在线播放的进度归服务端管。
+  final void Function(Duration position)? onPosition;
 
   @override
   State<PlayerPage> createState() => _PlayerPageState();
@@ -635,7 +645,8 @@ class _PlayerPageState extends State<PlayerPage> {
         // 判定，必须转码时也只退到「保住片源分辨率」的档位。
         _prepareCompatible();
       } else {
-        _openUrl(_url);
+        // 本地续播：startAt 只在直连路径生效（转码流的 0 点是起转点，不能直接 seek）
+        _openUrl(_url, seekTo: widget.startAt);
       }
       _loadSubtitles();
       _loadAudioTracks();
@@ -792,6 +803,12 @@ class _PlayerPageState extends State<PlayerPage> {
     // 朝向还回去：全屏时按视频比例锁了 landscape，只还原 SystemUiMode 的话
     // 人已经回到列表页、手机还横着 —— 用户反馈「退出影片以后一直是横屏」。
     unawaited(exitPlayerFullscreen(portrait: _wantPortraitOnExit));
+    // 先把位置交出去再销毁播放器：本地播放要用它写进度
+    try {
+      widget.onPosition?.call(_player.state.position);
+    } catch (_) {
+      // 播放器已经不可用（初始化失败）：没有位置可报
+    }
     AudioFocus.instance.release(_player);
     _player.dispose();
     super.dispose();

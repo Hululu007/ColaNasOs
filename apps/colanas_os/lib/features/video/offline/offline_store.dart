@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
@@ -53,6 +54,66 @@ class OfflineStore {
             .map(OfflineTaskRecord.fromJson)
             .map((t) => MapEntry(t.itemId, t)),
       );
+  }
+
+  /// 覆盖替换的崩溃恢复。
+  ///
+  /// 替换分两步：先把旧片 rename 成 `.old`，再把新片 rename 到位。两步之间任何位置
+  /// 断电 / 被杀进程，磁盘上都会留下一种「半成品」组合。`replace.log` 记着这次替换的
+  /// 三个路径，这里按现场决定「继续替换」还是「回滚」——**绝不能两边都没有**。
+  ///
+  /// 返回本次恢复动作，便于日志与测试断言。
+  Future<String?> recoverReplacement() async {
+    final log = File(p.join(indexDir, 'replace.log'));
+    if (!await log.exists()) return null;
+    Map<String, dynamic> entry;
+    try {
+      entry = jsonDecode(await log.readAsString()) as Map<String, dynamic>;
+    } catch (_) {
+      // 日志本身写坏了（写到一半断电）：什么都不敢动，直接丢掉
+      await _quietDelete(log);
+      return 'log_corrupt';
+    }
+
+    final dstRel = '${entry['dst'] ?? ''}';
+    final backRel = '${entry['back'] ?? ''}';
+    final partRel = '${entry['part'] ?? ''}';
+    if (dstRel.isEmpty || backRel.isEmpty) {
+      await _quietDelete(log);
+      return 'log_invalid';
+    }
+
+    final dst = File(absolute(dstRel));
+    final back = File(absolute(backRel));
+    final part = partRel.isEmpty ? null : File(absolute(partRel));
+    final hasDst = await dst.exists();
+    final hasBack = await back.exists();
+    final hasPart = part != null && await part.exists();
+
+    String action;
+    if (hasDst && !hasBack) {
+      // 还没开始退位（只写了日志）：新片没就位，临时文件留着让下载任务自己续
+      action = 'abort_before_swap';
+    } else if (!hasDst && hasBack && hasPart) {
+      // 卡在两次 rename 之间：新片已经下完了，继续把它放到位
+      await part.rename(dst.path);
+      await _quietDelete(back);
+      action = 'complete_swap';
+    } else if (hasDst && hasBack) {
+      // 新片已就位、旧片还没删：收尾即可
+      await _quietDelete(back);
+      action = 'drop_backup';
+    } else if (!hasDst && hasBack) {
+      // 新片没了（临时文件被清 / 写失败）：回滚，宁可留旧版本
+      await back.rename(dst.path);
+      action = 'rollback';
+    } else {
+      // 三个都没有：没什么可恢复的
+      action = 'nothing_to_do';
+    }
+
+    await _quietDelete(log);
+    return action;
   }
 
   /// 与磁盘对账：文件没了的条目直接摘掉（手工删文件是合法操作），
@@ -224,6 +285,15 @@ class OfflineStore {
   ///
   /// Dart 的 `File.rename` 在 Windows 上走 `MoveFileEx(REPLACE_EXISTING)`，
   /// 目标已存在也能一次替换 —— 不会出现「删了旧的、新的没写进去」的窗口。
+  /// 删文件但不让异常冒出来（被占用 / 已经不在）
+  Future<void> _quietDelete(File file) async {
+    try {
+      if (await file.exists()) await file.delete();
+    } catch (_) {
+      // 播放器占着句柄：下次启动再说
+    }
+  }
+
   Future<void> _writeAtomic(File file, String content) async {
     await file.parent.create(recursive: true);
     final tmp = File('${file.path}.tmp');
