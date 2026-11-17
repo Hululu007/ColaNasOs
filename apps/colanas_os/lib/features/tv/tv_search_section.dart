@@ -12,6 +12,7 @@ import '../video/video_card.dart';
 import '../video/video_series_widgets.dart' show seriesArtUrl;
 import 'tv_focus.dart';
 import 'tv_video_section.dart';
+import 'music/tv_music_detail.dart';
 import 'video/tv_series_detail.dart';
 import 'video/tv_series_models.dart';
 
@@ -102,6 +103,7 @@ class _TvSearchSectionState extends State<TvSearchSection> {
   VideoItem? _videoDetail;
   TvSeriesCard? _seriesDetail;
   String _seriesLibraryId = '';
+  TvMusicDetailSpec? _musicDetail;
   bool _preparing = false;
 
   @override
@@ -112,10 +114,15 @@ class _TvSearchSectionState extends State<TvSearchSection> {
     for (var r = 0; r < _rowChars.length; r += 1) {
       final row = <FocusNode>[];
       for (var c = 0; c < _rowChars[r].length; c += 1) {
-        final node = (r == 0 && c == 0 && widget.firstFocusNode != null)
+        // ⛔ `firstFocusNode` 是外壳按 tab 长期持有的节点（`tv_shell._contentNodeFor`），
+        // 这里只是**借用**。以前把它一起塞进 `_ownedNodes`，退出这个 tab 时顺手
+        // dispose 掉了外壳的节点 —— 再切回来，外壳把同一个（已销毁的）节点交给
+        // 下一张卡片，于是抛 "A FocusNode was used after being disposed"。
+        final borrowed = r == 0 && c == 0 && widget.firstFocusNode != null;
+        final node = borrowed
             ? widget.firstFocusNode!
             : FocusNode(debugLabel: 'tv-key-$r-$c');
-        _ownedNodes.add(node);
+        if (!borrowed) _ownedNodes.add(node);
         // 方向键挂在节点上，节点交给 TvFocusCard 独占使用。
         // ⛔ 外面不能再套 Focus(focusNode: 同一个节点)：一个 FocusNode 只能挂一个
         // Focus，否则直接抛 "Tried to make a child into a parent of itself"。
@@ -145,6 +152,8 @@ class _TvSearchSectionState extends State<TvSearchSection> {
     _debounce?.cancel();
     _query.removeListener(_onQueryChanged);
     _query.dispose();
+    // 借来的节点只摘回调，绝不 dispose（它归外壳，切 tab 还要用）
+    widget.firstFocusNode?.onKeyEvent = null;
     for (final node in _ownedNodes) {
       node.dispose();
     }
@@ -166,7 +175,8 @@ class _TvSearchSectionState extends State<TvSearchSection> {
 
   bool _onBackPressed() => _handleBack();
 
-  bool _hasOverlay() => _videoDetail != null || _seriesDetail != null;
+  bool _hasOverlay() =>
+      _videoDetail != null || _seriesDetail != null || _musicDetail != null;
 
   bool _handleBack() {
     if (_videoDetail != null) {
@@ -176,6 +186,11 @@ class _TvSearchSectionState extends State<TvSearchSection> {
     }
     if (_seriesDetail != null) {
       setState(() => _seriesDetail = null);
+      _restoreFocus();
+      return true;
+    }
+    if (_musicDetail != null) {
+      setState(() => _musicDetail = null);
       _restoreFocus();
       return true;
     }
@@ -636,6 +651,16 @@ class _TvSearchSectionState extends State<TvSearchSection> {
 
   // ---------------------------------------------------------------- 打开
 
+  /// 电影：进单片详情页（大图 + 简介 + 播放按钮）
+  void _openVideo(VideoItem item) {
+    unawaited(_remember(_query.text));
+    setState(() {
+      _videoDetail = item;
+      _seriesDetail = null;
+      _musicDetail = null;
+    });
+  }
+
   Future<void> _openSeries(TvSeriesCard card) async {
     if (card.preloadedItems.isNotEmpty) {
       setState(() {
@@ -698,45 +723,118 @@ class _TvSearchSectionState extends State<TvSearchSection> {
     }
   }
 
-  void _playTracks(List<MusicTrack> tracks, int index) {
-    if (tracks.isEmpty) return;
+  /// 点一首歌：进它所在的专辑，并从这一首开始播。
+  ///
+  /// 队列必须是**整张专辑**：只把这一首塞进队列的话，「下一首」到此为止，
+  /// 用户会以为播放器坏了。
+  Future<void> _openTrack(MusicTrack track) async {
     unawaited(_remember(_query.text));
-    MusicPlaybackService.instance.playQueue(tracks, index);
-  }
-
-  Future<void> _playAlbum(MusicAlbum album) async {
-    try {
-      final res = await ApiSession.instance.client.musicList(
-        album: album.name,
-        limit: 200,
-      );
-      if (!mounted) return;
-      if (res.items.isEmpty) {
-        NasSnack.show(context, tr('tv.search.noResult', {'q': album.name}));
-        return;
-      }
-      _playTracks(res.items, 0);
-    } catch (e) {
-      if (!_canSetState) return;
-      NasSnack.show(context, tr('tv.search.failed', {'error': '$e'}));
+    final album = (track.album ?? '').trim();
+    final artist = (track.artist ?? '').trim();
+    if (album.isEmpty) {
+      // 散装曲目（没有专辑信息）：播这一首就好，没有可进的详情页
+      MusicPlaybackService.instance.playQueue(<MusicTrack>[track], 0);
+      return;
     }
+    final tracks = ApiSession.instance.client
+        .musicList(album: album, limit: 200)
+        .then<List<MusicTrack>>((res) => res.items);
+    setState(() {
+      _musicDetail = TvMusicDetailSpec(
+        kind: TvMusicDetailKind.album,
+        title: album,
+        subtitle: artist.isEmpty ? null : artist,
+        year: track.year,
+        coverTrackId: track.id,
+        tracks: tracks,
+        sampleTracks: <MusicTrack>[track],
+      );
+    });
+    await _startQueue(tracks, track.id, fallback: track);
   }
 
-  Future<void> _playArtist(MusicArtist artist) async {
-    try {
-      final res = await ApiSession.instance.client.musicList(
-        artist: artist.name,
-        limit: 200,
+  Future<void> _openAlbum(MusicAlbum album) async {
+    unawaited(_remember(_query.text));
+    final tracks = ApiSession.instance.client
+        .musicList(album: album.name, limit: 200)
+        .then<List<MusicTrack>>((res) => res.items);
+    setState(() {
+      _musicDetail = TvMusicDetailSpec(
+        kind: TvMusicDetailKind.album,
+        title: album.name,
+        subtitle: album.artist,
+        year: album.year,
+        coverTrackId: album.coverTrackId,
+        tracks: tracks,
+        trackCountHint: album.tracks,
+        durationHint: album.durationMs,
       );
-      if (!mounted) return;
-      if (res.items.isEmpty) {
-        NasSnack.show(context, tr('tv.search.noResult', {'q': artist.name}));
+    });
+    // 点专辑 = 想听这张：进详情的同时起播第一首
+    await _startQueue(tracks, null);
+  }
+
+  Future<void> _openArtist(MusicArtist artist) async {
+    unawaited(_remember(_query.text));
+    await _openArtistByName(
+      artist.name,
+      coverTrackId: artist.coverTrackId,
+      trackCount: artist.tracks,
+      durationMs: artist.durationMs,
+    );
+  }
+
+  /// 详情抽屉里的「查看歌手」也走这里（`autoplay: false`：用户只是想看他有哪些歌）
+  Future<void> _openArtistByName(
+    String name, {
+    String? coverTrackId,
+    int? trackCount,
+    int? durationMs,
+    bool autoplay = true,
+  }) async {
+    final tracks = ApiSession.instance.client
+        .musicList(artist: name, limit: 200)
+        .then<List<MusicTrack>>((res) => res.items);
+    setState(() {
+      _musicDetail = TvMusicDetailSpec(
+        kind: TvMusicDetailKind.artist,
+        title: name,
+        subtitle: tr('music.nav.artists'),
+        coverTrackId: coverTrackId,
+        tracks: tracks,
+        // 搜索结果里已经拿到的这个歌手的歌：列表接口因目录权限返空时兜底
+        sampleTracks: _tracks
+            .where((track) => (track.artist ?? '') == name)
+            .toList(growable: false),
+        trackCountHint: trackCount,
+        durationHint: durationMs,
+      );
+    });
+    if (autoplay) await _startQueue(tracks, null);
+  }
+
+  /// 拉到的曲目到了就整队列起播（`startId` 给了就定位到那首）
+  Future<void> _startQueue(
+    Future<List<MusicTrack>> tracks,
+    String? startId, {
+    MusicTrack? fallback,
+  }) async {
+    try {
+      final items = await tracks;
+      if (!_canSetState) return;
+      if (items.isEmpty) {
+        if (fallback != null) {
+          MusicPlaybackService.instance.playQueue(<MusicTrack>[fallback], 0);
+        }
         return;
       }
-      _playTracks(res.items, 0);
-    } catch (e) {
-      if (!_canSetState) return;
-      NasSnack.show(context, tr('tv.search.failed', {'error': '$e'}));
+      final index = startId == null
+          ? 0
+          : items.indexWhere((track) => track.id == startId);
+      MusicPlaybackService.instance.playQueue(items, index < 0 ? 0 : index);
+    } catch (_) {
+      if (!_canSetState || fallback == null) return;
+      MusicPlaybackService.instance.playQueue(<MusicTrack>[fallback], 0);
     }
   }
 
@@ -762,6 +860,14 @@ class _TvSearchSectionState extends State<TvSearchSection> {
         roots: const <String>[],
         progressById: const <String, VideoProgressItem>{},
         onPlay: _play,
+      );
+    }
+    final music = _musicDetail;
+    if (music != null) {
+      return TvMusicDetailPage(
+        key: ValueKey<String>('search-music-${music.kind.name}-${music.title}'),
+        spec: music,
+        onOpenArtist: (artist) => _openArtistByName(artist, autoplay: false),
       );
     }
 
@@ -981,7 +1087,8 @@ class _TvSearchSectionState extends State<TvSearchSection> {
         coverUrl: videoPosterUrl(item, size: 360),
         headers: videoArtHeaders,
         focusNode: _cards['movie']?[i],
-        onTap: () => setState(() => _videoDetail = item),
+        // 电影：进单片详情页（封面 + 简介 + 播放）
+        onTap: () => _openVideo(item),
       );
     });
     add('tv', tr('tv.search.group.tv'), _series.length, (i) {
@@ -1001,7 +1108,7 @@ class _TvSearchSectionState extends State<TvSearchSection> {
         subtitle: track.artist ?? '',
         coverUrl: musicCoverUrlForTv(track.id),
         focusNode: _cards['track']?[i],
-        onTap: () => _playTracks(_tracks, i),
+        onTap: () => _openTrack(track),
       );
     });
     add('album', tr('tv.search.group.album'), _albums.length, (i) {
@@ -1011,7 +1118,7 @@ class _TvSearchSectionState extends State<TvSearchSection> {
         subtitle: album.artist ?? '',
         coverUrl: album.coverTrackId == null ? null : musicCoverUrlForTv(album.coverTrackId!),
         focusNode: _cards['album']?[i],
-        onTap: () => _playAlbum(album),
+        onTap: () => _openAlbum(album),
       );
     });
     add('artist', tr('tv.search.group.artist'), _artists.length, (i) {
@@ -1022,7 +1129,7 @@ class _TvSearchSectionState extends State<TvSearchSection> {
         coverUrl: artist.coverTrackId == null ? null : musicCoverUrlForTv(artist.coverTrackId!),
         circular: true,
         focusNode: _cards['artist']?[i],
-        onTap: () => _playArtist(artist),
+        onTap: () => _openArtist(artist),
       );
     });
     return sections;
