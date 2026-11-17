@@ -1375,11 +1375,17 @@ export const videoPlayer: ServerModule = {
               pump(k).catch((err) => k.log.warn({ err: String(err) }, 'player pump stopped'));
             }
           }
-          // 播放列表（兜底路径）最多等 2s；普通分片等 10s。
+          // 播放列表（兜底路径）最多等 2s；普通分片等 30s。
           // **init.mp4 例外，等 30s**：fMP4 初始化段是解码器的前置条件，拿不到它
           // 不是「缓冲一下」，而是整场播放直接 fatal。4K DV 源首段实测 20~29s
           // 才产出，10s 就把 init 判超时了（Failed to recognize file format）。
-          const waitMs = isPlaylist ? 2_000 : file === 'init.mp4' ? 30_000 : 10_000;
+          //
+          // 2026-11-17：普通分片从 10s 提到 30s。原因是 libmpv 会**提前预取**
+          // （demuxer 缓存上百 MB），跑到转码前面是常态；等 10s 就 404，而 mpv
+          // 拿到 404 之后**整条 HLS 流当场作废**、再也不发新请求 —— 会话
+          // `795ee81b` 就是这样静悄悄冻了 6 分钟。多等一会儿远好过给 404：
+          // 持有连接本身不花什么，转码是 2~3 倍速在追。
+          const waitMs = isPlaylist ? 2_000 : 30_000;
           const deadline = Date.now() + waitMs;
           for (;;) {
             try {
@@ -1394,6 +1400,8 @@ export const videoPlayer: ServerModule = {
             if (ready) break;
             const stillWorking = liveStatus === 'pending' || liveStatus === 'running';
             if ((isPlaylist && !stillWorking) || Date.now() >= deadline) break;
+            // 整片转完了还缺片：不会再有新分片，别白等满 30 秒
+            if (!isPlaylist && (liveStatus === 'done' || sessionStatus === 'done')) break;
             // 会话可能在这期间失败 / 被取消，别死等
             const st = await statusOf(k, session);
             if (st === 'failed' || st === 'canceled') break;

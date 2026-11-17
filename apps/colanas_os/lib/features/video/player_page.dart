@@ -19,6 +19,7 @@ import '../../core/play_preferences.dart';
 import '../../core/play_quality.dart';
 import '../../core/play_quality_scope.dart';
 import '../../core/play_related.dart';
+import '../../core/play_stall.dart';
 import '../../core/play_timeline.dart';
 import '../../core/session.dart';
 import '../../core/settings_store.dart';
@@ -282,13 +283,25 @@ class _PlayerPageState extends State<PlayerPage> {
   DateTime _lastSeekAt = DateTime.fromMillisecondsSinceEpoch(0);
   DateTime _lastOpenAt = DateTime.fromMillisecondsSinceEpoch(0);
 
+  /// 第几次 `_seekTo`。连续按 → / 连续拖只让最后一次落地。
+  ///
+  /// 有了「等转码追上」（[_awaitProduced]，最多 8 秒）之后必须加这一道：
+  /// 前一次 seek 可能还在等片，用户已经又按了两次，等回来不判代际就会
+  /// 拿旧目标去 seek，把最后一次覆盖掉。
+  int _seekGen = 0;
+
   /// 跳转进行中又有新目标：只保留最后一个，等当前这次完成后再跳。
   Duration? _pendingJump;
 
-  /// 「原地 seek 到底落地没有」的看门狗（见 [_watchSeekLanding]）。
+  /// 播放停滞看门狗（见 [_armStallWatch]）。
   /// 代际号用来作废旧的那一个定时器：连续拖进度条会连开好几轮。
   Timer? _seekWatchdog;
   int _seekWatchdogGen = 0;
+
+  /// 停滞判定的水位计（判据：**历史最大位置**在多少秒内没涨过）。
+  /// 换成纯 Dart 的 [PlayStallDetector] 是为了能单独写单测 —— 这段逻辑
+  /// 2026-11-17 出过一次「看门狗被 seek 回显骗过、整场冻死」的事故。
+  final PlayStallDetector _stall = PlayStallDetector();
 
   /// 第几次 `open()`。同一个 open 只允许「首片没到就补开」一次 ——
   /// 没有这个计数的话，失败→重开→再失败会把画面刷成闪烁（早期线上问题）。
@@ -442,6 +455,9 @@ class _PlayerPageState extends State<PlayerPage> {
       _player.stream.playing.listen((playing) {
         // TV 的播放/暂停按钮图标要跟着变（索引式控制层不是 StreamBuilder）
         if (mounted && _tvMode) setState(() {});
+        // 暂停会顺手关掉停滞看门狗（用户自己的意愿，不该被判成卡住）；
+        // 恢复播放要重新挂上，否则「暂停一下再播」之后就又变成静默冻住了。
+        if (playing && !(_seekWatchdog?.isActive ?? false)) _armStallWatch();
         // 播放器自己停了、而用户并没有按过暂停（[_wantPlay] 仍为 true）：
         // 典型就是拖进度条触发换源后浏览器把这次播放丢了。补一次，别让人手点。
         // 用户点暂停时 `_togglePlay` 会先把 _wantPlay 置 false，所以不会抢。
@@ -747,6 +763,9 @@ class _PlayerPageState extends State<PlayerPage> {
       );
       // 实际用的解码器：`hwdec=auto-safe` 到底选中了硬解还是软解，只有 mpv 自己知道
       unawaited(_logDecodeInfo());
+      // 起播之后立刻挂上停滞看门狗：第一次 open 也可能停在「首片到了但画面不走」，
+      // 那时候没有任何 seek 可挂，光靠 seek 看门狗是接不住的。
+      if (want) _armStallWatch();
       // 字幕走控制层自绘；关掉内核自带字幕轨，避免内嵌字幕再叠一层。
       // 自绘的 cue 是 State 字段，重开 Media 不需要重新挂载。
       try {
@@ -2124,6 +2143,10 @@ class _PlayerPageState extends State<PlayerPage> {
 
   Future<void> _seekTo(Duration target, {bool allowJump = true}) async {
     _lastSeekAt = DateTime.now();
+    // 连续按 → / 连续拖：只让最后一次真正落地。中间那次可能在
+    // [_awaitProduced] 里等转码（最多 8 秒），等回来时用户早就换了目标 ——
+    // 不拦的话就会「跳到最后一次，又被前一次的旧目标盖回去」。
+    final gen = ++_seekGen;
     final total = _timelineDuration(_player.state.duration);
     var t = target;
     if (t < Duration.zero) t = Duration.zero;
@@ -2145,104 +2168,202 @@ class _PlayerPageState extends State<PlayerPage> {
     // 缓冲就去重建会话。播放器通常只缓冲十几秒，等于「几乎每次拖进度条都重建」——
     // H.264 首片 1.8s 还算能忍，AV1 首片 7.8~10.4s（实测），用户看到的就是
     // 「已经加载好的位置也跳不动」。分片就在服务端磁盘上，直接 seek 才是对的。
-    //
-    // 旧的顾虑（服务端 `transcodedMs` 比真实落盘多报，原地 seek 到空洞里干等）
-    // 现在交给 [_watchSeekLanding]：原地 seek 后位置 8 秒还不往前走，就自动
-    // 升级成重建会话 —— 既拿到「近处秒跳」，又不至于卡在空洞里。
     final producedEnd = _loadedEnd;
     final bufferedAbs = _bufferedEndAbs();
     // 拖动过程中（allowJump=false，Slider 每帧都回调）只跟随播放器手里的缓冲：
     // 每帧都 poll 一个还没缓冲的分片只会让 mpv 不停中止上一次 seek。
-    // 松手（allowJump=true）只要目标落在已转出区间内就原地 seek —— 分片就在
-    // 服务端磁盘上，没必要为了它重建一整条转码会话。
+    // 松手（allowJump=true）只要目标落在已转出区间内就原地 seek。
     final reachable = allowJump ? producedEnd : bufferedAbs;
-    if (reachable > Duration.zero &&
+    // 留 2 秒余量：`producedEnd` 是按播放列表算出来的末尾，最后一片可能还在写盘，
+    // 或者刚被 supersede 掐掉 —— 那片就交给下面的「等转码追上」分支。
+    final margin = const Duration(seconds: 2);
+    final inProduced =
+        reachable > Duration.zero &&
         t >= _startOffset &&
-        t <= reachable - const Duration(seconds: 2)) {
-      // 拖动中每帧都会进来，只在松手那次记日志（否则一天能刷满预算）
-      if (allowJump) {
-        ClientLogger.instance.info(
-          '原地 seek ${t.inMilliseconds}ms '
-          '(produced=${producedEnd.inMilliseconds}ms '
-          'buffered=${bufferedAbs.inMilliseconds}ms)',
-          route: 'player.seek/${_sessionId ?? 'direct'}',
-        );
-      }
+        t <= reachable - margin;
+
+    // 每一条分支都往播放器日志里落一行：2026-11-17 那次「跳 30 秒卡死」之所以
+    // 查了半天，就是因为有一个分支（贴着 producedEnd 的那 2 秒夹缝）什么都不记。
+    if (allowJump) {
+      ClientLogger.instance.info(
+        '${inProduced ? '原地 seek' : 'seek 待内容'} ${t.inMilliseconds}ms '
+        '(produced=${producedEnd.inMilliseconds}ms '
+        'buffered=${bufferedAbs.inMilliseconds}ms start=${_startMs}ms)',
+        route: 'player.seek/${_sessionId ?? 'direct'}',
+      );
+    }
+
+    Future<void> seekHere() async {
       await _player.seek(t - _startOffset);
       _poke();
       if (_wantPlay) unawaited(_ensurePlayingAfterOpen());
       // 拖动过程中每帧都会走这里，看门狗只在松手那次（allowJump）挂
-      if (allowJump) _watchSeekLanding(t);
+      if (allowJump) _armStallWatch(target: t);
+    }
+
+    if (inProduced) {
+      await seekHere();
       return;
     }
-    if (seekNeedsJump(target: t, start: _startOffset, loadedEnd: _loadedEnd)) {
-      if (!allowJump) return;
-      // 只比已转出末尾多一点点（键盘 ±10s、拖个几十秒）：不重建会话。
-      // 新会话要重新起一次 AV1 / AMF ffmpeg，实测首片 8~10s；这里只差几秒，
-      // 直接让播放器在 VOD 列表里 seek，服务端分片路由会等并按需续转，
-      // 当前画面和已有缓冲都保留。
-      final over = t - _loadedEnd;
-      if (over > Duration.zero && over <= const Duration(seconds: 30)) {
+    if (!allowJump) return;
+    // 目标落在「已转出末尾」之外，分两种：
+    //   - 只多一点点（键盘 ±30s、拖个几十秒，≤30s）→ **先等转码追上**再原地 seek；
+    //   - 差得远 → 另建一条从该位置起转的会话（顺序转码没法凭空造出分片）。
+    //
+    // 为什么「先等」而不是像以前那样立刻「前探 seek」：libmpv 会立刻把 position
+    // 报成目标值，然后去要一个还不存在的分片，等不到就 404，整条 HLS 流当场废掉
+    // （会话 `795ee81b` 实测：等 3674ms 拿到 seg18 之后就再也没动过）。
+    // 用户要的就是「没加载你就转码加载」——等片，别让播放器去要空气。
+    final over = t - producedEnd;
+    if (over > Duration.zero && over <= const Duration(seconds: 30)) {
+      final produced = await _awaitProduced(t);
+      // 等的这 8 秒里用户又按了 → 直接作废，别把旧目标盖到新目标上
+      if (!mounted || gen != _seekGen) return;
+      if (produced) {
         ClientLogger.instance.info(
-          '前探 seek ${t.inMilliseconds}ms over=${over.inMilliseconds}ms '
-          '(produced=${producedEnd.inMilliseconds}ms)',
+          '等转码追上 ${t.inMilliseconds}ms（over=${over.inMilliseconds}ms）→ 原地 seek',
           route: 'player.seek/${_sessionId ?? 'direct'}',
         );
-        await _player.seek(t - _startOffset);
-        _poke();
-        if (_wantPlay) unawaited(_ensurePlayingAfterOpen());
-        _nudgeTranscode(t);
-        _watchSeekLanding(t);
+        await seekHere();
         return;
       }
-      await _jumpTo(t);
-      return;
     }
-    await _player.seek(t - _startOffset);
-    _poke();
-    if (_wantPlay) unawaited(_ensurePlayingAfterOpen());
+    if (!mounted || gen != _seekGen) return;
+    if (over > Duration.zero) {
+      ClientLogger.instance.info(
+        '转码没追上 ${t.inMilliseconds}ms（over=${over.inMilliseconds}ms）→ 重建会话',
+        route: 'player.seek/${_sessionId ?? 'direct'}',
+      );
+    }
+    await _jumpTo(t);
   }
 
-  /// 原地 seek 之后盯着「到底动没动」，卡住就升级成重建会话。
+  /// 播放停滞看门狗：**每秒一拍盯着画面到底有没有往前走**，卡住就自己救回来。
   ///
-  /// 只靠「目标 ≤ 已转出」这一条判断不够：服务端偶发会多报（某一段 ffmpeg
-  /// 只产出半截就停了，`transcodedMs` 仍是按播放列表算的），原地 seek 过去
-  /// 就拿不到分片。这个看门狗把那种情况接住：8 秒位置还不往前走 →
-  /// 按同一目标重建会话（首片慢一点，但一定出得来）。
-  void _watchSeekLanding(Duration target) {
+  /// 用户原话：「如果加载了就自动播，如果没加载你就转码加载就行，为什么现在卡住了？」
+  /// 所以这里不许「静默冻住」：任何原因导致的画面不动都必须被接住并自动恢复。
+  ///
+  /// 判据只有一条 —— **水位**（历史最大 position）在 [PlayStallDetector.limitSeconds] 内
+  /// 没涨过 0.7 秒。以前的实现拿「seek 之前的位置」当基准，而 `player.seek()` 是瞬时
+  /// 生效的，第一拍就会看到 position 已经跳到目标值（几万毫秒），于是判「在播」直接
+  /// 退场。2026-11-17 会话 `795ee81b` 就是这样：09:51:47 前探 seek 之后 position
+  /// 钉死在 36562 整整 6 分钟，日志里连一条告警都没有。
+  ///
+  /// 两级补救，一动一静，都不重建会话就先试便宜的：
+  ///   1 级（8 秒）：请服务端从当前位置继续转（[_nudgeTranscode]）+ 重新 seek 一次；
+  ///   2 级（再 8 秒）：原地救不回来 → 按当前位置重建会话（[_jumpTo]）。
+  ///
+  /// [target] 只用于日志（`_jumpTo` 用的位置从播放器实时读，不用它）。
+  void _armStallWatch({Duration? target}) {
     _seekWatchdog?.cancel();
     final gen = ++_seekWatchdogGen;
-    var stuck = 0;
-    Duration last = _player.state.position;
+    _stall.reset(_player.state.position);
     _seekWatchdog = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (!mounted || gen != _seekWatchdogGen) {
         timer.cancel();
         return;
       }
       // 换档 / 新一轮跳转 / 用户按了暂停：都轮不到这个看门狗管
-      if (_jumping || _switching || !_wantPlay) {
+      if (_jumping || _switching || !_wantPlay || _error != null) {
         timer.cancel();
         return;
       }
-      final pos = _player.state.position;
-      if (pos - last > const Duration(milliseconds: 400)) {
-        timer.cancel();
-        return;
-      }
-      last = pos;
       if (_player.state.completed) {
         timer.cancel();
         return;
       }
-      stuck += 1;
-      if (stuck < 8) return;
+      final action = _stall.tick(_player.state.position);
+      if (action == PlayStallAction.none) return;
+      final at = _absPosition(_player.state.position);
+      final detail =
+          'pos=${_player.state.position.inMilliseconds}ms '
+          'at=${at.inMilliseconds}ms '
+          'buffered=${_bufferedEndAbs().inMilliseconds}ms '
+          'produced=${_loadedEnd.inMilliseconds}ms '
+          'buffering=${_player.state.buffering} '
+          'want=${target?.inMilliseconds ?? '-'}ms';
+      if (action == PlayStallAction.nudge) {
+        ClientLogger.instance.warn(
+          '播放停滞 ${_stall.limitSeconds}s 画面不动 → 续转 + 重新 seek（$detail）',
+          route: 'player.stall/${_sessionId ?? 'direct'}',
+        );
+        unawaited(_stallRecover(at));
+        return;
+      }
+      // 二级补救（重建会话）只在这条前提成立时做：**服务端早就把内容转到当前位置
+      // 之后了**，也就是「片在磁盘上、播放器却不动」。反过来说，如果转码还落在
+      // 后面（外网慢 / 队列排队），重建只会把 ffmpeg 重新起一遍、更慢 ——
+      // 那种情况退回一级补救（续转 + 重 seek），等转码追上来。
+      if (_loadedEnd < at + const Duration(seconds: 10)) {
+        ClientLogger.instance.warn(
+          '播放停滞 ${_stall.limitSeconds * 2}s，但转码还在后面 → 继续等（$detail）',
+          route: 'player.stall/${_sessionId ?? 'direct'}',
+        );
+        unawaited(_stallRecover(at));
+        return;
+      }
       timer.cancel();
       ClientLogger.instance.warn(
-        '原地 seek 未落地（8s 位置不动）→ 重建会话 target=${target.inMilliseconds}ms',
-        route: 'player.seek/${_sessionId ?? 'direct'}',
+        '播放停滞 ${_stall.limitSeconds * 2}s 仍未恢复 → 重建会话 target=${at.inMilliseconds}ms（$detail）',
+        route: 'player.stall/${_sessionId ?? 'direct'}',
       );
-      unawaited(_jumpTo(target));
+      unawaited(_jumpTo(at));
     });
+  }
+
+  /// 1 级补救：让服务端把这个位置往后续转，同时重新 seek 一次。
+  ///
+  /// 重新 seek 有两个用处：把「上一次 seek 卡住的 pending 状态」清掉；
+  /// 顺便让播放器重新拉一次它现在需要的那个分片。
+  Future<void> _stallRecover(Duration at) async {
+    if (!mounted || !_wantPlay) return;
+    _nudgeTranscode(at);
+    try {
+      await _player.seek(at - _startOffset);
+    } catch (_) {
+      /* seek 失败不影响后面继续补救 */
+    }
+    if (!mounted) return;
+    // seek 会让 position 立刻回到 at，水位要跟着重置，否则下一拍就误判「涨了」
+    _stall.noteStageOne(_player.state.position);
+    if (_wantPlay) unawaited(_ensurePlayingAfterOpen());
+  }
+
+  /// 等转码把 [t] 转出来（最多 [budget]），转出来了返回 true。
+  ///
+  /// 为什么「目标还没转出来」时不要立刻 seek：libmpv 会**立刻把 position 报成目标值**，
+  /// 然后去要一个尚不存在的分片。分片路由等 10 秒还等不到就 404，而 mpv 拿到 404
+  /// 之后整条 HLS 流就废了 —— 实测会话 `795ee81b`：09:51:47 前探 seek 到 seg18
+  /// （produced 只到 seg13），等到 3674ms 才拿到片，从此 position 钉死在 36562，
+  /// 后台还继续 prefetch 到 p1 的 seg21，然后彻底不动 6 分钟。
+  /// 用户要的就是这个意思：「没加载你就转码加载」——等片，别让播放器去要空气。
+  Future<bool> _awaitProduced(
+    Duration t, {
+    Duration budget = const Duration(seconds: 8),
+  }) async {
+    final id = _sessionId;
+    if (id == null || !_isTranscode) return false;
+    final sw = Stopwatch()..start();
+    while (sw.elapsed < budget) {
+      if (!mounted || !_wantPlay) return false;
+      if (_loadedEnd >= t + const Duration(seconds: 1)) return true;
+      try {
+        // 顺手把位置报上去：服务端据此知道「有人在等这一段」，会立刻往前铺
+        final job = await ApiSession.instance.client.playerSessionGet(
+          id: id,
+          pos: t.inMilliseconds.toDouble(),
+        );
+        final transcoded = job.transcodedMs ?? 0;
+        if (transcoded > _transcodedMs) _transcodedMs = transcoded;
+        if (_loadedEnd >= t + const Duration(seconds: 1)) return true;
+        final st = '${job.status}';
+        if (st == 'failed' || st == 'canceled') return false;
+      } catch (_) {
+        /* 网络抖动：下一拍再试 */
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+    }
+    return false;
   }
 
   /// 小幅跳转后立刻上报目标位置，让服务端马上续转，不用等 3s 轮询。
