@@ -2226,6 +2226,9 @@
     "player.preparingHint": {
       "reason": {}
     },
+    "player.preparingSlow": {
+      "seconds": {}
+    },
     "player.prev": {},
     "player.quality": {},
     "player.qualityHint": {

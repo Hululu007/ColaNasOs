@@ -169,6 +169,9 @@ class _PlayerPageState extends State<PlayerPage> {
   static const _tryOriginalDelay = Duration(seconds: 90);
   Timer? _tryOriginalTimer;
   bool _canTryOriginal = false;
+
+  /// 准备页已经等了多久（秒）。≥8 秒才在界面上提示「可能排队」。
+  int _prepareSeconds = 0;
   bool _switching = false;
   bool _boosting = false;
   bool _controls = true;
@@ -1477,13 +1480,25 @@ class _PlayerPageState extends State<PlayerPage> {
     }
   }
 
-  /// 准备页「试试原画」按钮的计时：90 秒还没起来才让它出现（见 [_tryOriginalDelay]）。
+  /// 准备页的计时：一秒一拍地数，用户能看到它在动；
+  /// 到 [_tryOriginalDelay] 还没起来才把「试试原画」放出来。
+  ///
+  /// 为什么要有秒数：「正在转码，准备起播…」配一个一直在转的圈，用户分不清是
+  /// 在干活还是卡死了（Web 端实测首片 1.3~6.6 秒，转码任务排队时会到 30 秒）。
   void _armTryOriginal() {
     _tryOriginalTimer?.cancel();
     _canTryOriginal = false;
-    _tryOriginalTimer = Timer(_tryOriginalDelay, () {
-      if (!mounted || !_preparing) return;
-      setState(() => _canTryOriginal = true);
+    _prepareSeconds = 0;
+    _tryOriginalTimer = Timer.periodic(const Duration(seconds: 1), (t) {
+      if (!mounted || !_preparing) {
+        t.cancel();
+        return;
+      }
+      setState(() => _prepareSeconds += 1);
+      if (_prepareSeconds >= _tryOriginalDelay.inSeconds) {
+        t.cancel();
+        setState(() => _canTryOriginal = true);
+      }
     });
   }
 
@@ -1491,6 +1506,7 @@ class _PlayerPageState extends State<PlayerPage> {
     _tryOriginalTimer?.cancel();
     _tryOriginalTimer = null;
     if (_canTryOriginal) setState(() => _canTryOriginal = false);
+    if (_prepareSeconds != 0) setState(() => _prepareSeconds = 0);
   }
 
   Future<void> _switchQuality(
@@ -3512,6 +3528,19 @@ class _PlayerPageState extends State<PlayerPage> {
                     tr('player.preparing'),
                     style: const TextStyle(color: Colors.white, fontSize: 16),
                   ),
+                  // 等超过 8 秒才提一句：这时候是转码任务在排队，不是卡死
+                  if (_prepareSeconds >= 8) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      tr('player.preparingSlow', {
+                        'seconds': '$_prepareSeconds',
+                      }),
+                      style: const TextStyle(
+                        color: Colors.white54,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
                   // 这行「检测到 杜比视界 / HEVC…边转边播」以前常驻加载页，
                   // 用户看到的是一堆看不懂的术语。原因仍然可查：播放信息面板里
                   // 「HDR」那一行就是它。
