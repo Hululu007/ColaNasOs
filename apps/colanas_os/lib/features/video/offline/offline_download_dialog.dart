@@ -256,6 +256,9 @@ class _DownloadSheetState extends State<_DownloadSheet> {
           posterUrl: _posterUrl(series: hasSeries),
           fallbackPosterUrl: videoPosterUrl(widget.item),
           replace: existing != null,
+          // 「外挂」在服务端等同于「不内挂」（产物字节完全一样，共用同一份缓存），
+          // 额外动作在客户端：下完再抓字幕文件。
+          fetchSubtitles: _subtitleMode == 'external',
         ),
       );
       if (!mounted) return;
@@ -331,12 +334,13 @@ class _DownloadSheetState extends State<_DownloadSheet> {
             _qualityField(),
             const SizedBox(height: 10),
             _bitrateField(quote),
-            _subtitleField(),
           ] else
             Text(
               tr('video.offline.originalHint'),
               style: TextStyle(fontSize: NasTokens.fontCaption, color: context.nasTextSecondary),
             ),
+          const SizedBox(height: 6),
+          _subtitleField(),
 
           const SizedBox(height: 16),
           Container(
@@ -455,7 +459,11 @@ class _DownloadSheetState extends State<_DownloadSheet> {
         if (v == null || v == _codec) return;
         setState(() {
           _codec = v;
-          if (v == 'original') _height = 0;
+          if (v == 'original') {
+            _height = 0;
+            // 原画不重编码：内挂没有意义（字幕本来就在 mkv 里），退成「不」
+            if (_subtitleMode == 'embed') _subtitleMode = 'none';
+          }
         });
         _scheduleQuote();
       },
@@ -506,22 +514,36 @@ class _DownloadSheetState extends State<_DownloadSheet> {
     );
   }
 
-  /// 字幕只有「内挂 / 不内挂」两个选项：
-  /// 烧录要重编码一遍视频（等于再挖一次坑），外挂 srt 依赖客户端再下一份文件，
-  /// 第一版只给最稳的内挂。
+  /// 字幕三选一：
+  ///   · 内挂：`-c:s mov_text` 写进 mp4（只有转码档有；原画的字幕本来就在 mkv 里）；
+  ///   · 外挂：视频不带字幕，另外把 srt / ass 转成 WebVTT 存到 `subtitles/`，
+  ///     播放时可以切（多语言字幕必须走这条）；
+  ///   · 不：完全不要。
+  /// 烧录（把字幕压进画面）不做：要重编码一遍视频，画质和体积都吃亏。
   Widget _subtitleField() {
-    final embed = _subtitleMode == 'embed';
-    return SwitchListTile(
-      contentPadding: EdgeInsets.zero,
-      dense: true,
-      value: embed,
-      title: Text(tr('video.offline.subtitle')),
-      subtitle: Text(
-        embed ? tr('video.offline.subtitleEmbed') : tr('video.offline.subtitleNone'),
-        style: TextStyle(fontSize: NasTokens.fontCaption, color: context.nasTextSecondary),
-      ),
+    final original = _codec == 'original';
+    final modes = <String>[if (!original) 'embed', 'none', 'external'];
+    String labelOf(String mode) {
+      switch (mode) {
+        case 'embed':
+          return tr('video.offline.subtitleEmbed');
+        case 'external':
+          return tr('video.offline.subtitleExternal');
+        default:
+          return tr('video.offline.subtitleNone');
+      }
+    }
+
+    return NasDropdown<String>(
+      initialValue: modes.contains(_subtitleMode) ? _subtitleMode : 'none',
+      decoration: InputDecoration(labelText: tr('video.offline.subtitle')),
+      items: [
+        for (final mode in modes)
+          DropdownMenuItem(value: mode, child: Text(labelOf(mode))),
+      ],
       onChanged: (v) {
-        setState(() => _subtitleMode = v ? 'embed' : 'none');
+        if (v == null || v == _subtitleMode) return;
+        setState(() => _subtitleMode = v);
         _scheduleQuote();
       },
     );

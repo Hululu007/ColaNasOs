@@ -75,7 +75,10 @@ class _VideoOfflinePageState extends State<VideoOfflinePage> {
     }
     final groups = store.sortedGroups(libraryId: _library);
     final libraries = store.libraries();
-    final tasks = OfflineDownloadManager.instance.tasks.value.where((t) => t.active).toList();
+    // 失败的任务也列出来：不给入口的话，用户只能去详情页重新点一遍才会再排一次
+    final tasks = OfflineDownloadManager.instance.tasks.value
+        .where((t) => t.active || t.state == OfflineTaskState.failed)
+        .toList();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -169,10 +172,12 @@ class _VideoOfflinePageState extends State<VideoOfflinePage> {
 
   Widget _taskRow(BuildContext context, OfflineTaskRecord task) {
     final scheme = Theme.of(context).colorScheme;
-    final label = task.state == OfflineTaskState.transcoding ||
-            task.state == OfflineTaskState.queued
-        ? tr('video.offline.preparing')
-        : tr('video.offline.downloading');
+    final failed = task.state == OfflineTaskState.failed;
+    final label = failed
+        ? tr('video.offline.failed')
+        : (task.state == OfflineTaskState.transcoding || task.state == OfflineTaskState.queued
+              ? tr('video.offline.preparing')
+              : tr('video.offline.downloading'));
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),
       child: Row(
@@ -180,7 +185,9 @@ class _VideoOfflinePageState extends State<VideoOfflinePage> {
           SizedBox(
             width: 14,
             height: 14,
-            child: CircularProgressIndicator(strokeWidth: 2, value: task.overall),
+            child: failed
+                ? Icon(Icons.error_outline, size: 14, color: scheme.error)
+                : CircularProgressIndicator(strokeWidth: 2, value: task.overall),
           ),
           const SizedBox(width: 8),
           Expanded(
@@ -188,13 +195,18 @@ class _VideoOfflinePageState extends State<VideoOfflinePage> {
               '${task.title} · $label',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: NasTokens.fontCaption, color: context.nasTextSecondary),
+              style: TextStyle(
+                fontSize: NasTokens.fontCaption,
+                color: failed ? scheme.error : context.nasTextSecondary,
+              ),
             ),
           ),
           TextButton(
-            onPressed: () => OfflineDownloadManager.instance.cancel(task.itemId),
-            style: TextButton.styleFrom(foregroundColor: scheme.error),
-            child: Text(tr('video.offline.cancel')),
+            onPressed: () => failed
+                ? OfflineDownloadManager.instance.retry(task.itemId)
+                : OfflineDownloadManager.instance.cancel(task.itemId),
+            style: failed ? null : TextButton.styleFrom(foregroundColor: scheme.error),
+            child: Text(failed ? tr('video.offline.retry') : tr('video.offline.cancel')),
           ),
         ],
       ),
@@ -438,6 +450,10 @@ class _VideoOfflinePageState extends State<VideoOfflinePage> {
           onPosition: (pos) => OfflineDownloadManager.instance
               .savePlayback(item.id, pos.inMilliseconds)
               .ignore(),
+          // 下载时抓的外挂字幕（WebVTT）：第一条自动挂上，其余在字幕菜单里切
+          localSubtitles: [
+            for (final rel in item.subtitlePaths) store.absolute(rel),
+          ],
         ),
       ),
     );
@@ -598,6 +614,9 @@ class _VideoOfflineSeriesPageState extends State<VideoOfflineSeriesPage> {
           onPosition: (pos) => OfflineDownloadManager.instance
               .savePlayback(item.id, pos.inMilliseconds)
               .ignore(),
+          localSubtitles: [
+            for (final rel in item.subtitlePaths) store.absolute(rel),
+          ],
         ),
       ),
     );

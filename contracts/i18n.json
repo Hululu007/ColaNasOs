@@ -3663,8 +3663,23 @@
     "video.openFailed": {
       "error": {}
     },
+    "video.offline.changeRoot": {},
+    "video.offline.changeRootBody": {
+      "n": {},
+      "size": {}
+    },
+    "video.offline.changeRootTitle": {},
+    "video.offline.migrateDone": {},
+    "video.offline.migrateFailed": {
+      "error": {}
+    },
+    "video.offline.migrating": {
+      "done": {},
+      "total": {}
+    },
     "video.offline.subtitle": {},
     "video.offline.subtitleEmbed": {},
+    "video.offline.subtitleExternal": {},
     "video.offline.subtitleNone": {},
     "video.offline.title": {},
     "video.offline.hint": {},

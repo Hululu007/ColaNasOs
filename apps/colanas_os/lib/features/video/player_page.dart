@@ -58,6 +58,7 @@ class PlayerPage extends StatefulWidget {
     this.playlistIsSeries = false,
     this.startAt,
     this.onPosition,
+    this.localSubtitles = const <String>[],
   });
 
   /// 带短期令牌的原画直链（`/api/v1/video/stream-url` 签发）
@@ -109,6 +110,10 @@ class PlayerPage extends StatefulWidget {
   /// 退出时回传最后的播放位置。本地播放靠它把进度写进本地索引 ——
   /// 播放器自己不落库，是因为在线播放的进度归服务端管。
   final void Function(Duration position)? onPosition;
+
+  /// 本地外挂字幕的绝对路径（离线下载时抓下来的 WebVTT）。
+  /// 在线播放走 `/video/subtitle` 接口，这里只服务「文件就在本机」的场景。
+  final List<String> localSubtitles;
 
   @override
   State<PlayerPage> createState() => _PlayerPageState();
@@ -646,13 +651,30 @@ class _PlayerPageState extends State<PlayerPage> {
         _prepareCompatible();
       } else {
         // 本地续播：startAt 只在直连路径生效（转码流的 0 点是起转点，不能直接 seek）
-        _openUrl(_url, seekTo: widget.startAt);
+        _openUrl(_url, seekTo: widget.startAt).then((_) => _attachLocalSubtitles());
       }
       _loadSubtitles();
       _loadAudioTracks();
       _loadPlaylist();
       _resetHideTimer();
     });
+  }
+
+  /// 挂上本地外挂字幕。
+  ///
+  /// 只挂第一条（通常就是主字幕）：libmpv 会把 setSubtitleTrack 指定的文件加进
+  /// 轨道列表，播放器的字幕菜单里照样能切回内嵌轨 / 关字幕。
+  /// 失败不提示 —— 字幕挂了不影响看片。
+  Future<void> _attachLocalSubtitles() async {
+    if (widget.localSubtitles.isEmpty) return;
+    try {
+      final first = widget.localSubtitles.first;
+      // Windows 是反斜杠、Android 是正斜杠：两边都要切
+      final name = first.split(RegExp(r'[\\/]')).last;
+      await _player.setSubtitleTrack(SubtitleTrack.uri(first, title: name));
+    } catch (_) {
+      // 文件被删 / 格式不认：静默跳过
+    }
   }
 
   /// 进播放器那一刻的朝向，只记一次。

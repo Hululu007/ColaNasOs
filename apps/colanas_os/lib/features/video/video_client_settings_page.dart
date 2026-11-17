@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:nas_ui/nas_ui.dart';
 
@@ -50,6 +51,8 @@ class _VideoClientSettingsPageState extends State<VideoClientSettingsPage> {
   String? _offlinePath;
   int _offlineUsed = 0;
   int _offlineCount = 0;
+  bool _migrating = false;
+  String _migrateLabel = '';
 
   /// 提前转码时长的可选档；默认选中 [PlayPreferences.defaultLeadMinutes]（3 分钟）。
   /// 2026-11-16 起不再提供「整片一次转完」（0）：整片模式没有 `-t` 终点，
@@ -200,8 +203,8 @@ class _VideoClientSettingsPageState extends State<VideoClientSettingsPage> {
   /// 给一个半成品按钮比不给更糟。
   List<Widget> _offlineSection() {
     final path = _offlinePath;
-    final used = _offlineUsed;
-    final count = _offlineCount;
+    final canChangeRoot =
+        defaultTargetPlatform != TargetPlatform.android;
     return [
       _section(tr('video.offline.title')),
       _setting(
@@ -209,32 +212,93 @@ class _VideoClientSettingsPageState extends State<VideoClientSettingsPage> {
         hint: path == null
             ? tr('video.offline.storageHint')
             : '$path\n${tr('video.offline.storageHint')}',
+        trailing: canChangeRoot
+            ? TextButton(
+                onPressed: _migrating ? null : _changeRoot,
+                child: Text(
+                  _migrating && _migrateLabel.isNotEmpty
+                      ? _migrateLabel
+                      : tr('video.offline.changeRoot'),
+                ),
+              )
+            : const SizedBox.shrink(),
+      ),
+      _setting(
+        title: tr('video.offline.usage', {
+          'size': formatBytes(_offlineUsed),
+          'n': '$_offlineCount',
+        }),
+        hint: tr('video.offline.settingsHint'),
         trailing: TextButton(
-          onPressed: _clearOffline,
+          onPressed: (_migrating || _offlineCount == 0) ? null : _clearOffline,
           style: TextButton.styleFrom(
             foregroundColor: Theme.of(context).colorScheme.error,
           ),
           child: Text(tr('video.offline.clearAll')),
         ),
       ),
-      Padding(
-        padding: const EdgeInsets.only(top: 2),
-        child: Text(
-          tr('video.offline.usage', {
-            'size': formatBytes(used),
-            'n': '$count',
-          }),
-          style: TextStyle(fontSize: NasTokens.fontCaption, color: context.nasTextSecondary),
-        ),
-      ),
-      Padding(
-        padding: const EdgeInsets.only(top: 4),
-        child: Text(
-          tr('video.offline.settingsHint'),
-          style: TextStyle(fontSize: NasTokens.fontCaption, color: context.nasTextSecondary),
-        ),
-      ),
     ];
+  }
+
+  /// 换目录：选目录 → 确认 → 迁移（逐文件拷贝并校验，失败不动原目录）
+  Future<void> _changeRoot() async {
+    final target = await offlinePickRoot();
+    if (target == null || !mounted) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(tr('video.offline.changeRootTitle')),
+        content: Text(
+          tr('video.offline.changeRootBody', {
+            'n': '$_offlineCount',
+            'size': formatBytes(_offlineUsed),
+          }),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(tr('common.cancel')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(tr('video.offline.changeRoot')),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+
+    setState(() {
+      _migrating = true;
+      _migrateLabel = '';
+    });
+    final error = await offlineMigrateRoot(
+      target,
+      onProgress: (done, total) {
+        if (!mounted) return;
+        setState(() {
+          _migrateLabel = tr('video.offline.migrating', {
+            'done': '$done',
+            'total': '$total',
+          });
+        });
+      },
+    );
+    if (!mounted) return;
+    setState(() {
+      _migrating = false;
+      _migrateLabel = '';
+    });
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      SnackBar(
+        content: Text(
+          error == null
+              ? tr('video.offline.migrateDone')
+              : tr('video.offline.migrateFailed', {'error': error}),
+        ),
+      ),
+    );
+    await _loadOffline();
   }
 
   Future<void> _loadOffline() async {

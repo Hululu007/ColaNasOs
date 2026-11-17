@@ -219,6 +219,8 @@ class OfflineTaskRecord {
     this.artifactId = '',
     this.error,
     this.meta = const <String, dynamic>{},
+    this.attempts = 0,
+    this.nextTryAt = 0,
     this.createdAt = 0,
   });
 
@@ -247,6 +249,12 @@ class OfflineTaskRecord {
   /// 复现下载需要的上下文（库名 / 封面地址 / 季集号 / 总集数）。
   /// 不放进 `spec`：spec 是「产物参数」，meta 是「展示与归档用的元数据」。
   final Map<String, dynamic> meta;
+
+  /// 已经自动重试过几次（服务端编码失败不重试，只有网络类错误才累计）
+  int attempts;
+
+  /// 下次可以重跑的时间戳；0 = 立刻可跑
+  int nextTryAt;
   final int createdAt;
 
   bool get active =>
@@ -254,6 +262,10 @@ class OfflineTaskRecord {
       state == OfflineTaskState.transcoding ||
       state == OfflineTaskState.downloading ||
       state == OfflineTaskState.verifying;
+
+  /// 排队中但还在退避等待：调度器要跳过它，界面仍算「进行中」
+  bool get readyToRun =>
+      active && (nextTryAt == 0 || DateTime.now().millisecondsSinceEpoch >= nextTryAt);
 
   /// 0~1 的整体进度：编码阶段按编码进度折算前 30%，传输占后 70%
   double get overall {
@@ -293,6 +305,8 @@ class OfflineTaskRecord {
     'sha256': sha256,
     if (error != null) 'error': error,
     if (meta.isNotEmpty) 'meta': meta,
+    'attempts': attempts,
+    'nextTryAt': nextTryAt,
     'createdAt': createdAt,
   };
 
@@ -316,6 +330,8 @@ class OfflineTaskRecord {
     sha256: '${json['sha256'] ?? ''}',
     error: json['error'] as String?,
     meta: (json['meta'] as Map?)?.cast<String, dynamic>() ?? const <String, dynamic>{},
+    attempts: (json['attempts'] as num?)?.toInt() ?? 0,
+    nextTryAt: (json['nextTryAt'] as num?)?.toInt() ?? 0,
     createdAt: (json['createdAt'] as num?)?.toInt() ?? 0,
   );
 }

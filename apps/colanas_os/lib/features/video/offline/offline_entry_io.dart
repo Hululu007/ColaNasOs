@@ -1,3 +1,4 @@
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:nas_core/nas_core.dart';
@@ -68,6 +69,29 @@ Future<int> usedBytes() async =>
 
 Future<int> itemCount() async =>
     (await OfflineDownloadManager.instance.ensureStore()).items.length;
+
+Future<String?> pickRoot() async {
+  // Android 的下载目录固定在应用专属外部目录（不进相册的前提），不给改
+  if (defaultTargetPlatform == TargetPlatform.android) return null;
+  try {
+    final picked = await getDirectoryPath(confirmButtonText: '选择');
+    return picked;
+  } catch (_) {
+    return null;
+  }
+}
+
+Future<String?> migrateRoot(
+  String target, {
+  void Function(int done, int total)? onProgress,
+}) async {
+  try {
+    await OfflineDownloadManager.instance.migrateRoot(target, onProgress: onProgress);
+    return null;
+  } catch (err) {
+    return '$err';
+  }
+}
 
 Future<void> clearAll() async {
   final manager = OfflineDownloadManager.instance;

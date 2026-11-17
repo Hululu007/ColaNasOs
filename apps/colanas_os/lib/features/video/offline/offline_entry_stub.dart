@@ -38,6 +38,13 @@ Future<int> itemCount() async => 0;
 
 Future<void> clearAll() async {}
 
+Future<String?> pickRoot() async => null;
+
+Future<String?> migrateRoot(
+  String target, {
+  void Function(int done, int total)? onProgress,
+}) async => 'unsupported';
+
 Widget buildPage() => const _UnsupportedPage();
 
 class _UnsupportedPage extends StatelessWidget {

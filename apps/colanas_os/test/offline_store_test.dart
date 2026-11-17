@@ -262,4 +262,47 @@ void main() {
     final store = OfflineStore(tmp.path);
     expect(await store.recoverReplacement(), isNull);
   });
+
+  // ---------------------------------------------------------------- 目录迁移
+  //
+  // 迁移错了就是丢片子，所以拷贝这件事本身必须有断言：结构不能变形、
+  // 半截 .tmp 不能跟着搬、每个文件大小要对得上。
+
+  test('迁移拷贝：结构与内容完整，跳过 .tmp', () async {
+    await write('videos/a.mp4', 'AAA');
+    await write('posters/p.jpg', 'PP');
+    await write('subtitles/a.zh.vtt', 'WEBVTT');
+    await write('index/items.json', '{"version":1,"items":[]}');
+    await write('index/items.json.tmp', 'half');
+
+    final store = OfflineStore(tmp.path);
+    final target = p.join(tmp.path, 'moved');
+    await Directory(target).create(recursive: true);
+
+    var lastDone = 0;
+    var lastTotal = 0;
+    final copied = await store.copyLibraryTo(
+      target,
+      onProgress: (done, total) {
+        lastDone = done;
+        lastTotal = total;
+      },
+    );
+
+    expect(copied, 4);
+    expect(lastDone, 4);
+    expect(lastTotal, 4);
+    expect(await File(p.join(target, 'videos', 'a.mp4')).readAsString(), 'AAA');
+    expect(await File(p.join(target, 'posters', 'p.jpg')).readAsString(), 'PP');
+    expect(await File(p.join(target, 'subtitles', 'a.zh.vtt')).readAsString(), 'WEBVTT');
+    // .tmp 不搬
+    expect(await File(p.join(target, 'index', 'items.json.tmp')).exists(), isFalse);
+  });
+
+  test('迁移拷贝：空库也能跑（0 个文件不报错）', () async {
+    final store = OfflineStore(tmp.path);
+    final target = p.join(tmp.path, 'empty');
+    await Directory(target).create(recursive: true);
+    expect(await store.copyLibraryTo(target), 0);
+  });
 }

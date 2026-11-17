@@ -56,3 +56,12 @@ Future<int> offlineItemCount() => impl.itemCount();
 
 /// 清空本机所有离线副本（不动服务器）
 Future<void> offlineClearAll() => impl.clearAll();
+
+/// 选一个新的下载目录；Web / Android / 用户取消都返回 null
+Future<String?> offlinePickRoot() => impl.pickRoot();
+
+/// 迁移到新目录。返回 null = 成功，否则是错误信息（此时旧目录原样保留）
+Future<String?> offlineMigrateRoot(
+  String target, {
+  void Function(int done, int total)? onProgress,
+}) => impl.migrateRoot(target, onProgress: onProgress);

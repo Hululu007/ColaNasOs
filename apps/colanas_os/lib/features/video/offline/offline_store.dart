@@ -159,6 +159,44 @@ class OfflineStore {
     if (gone.isNotEmpty) await saveLibrary();
   }
 
+  /// 把整个本地库拷到 [targetRoot]，逐文件校验大小。
+  ///
+  /// 抽成 store 的方法（而不是写在迁移流程里）是为了能单测：目录结构、`.tmp` 跳过、
+  /// 大小校验这三件事错了都会让用户丢片子，必须有断言兜住。
+  /// 返回拷贝的文件数；任何一个文件大小对不上就抛 `StateError`。
+  Future<int> copyLibraryTo(
+    String targetRoot, {
+    void Function(int done, int total)? onProgress,
+  }) async {
+    const dirs = <String>['videos', 'posters', 'backdrops', 'subtitles', 'index'];
+    final files = <File>[];
+    for (final dir in dirs) {
+      final from = Directory(p.join(root, dir));
+      if (!await from.exists()) continue;
+      await for (final entity in from.list(recursive: true)) {
+        if (entity is! File) continue;
+        // 原子写留下的半截文件不搬：目标那头会自己再写一份
+        if (p.basename(entity.path).endsWith('.tmp')) continue;
+        files.add(entity);
+      }
+    }
+
+    var done = 0;
+    for (final file in files) {
+      final rel = p.relative(file.path, from: root);
+      final target = File(p.join(targetRoot, rel));
+      await target.parent.create(recursive: true);
+      await file.copy(target.path);
+      final srcSize = await file.length();
+      if (await target.length() != srcSize) {
+        throw StateError('迁移校验失败：$rel');
+      }
+      done += 1;
+      onProgress?.call(done, files.length);
+    }
+    return files.length;
+  }
+
   Future<void> saveLibrary() async {
     await _writeAtomic(
       _groupsFile,

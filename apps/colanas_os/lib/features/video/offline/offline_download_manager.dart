@@ -3,12 +3,14 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:crypto/crypto.dart';
+import 'package:http/http.dart' as http;
 import 'package:flutter/foundation.dart';
 import 'package:nas_core/nas_core.dart';
 import 'package:nas_ui/nas_ui.dart' show formatBytes, tr;
 import 'package:path/path.dart' as p;
 
 import '../../../core/session.dart';
+import '../../../core/settings_store.dart';
 import 'offline_background.dart';
 import 'offline_models.dart';
 import 'offline_storage.dart';
@@ -31,6 +33,7 @@ class OfflineRequest {
     this.posterUrl,
     this.fallbackPosterUrl,
     this.replace = false,
+    this.fetchSubtitles = false,
   });
 
   final String itemId;
@@ -57,6 +60,11 @@ class OfflineRequest {
   /// 用户已确认覆盖本机旧版本
   final bool replace;
 
+  /// 下载完成后把外挂字幕（srt / ass → 服务端转 WebVTT）一并存到本地。
+  /// 与 `spec.subtitleMode` 分开：那是「要不要把字幕烧/挂进视频文件」，
+  /// 这是「要不要额外存几份字幕文件供播放器切换」。
+  final bool fetchSubtitles;
+
   /// 合集 id：剧集按 seriesKey 摘要，电影就是条目 id
   String get groupId => seriesKey == null
       ? itemId
@@ -69,6 +77,7 @@ class OfflineRequest {
     if (season != null) 'season': season,
     if (episode != null) 'episode': episode,
     'totalEpisodes': totalEpisodes,
+    'fetchSubtitles': fetchSubtitles,
     if (posterUrl != null) 'posterUrl': posterUrl,
     if (fallbackPosterUrl != null) 'fallbackPosterUrl': fallbackPosterUrl,
   };
@@ -88,6 +97,7 @@ class OfflineRequest {
       totalEpisodes: (meta['totalEpisodes'] as num?)?.toInt() ?? 0,
       posterUrl: meta['posterUrl'] as String?,
       fallbackPosterUrl: meta['fallbackPosterUrl'] as String?,
+      fetchSubtitles: meta['fetchSubtitles'] == true,
     );
   }
 
@@ -126,6 +136,16 @@ class OfflineDownloadManager {
   OfflineStore? _store;
   Future<OfflineStore>? _loading;
   bool _pumping = false;
+
+  /// 同时跑几条（转码在服务端是串行的，下载是网络 IO，2 条刚好：
+  /// 一条在等编码时另一条可以下，又不至于把上行/磁盘抢满）
+  static const int _maxConcurrent = 2;
+
+  /// 自动重试上限（只对网络类错误；编码失败重试没有意义）
+  static const int _maxAttempts = 3;
+
+  int _inflight = 0;
+  final Set<String> _running = <String>{};
   final Set<String> _canceled = <String>{};
   int _lastProgressAt = 0;
   int _lastNotifyAt = 0;
@@ -146,8 +166,12 @@ class OfflineDownloadManager {
     return future.whenComplete(() => _loading = null);
   }
 
+  /// 自定义下载目录的持久化键（客户端设置，只影响本机）
+  static const String rootSettingKey = 'video.offline.root';
+
   Future<OfflineStore> _open() async {
-    final root = await OfflineStorage.rootPath(custom: customRoot);
+    final saved = SettingsStore.instance.getString(rootSettingKey);
+    final root = await OfflineStorage.rootPath(custom: customRoot ?? saved);
     await OfflineStorage.ensureLayout(root);
     final store = OfflineStore(root);
     await store.load();
@@ -165,12 +189,77 @@ class OfflineDownloadManager {
     return store;
   }
 
-  /// 换下载目录：只切索引位置，不动旧目录里的文件（迁移在 P7）
-  Future<void> setCustomRoot(String? root) async {
-    customRoot = root;
-    _store = null;
-    await ensureStore();
-    libraryRevision.value++;
+  /// 换下载目录：**迁移**已有文件过去，失败则原样保留旧目录。
+  ///
+  /// 步骤与失败语义：
+  ///   1. 目标建目录 + 写 `index/migrating.json`（崩溃标记）；
+  ///   2. 逐文件 copy，每个文件立即校验大小；
+  ///   3. 全部通过才切设置（`video.offline.root`）并重开索引；
+  ///   4. 新库条目数不少于旧库才删旧目录 —— 少了就停下来把旧的留着。
+  ///
+  /// 任何一步抛错，目标目录里这次拷的东西会被清掉，旧目录一点没动。
+  /// 中途断电：设置还没切，下次启动仍然读旧目录；目标里留着标记，
+  /// 再迁移到同一目录时会先清空重来。
+  Future<void> migrateRoot(
+    String newRoot, {
+    void Function(int done, int total)? onProgress,
+  }) async {
+    final store = await ensureStore();
+    final from = store.root;
+    if (p.equals(p.normalize(from), p.normalize(newRoot))) return;
+
+    await OfflineStorage.ensureLayout(newRoot);
+    final marker = File(p.join(newRoot, 'index', 'migrating.json'));
+    if (await marker.exists()) {
+      // 上次没搬完：目标里的半成品不能信，清掉重来
+      for (final dir in <String>['videos', 'posters', 'backdrops', 'subtitles', 'index', 'temp']) {
+        final sub = Directory(p.join(newRoot, dir));
+        if (await sub.exists()) await sub.delete(recursive: true);
+      }
+      await OfflineStorage.ensureLayout(newRoot);
+    }
+    await marker.writeAsString(
+      jsonEncode({'from': from, 'startedAt': DateTime.now().millisecondsSinceEpoch}),
+      flush: true,
+    );
+
+    try {
+      // 逐文件 copy + 校验（细节在 store 里，单测覆盖）
+      await store.copyLibraryTo(newRoot, onProgress: onProgress);
+
+      // 切设置 + 重开索引（`_open()` 会跑恢复与对账）
+      await SettingsStore.instance.setString(rootSettingKey, newRoot);
+      customRoot = newRoot;
+      _store = null;
+      final reloaded = await ensureStore();
+      await marker.delete();
+
+      // 新库比旧库少 → 说明拷丢了，绝不删旧目录
+      if (reloaded.items.length < store.items.length) {
+        libraryRevision.value++;
+        throw StateError('新目录条目数比旧目录少（${reloaded.items.length} < ${store.items.length}），已保留旧目录');
+      }
+
+      try {
+        await Directory(from).delete(recursive: true);
+      } catch (_) {
+        // 有文件被占用（播放器还开着）：旧目录留着，用户可手动删
+      }
+      libraryRevision.value++;
+    } catch (err) {
+      // 回滚：把这次拷到目标里的东西清掉，旧目录原样不动
+      if (!p.equals(p.normalize((_store?.root) ?? from), p.normalize(newRoot))) {
+        for (final dir in <String>['videos', 'posters', 'backdrops', 'subtitles', 'index', 'temp']) {
+          final sub = Directory(p.join(newRoot, dir));
+          try {
+            if (await sub.exists()) await sub.delete(recursive: true);
+          } catch (_) {
+            // 删不动就算了，标记还在，下次会清
+          }
+        }
+      }
+      rethrow;
+    }
   }
 
   // ---------------------------------------------------------------- 对外动作
@@ -208,6 +297,21 @@ class OfflineDownloadManager {
     _publishTasks();
     _schedulePump();
     return record;
+  }
+
+  /// 手动重试一条失败的任务（编码失败也走这里：用户点重试 = 新的一次机会）
+  Future<void> retry(String itemId) async {
+    final store = await ensureStore();
+    final task = store.tasks[itemId];
+    if (task == null || task.active) return;
+    task.attempts = 0;
+    task.nextTryAt = 0;
+    task.error = null;
+    task.state = OfflineTaskState.queued;
+    await store.saveTasks();
+    _canceled.remove(itemId);
+    _publishTasks();
+    _schedulePump();
   }
 
   /// 取消：先让本地循环收手，再通知服务端杀掉编码
@@ -279,6 +383,30 @@ class OfflineDownloadManager {
     if ((item.playbackMs - positionMs).abs() < 5000) return; // 5s 内不重复写盘
     item.playbackMs = positionMs;
     await store.saveLibrary();
+    // 顺手回写服务端：离线看完的那一集，回到网页端不该还是「没看过」。
+    // 失败无所谓（断网时本来就连不上），本地这份才是离线场景的真相。
+    unawaited(_syncProgress(item, positionMs));
+  }
+
+  /// 把本地进度同步给服务端。
+  ///
+  /// `position` 的格式是 **毫秒数转成的字符串** —— 与短剧连播页同一个口径
+  /// （详情页的续播提示按 `int.tryParse` 解析）。别写成 `12:34`，那边会退化成
+  /// 「按百分比估」的旧路径。
+  Future<void> _syncProgress(LocalMediaItem item, int positionMs) async {
+    if (item.durationMs <= 0 || positionMs <= 0) return;
+    final percent = ((positionMs / item.durationMs) * 100).clamp(0.0, 100.0).round();
+    try {
+      await ApiSession.instance.client.videoProgressSave(
+        body: VideoProgressBody(
+          id: item.id,
+          percent: percent,
+          position: '$positionMs',
+        ),
+      );
+    } catch (_) {
+      // 离线 / 条目已被删：不打扰用户
+    }
   }
 
   // ---------------------------------------------------------------- 内部
@@ -304,34 +432,67 @@ class OfflineDownloadManager {
 
   /// 串行处理：一路编码 + 下载已经能把带宽和内网 IO 吃满，多路只会互相拖
   Future<void> _pump() async {
+    if (_pumping) return;
+    _pumping = true;
     var foreground = false;
     try {
       while (true) {
         final store = _store;
         if (store == null) break;
-        final next = store.tasks.values
-            .where((t) => t.active && !_canceled.contains(t.itemId))
+        final pending = store.tasks.values
+            .where((t) => t.readyToRun && !_canceled.contains(t.itemId) && !_running.contains(t.itemId))
             .toList()
           ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
-        if (next.isEmpty) break;
-        if (!foreground) {
-          // 第一条任务开跑就拉起前台服务：Android 息屏会冻结进程，
-          // 没有它下载会停在半路，用户回来看到「进度不动」。
-          foreground = true;
+
+        if (pending.isEmpty) {
+          // 还有在跑的 / 在退避等待的就等一等；都没有了就收工
+          final waiting = store.tasks.values.any((t) => t.active);
+          if (_inflight == 0 && !waiting) break;
+          await Future<void>.delayed(const Duration(milliseconds: 300));
+          continue;
+        }
+
+        for (final task in pending) {
+          if (_inflight >= _maxConcurrent) break;
+          if (!foreground) {
+            foreground = true;
+            unawaited(
+              OfflineBackground.start(
+                tr('video.offline.title'),
+                '${task.title} · ${tr('video.offline.preparing')}',
+              ),
+            );
+          }
+          _running.add(task.itemId);
+          _inflight += 1;
           unawaited(
-            OfflineBackground.start(
-              tr('video.offline.title'),
-              '${next.first.title} · ${tr('video.offline.preparing')}',
-            ),
+            _run(store, task).whenComplete(() {
+              _running.remove(task.itemId);
+              _inflight -= 1;
+            }),
           );
         }
-        await _run(store, next.first);
+        await Future<void>.delayed(const Duration(milliseconds: 200));
       }
     } finally {
       _pumping = false;
       if (foreground) unawaited(OfflineBackground.stop());
     }
   }
+
+  /// 网络类错误才值得自动重试：编码失败、校验失败重跑一遍还是同样结果。
+  bool _isTransient(Object err) {
+    if (err is SocketException || err is HttpException || err is TimeoutException) return true;
+    if (err is http.ClientException) return true;
+    if (err is TransferFailed) {
+      final m = err.message;
+      return m.startsWith('HTTP 5') || m.contains('Connection') || m.contains('timed out');
+    }
+    return false;
+  }
+
+  /// 退避：5s / 15s / 45s
+  static int _backoffMs(int attempt) => 5000 * (attempt <= 1 ? 1 : (attempt == 2 ? 3 : 9));
 
   /// 把当前任务的进度推到通知栏（2 秒节流；状态一变立刻推）。
   void _pushNotification(OfflineTaskRecord task) {
@@ -464,6 +625,15 @@ class OfflineDownloadManager {
         store.removeTask(req.itemId);
         await store.saveTasks();
         _canceled.remove(req.itemId);
+      } else if (_isTransient(err) && task.attempts < _maxAttempts) {
+        // 网络断了 / 服务端 5xx：退避后自动重排，不用用户盯着点重试
+        task.attempts += 1;
+        final waitMs = _backoffMs(task.attempts);
+        task.state = OfflineTaskState.queued;
+        task.error = '$err';
+        task.nextTryAt = DateTime.now().millisecondsSinceEpoch + waitMs;
+        await store.saveTasks();
+        debugPrint('[offline] 第 ${task.attempts} 次失败，${waitMs}ms 后重试：$err');
       } else {
         task.state = OfflineTaskState.failed;
         task.error = '$err';
@@ -533,6 +703,9 @@ class OfflineDownloadManager {
       flush: true,
     );
 
+    // 外挂字幕：服务端把 srt / ass 统一转成 WebVTT 返回，落到 subtitles/ 供播放器切换
+    final subtitleRels = req.fetchSubtitles ? await _fetchSubtitles(store, req) : <String>[];
+
     // 封面：整剧一张，多集共用同一份文件（按 URL 摘要命名，天然去重）
     final posterRel = await _downloadPoster(store, req);
 
@@ -580,6 +753,7 @@ class OfflineDownloadManager {
         videoCodec: artifact.videoCodec,
         container: artifact.container,
         spec: task.spec,
+        subtitlePaths: subtitleRels,
         downloadedAt: nowMs,
       ),
     );
@@ -589,6 +763,36 @@ class OfflineDownloadManager {
     await store.saveTasks();
     _publishTasks();
     libraryRevision.value++;
+  }
+
+  /// 抓外挂字幕。一个都没有 / 服务端转不了（图形字幕）都返回空数组，不打断入库。
+  Future<List<String>> _fetchSubtitles(OfflineStore store, OfflineRequest req) async {
+    try {
+      final list = await ApiSession.instance.client.videoSubtitles(id: req.itemId);
+      // `#embedded:N` 是容器内的字幕轨：视频里本来就有，单独存一份没有意义
+      final picked = list.items
+          .where((s) => !s.name.startsWith('#embedded:'))
+          .take(3)
+          .toList();
+      final out = <String>[];
+      for (final sub in picked) {
+        final parsed = await ApiSession.instance.client.videoSubtitle(
+          id: req.itemId,
+          name: sub.name,
+        );
+        if (parsed.vtt.trim().isEmpty) continue;
+        final safe = sub.name.replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_');
+        final rel = 'subtitles/${req.itemId}.$safe.vtt';
+        final file = File(store.absolute(rel));
+        await file.parent.create(recursive: true);
+        await file.writeAsString(parsed.vtt, flush: true);
+        out.add(rel);
+      }
+      return out;
+    } catch (_) {
+      // 字幕是锦上添花：拿不到就算了，别让整次下载失败
+      return const <String>[];
+    }
   }
 
   Future<String?> _downloadPoster(OfflineStore store, OfflineRequest req) async {
