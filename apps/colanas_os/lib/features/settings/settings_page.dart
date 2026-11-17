@@ -21,6 +21,7 @@ import 'help_page.dart';
 import 'style_preview_page.dart';
 import '../../shell/mobile_frame.dart';
 import '../../shell/app_nav_shell.dart';
+import '../../shell/desktop_tray.dart';
 
 /// 设置（配置中心）：左侧二级导航分四组 —— 服务器（服务器配置 + 服务与账号）、
 /// 外观（外观 + 语言）、日志（服务端日志）、其他（索引维护 + 关于）。
@@ -885,6 +886,29 @@ class _SettingsPageState extends State<SettingsPage> {
           value: on,
           onChanged: autostartSupported
               ? AppSettings.instance.setStartAtBoot
+              : null,
+        ),
+      ),
+      // 静默启动：开机自启 / 双击图标都直接缩进托盘，点托盘图标才叫出主窗口。
+      // 只有桌面端有托盘，其他端这个开关没有意义（置灰而不是隐藏，用户能找到它）。
+      ValueListenableBuilder<bool>(
+        valueListenable: AppSettings.instance.startInTray,
+        builder: (context, on, _) => SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          secondary: const Icon(Icons.expand_circle_down_outlined),
+          title: Text(tr('settings.startInTray')),
+          subtitle: Text(
+            desktopTray.supported
+                ? tr('settings.startInTrayHint')
+                : tr('settings.startInTrayUnsupported'),
+            style: TextStyle(
+              fontSize: NasTokens.fontCaption,
+              color: context.nasTextSecondary,
+            ),
+          ),
+          value: on,
+          onChanged: desktopTray.supported
+              ? AppSettings.instance.setStartInTray
               : null,
         ),
       ),

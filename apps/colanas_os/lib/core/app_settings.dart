@@ -5,6 +5,7 @@ import 'package:nas_ui/nas_ui.dart';
 
 import 'autostart.dart';
 import 'settings_store.dart';
+import 'start_hidden.dart';
 import 'tv_mode.dart';
 
 /// 外观设置：明暗 + 配色（25 套）+ 皮肤（4 套）+ 界面风格（3 套），**持久化**到本地设置文件。
@@ -50,6 +51,14 @@ class AppSettings {
   /// 默认关：装完不吭声就往系统启动项里塞东西，用户会觉得是流氓软件。
   final ValueNotifier<bool> startAtBoot = ValueNotifier<bool>(false);
 
+  /// 启动时最小化到托盘（仅桌面端）：开机自启 / 双击图标都直接缩进托盘，
+  /// 点托盘图标才把主窗口叫出来。
+  ///
+  /// **默认关**：主角是「看得见的窗口」，静默启动是给常驻后台的人用的。
+  /// 落地靠 `core/start_hidden.dart` 写一个标记文件给原生 runner 看 ——
+  /// 原生拿到它就不在首帧 Show 窗口，全程零闪烁。
+  final ValueNotifier<bool> startInTray = ValueNotifier<bool>(false);
+
   Listenable get listenable => Listenable.merge(
         [
           themeMode,
@@ -61,6 +70,7 @@ class AppSettings {
           reduceBlur,
           capabilityNotice,
           startAtBoot,
+          startInTray,
         ],
       );
 
@@ -96,6 +106,11 @@ class AppSettings {
     startAtBoot.value = SettingsStore.instance.getString('boot.autostart') == '1';
     // 按当前 exe 路径对账一次：便携版挪目录 / 安装位置变了也能开机起来
     if (startAtBoot.value) unawaited(syncAutostartEntry(true));
+
+    // 静默启动标记每次都按设置对一遍：手删过 APPDATA、从别的机器拷过配置，
+    // 都可能让标记和开关不一致（开关开着却弹窗 / 关着却缩进托盘）
+    startInTray.value = SettingsStore.instance.getString('ui.startInTray') == '1';
+    unawaited(StartHidden.sync(startInTray.value));
   }
 
   /// 开关 + 落地系统启动项（写注册表失败也不回滚 UI：状态仍记着，下次启动重试）
@@ -103,6 +118,13 @@ class AppSettings {
     startAtBoot.value = on;
     await SettingsStore.instance.setString('boot.autostart', on ? '1' : '0');
     await setAutostartEnabled(on);
+  }
+
+  /// 静默启动：写设置 + 同步原生标记文件（下次启动才生效，本次不动窗口）
+  Future<void> setStartInTray(bool on) async {
+    startInTray.value = on;
+    await SettingsStore.instance.setString('ui.startInTray', on ? '1' : '0');
+    await StartHidden.sync(on);
   }
 
   Future<void> setCapabilityNotice(bool on) async {

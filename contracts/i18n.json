@@ -1461,15 +1461,21 @@
     },
     "photo.face.batchAll": {},
     "photo.face.batchDelete": {},
-    "photo.face.batchDeleteConfirm": { "count": {} },
-    "photo.face.batchDone": { "count": {} },
+    "photo.face.batchDeleteConfirm": {
+      "count": {}
+    },
+    "photo.face.batchDone": {
+      "count": {}
+    },
     "photo.face.batchExit": {},
     "photo.face.batchMoveOut": {},
     "photo.face.batchMoveTo": {},
     "photo.face.batchNone": {},
     "photo.face.batchNoneSelected": {},
     "photo.face.batchSelect": {},
-    "photo.face.batchSelected": { "count": {} },
+    "photo.face.batchSelected": {
+      "count": {}
+    },
     "photo.face.candidates": {},
     "photo.face.candidatesTitle": {},
     "photo.face.clusterCount": {
@@ -1869,20 +1875,48 @@
     "photo.growth.personMore": {},
     "photo.growth.personPicker": {},
     "photo.growth.personPickerHint": {},
-    "photo.growth.photoCount": { "count": {} },
+    "photo.growth.photoCount": {
+      "count": {}
+    },
     "photo.growth.pinned": {},
-    "photo.growth.poem1": { "month": {}, "place": {}, "year": {} },
-    "photo.growth.poem2": { "month": {}, "place": {} },
-    "photo.growth.poem3": { "month": {}, "place": {} },
-    "photo.growth.poem4": { "month": {}, "place": {}, "year": {} },
-    "photo.growth.poem5": { "place": {} },
-    "photo.growth.poem6": { "month": {}, "place": {} },
-    "photo.growth.recordYear": { "n": {} },
-    "photo.growth.yearStats": { "photos": {}, "stages": {} },
+    "photo.growth.poem1": {
+      "month": {},
+      "place": {},
+      "year": {}
+    },
+    "photo.growth.poem2": {
+      "month": {},
+      "place": {}
+    },
+    "photo.growth.poem3": {
+      "month": {},
+      "place": {}
+    },
+    "photo.growth.poem4": {
+      "month": {},
+      "place": {},
+      "year": {}
+    },
+    "photo.growth.poem5": {
+      "place": {}
+    },
+    "photo.growth.poem6": {
+      "month": {},
+      "place": {}
+    },
+    "photo.growth.recordYear": {
+      "n": {}
+    },
+    "photo.growth.yearStats": {
+      "photos": {},
+      "stages": {}
+    },
     "photo.growth.somewhere": {},
     "photo.growth.quarter": {},
     "photo.growth.rebuild": {},
-    "photo.growth.rebuilt": { "stages": {} },
+    "photo.growth.rebuilt": {
+      "stages": {}
+    },
     "photo.growth.repin": {},
     "photo.growth.repinDone": {},
     "photo.growth.repinTitle": {},
@@ -1890,10 +1924,19 @@
     "photo.growth.spanMonth": {},
     "photo.growth.spanQuarter": {},
     "photo.growth.spanYear": {},
-    "photo.growth.stageIndex": { "seq": {} },
-    "photo.growth.stagePhotos": { "count": {} },
+    "photo.growth.stageIndex": {
+      "seq": {}
+    },
+    "photo.growth.stagePhotos": {
+      "count": {}
+    },
     "photo.growth.subtitle": {},
-    "photo.growth.summary": { "cities": {}, "first": {}, "last": {}, "stages": {} },
+    "photo.growth.summary": {
+      "cities": {},
+      "first": {},
+      "last": {},
+      "stages": {}
+    },
     "photo.growth.title": {},
     "photo.growth.unnamed": {},
     "photo.growth.unknownPlace": {},
@@ -3822,6 +3865,10 @@
     },
     "video.watch.unmarked": {
       "count": {}
-    }
+    },
+    "settings.startInTray": {},
+    "settings.startInTrayHint": {},
+    "settings.startInTrayUnsupported": {},
+    "tray.startInTray": {}
   }
 }

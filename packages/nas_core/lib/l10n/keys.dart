@@ -2952,7 +2952,13 @@ class I18nKeys {
   static const videoTranscodeIncomplete = 'video.transcodeIncomplete';
   static const videoWatchMarked = 'video.watch.marked';
   static const videoWatchUnmarked = 'video.watch.unmarked';
+  // ---- settings ----
+  static const settingsStartInTray = 'settings.startInTray';
+  static const settingsStartInTrayHint = 'settings.startInTrayHint';
+  static const settingsStartInTrayUnsupported = 'settings.startInTrayUnsupported';
+  // ---- tray ----
+  static const trayStartInTray = 'tray.startInTray';
 }
 
 /// 契约键总数（生成时确定），供完整性自检使用。
-const int i18nKeyCount = 2908;
+const int i18nKeyCount = 2912;

@@ -41,6 +41,31 @@ std::vector<std::string> GetCommandLineArguments() {
   return command_line_arguments;
 }
 
+// 「启动时最小化到托盘」：Dart 侧（core/start_hidden.dart）按设置写 / 删这个文件，
+// 原生侧只判存在性。为什么不用注册表 / 不解析 settings.json：一个布尔值不值得
+// 引 JSON 解析，而且这里必须**零依赖零失败**——判断不出来就正常显示窗口。
+//
+// 路径必须和 Dart 侧 StartHidden.markerPath 完全一致。
+bool StartHiddenRequested() {
+  // 用 GetEnvironmentVariableW 而不是 _wgetenv：后者被标为不安全，
+  // 本工程把警告当错误（/WX），编不过。
+  wchar_t buffer[MAX_PATH * 4];
+  const DWORD capacity = static_cast<DWORD>(sizeof(buffer) / sizeof(buffer[0]));
+  const DWORD len = ::GetEnvironmentVariableW(L"APPDATA", buffer, capacity);
+  if (len == 0 || len >= capacity) {
+    return false;
+  }
+
+  std::wstring path(buffer, len);
+  if (!path.empty() && path.back() == L'\\') {
+    path.pop_back();
+  }
+  path += L"\\ColaNasOs\\start-hidden";
+
+  const DWORD attrs = ::GetFileAttributesW(path.c_str());
+  return attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY) == 0;
+}
+
 std::string Utf8FromUtf16(const wchar_t* utf16_string) {
   if (utf16_string == nullptr) {
     return std::string();

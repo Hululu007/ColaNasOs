@@ -1661,7 +1661,7 @@
     "settings.account": "Current account: {name}",
     "settings.appearance": "Appearance",
     "settings.autostart": "Start on login",
-    "settings.autostartHint": "Open the client automatically after you sign in to Windows (minimized to tray)",
+    "settings.autostartHint": "Open the client automatically after you sign in to Windows",
     "settings.autostartUnsupported": "Not supported on this platform (Windows desktop only)",
     "settings.cache": "Cache",
     "settings.cacheClear": "Clear cache",
@@ -3285,6 +3285,10 @@
     "video.jp.deleteWorksDone": "Deleted {count} titles. Recoverable from the trash",
     "video.media.letterFilter": "Filter by first letter",
     "video.watch.marked": "Marked {count} episodes as watched",
-    "video.watch.unmarked": "Marked {count} episodes as unwatched"
+    "video.watch.unmarked": "Marked {count} episodes as unwatched",
+    "settings.startInTray": "Start minimized to tray",
+    "settings.startInTrayHint": "Skip the main window on launch and go straight to the system tray; click the tray icon or “Show window” to restore (desktop only)",
+    "settings.startInTrayUnsupported": "No system tray on this platform (Windows / macOS / Linux desktop only)",
+    "tray.startInTray": "Start minimized to tray"
   }
 }

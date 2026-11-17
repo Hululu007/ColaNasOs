@@ -2,6 +2,7 @@
 // 图标与菜单事件流；这里沿用稳定的兼容层，等插件接口定稿再迁移。
 // ignore_for_file: deprecated_member_use
 
+import 'dart:async';
 import 'dart:io';
 
 import 'package:nas_ui/nas_ui.dart';
@@ -27,31 +28,61 @@ class _DesktopTray with TrayListener, WindowListener implements DesktopTray {
       windowManager.addListener(this);
       await trayManager.setIcon('assets/icons/tray.png');
       await trayManager.setToolTip('ColaNasOs 客户端');
-      await trayManager.setContextMenu(
-        Menu(
-          items: [
-            MenuItem(key: 'show', label: tr('tray.show')),
-            // 开机自启勾选态跟着本地设置走；点一下当场写系统启动项
-            MenuItem.checkbox(
-              key: 'autostart',
-              label: tr('tray.autostart'),
-              checked: AppSettings.instance.startAtBoot.value,
-              disabled: !autostartSupported,
-              onClick: _toggleAutostart,
-            ),
-            MenuItem.separator(),
-            MenuItem(key: 'quit', label: tr('tray.quit')),
-          ],
-        ),
-      );
+      await _installMenu();
       trayManager.addListener(this);
+      // 设置页改了这两个开关时，托盘菜单里的勾选态要跟着变（菜单是快照，
+      // 不重建就一直显示旧值，用户会以为没生效）
+      AppSettings.instance.startAtBoot.addListener(_refreshMenu);
+      AppSettings.instance.startInTray.addListener(_refreshMenu);
       // 托盘就绪后才拦截关闭：否则窗口藏起来就再也叫不回来
       await windowManager.setPreventClose(true);
       _ready = true;
     } catch (_) {
       windowManager.removeListener(this);
+      AppSettings.instance.startAtBoot.removeListener(_refreshMenu);
+      AppSettings.instance.startInTray.removeListener(_refreshMenu);
       _ready = false;
+      // 托盘起不来就绝不能保持隐藏：静默启动时原生根本没 Show 过窗口，
+      // 再没有托盘图标，用户就彻底够不到它了（只能再双击一次快捷方式）。
+      try {
+        await windowManager.show();
+      } catch (_) {
+        /* 连 show 都失败：交给下一次启动 */
+      }
     }
+  }
+
+  Future<void> _installMenu() {
+    return trayManager.setContextMenu(
+      Menu(
+        items: [
+          MenuItem(key: 'show', label: tr('tray.show')),
+          // 开机自启勾选态跟着本地设置走；点一下当场写系统启动项
+          MenuItem.checkbox(
+            key: 'autostart',
+            label: tr('tray.autostart'),
+            checked: AppSettings.instance.startAtBoot.value,
+            disabled: !autostartSupported,
+            onClick: _toggleAutostart,
+          ),
+          // 静默启动：和设置页的开关是同一份设置，改完下次启动生效
+          MenuItem.checkbox(
+            key: 'startInTray',
+            label: tr('tray.startInTray'),
+            checked: AppSettings.instance.startInTray.value,
+            onClick: _toggleStartInTray,
+          ),
+          MenuItem.separator(),
+          MenuItem(key: 'quit', label: tr('tray.quit')),
+        ],
+      ),
+    );
+  }
+
+  /// 设置变化 → 重建菜单（失败静默：菜单旧一点不影响功能）
+  void _refreshMenu() {
+    if (!_ready) return;
+    unawaited(_installMenu().catchError((_) {}));
   }
 
   Future<void> _toggleAutostart(MenuItem item) async {
@@ -61,10 +92,18 @@ class _DesktopTray with TrayListener, WindowListener implements DesktopTray {
     await AppSettings.instance.setStartAtBoot(next);
   }
 
+  Future<void> _toggleStartInTray(MenuItem item) async {
+    final next = !(item.checked ?? false);
+    item.checked = next;
+    await AppSettings.instance.setStartInTray(next);
+  }
+
   @override
   Future<void> dispose() async {
     if (!_ready) return;
     _ready = false;
+    AppSettings.instance.startAtBoot.removeListener(_refreshMenu);
+    AppSettings.instance.startInTray.removeListener(_refreshMenu);
     trayManager.removeListener(this);
     windowManager.removeListener(this);
     try {

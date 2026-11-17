@@ -1698,7 +1698,7 @@
     "settings.account": "当前账号：{name}",
     "settings.appearance": "外观",
     "settings.autostart": "开机自动启动",
-    "settings.autostartHint": "登录 Windows 后自动打开客户端（窗口缩到托盘）",
+    "settings.autostartHint": "登录 Windows 后自动打开客户端",
     "settings.autostartUnsupported": "当前端不支持开机自启（仅 Windows 桌面端可用）",
     "settings.cache": "清缓存",
     "settings.cacheClear": "清理缓存",
@@ -2909,6 +2909,10 @@
     "video.transcodeFailed": "转码失败：{error}",
     "video.transcodeIncomplete": "转码未完成：{status} {error}",
     "video.watch.marked": "已标记 {count} 集为已看",
-    "video.watch.unmarked": "已标记 {count} 集为未看"
+    "video.watch.unmarked": "已标记 {count} 集为未看",
+    "settings.startInTray": "启动时最小化到托盘",
+    "settings.startInTrayHint": "启动后不弹主窗口，直接缩进系统托盘；点托盘图标或菜单里的「显示主窗口」恢复（仅桌面端）",
+    "settings.startInTrayUnsupported": "当前端没有系统托盘（仅 Windows / macOS / Linux 桌面端可用）",
+    "tray.startInTray": "启动时最小化到托盘"
   }
 }

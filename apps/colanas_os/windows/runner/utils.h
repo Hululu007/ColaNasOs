@@ -16,4 +16,8 @@ std::string Utf8FromUtf16(const wchar_t* utf16_string);
 // encoded in UTF-8. Returns an empty std::vector<std::string> on failure.
 std::vector<std::string> GetCommandLineArguments();
 
+// 「启动时最小化到托盘」：%APPDATA%\ColaNasOs\start-hidden 存在即为真。
+// 由 Dart 侧（core/start_hidden.dart）维护，原生侧只读、只判存在性。
+bool StartHiddenRequested();
+
 #endif  // RUNNER_UTILS_H_

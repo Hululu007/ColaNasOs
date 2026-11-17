@@ -3,6 +3,7 @@
 #include <optional>
 
 #include "flutter/generated_plugin_registrant.h"
+#include "utils.h"
 
 FlutterWindow::FlutterWindow(const flutter::DartProject& project)
     : project_(project) {}
@@ -26,6 +27,13 @@ bool FlutterWindow::OnCreate() {
   }
   RegisterPlugins(flutter_controller_->engine());
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
+
+  // 静默启动（设置 → 启动时最小化到托盘）：这里**不挂**首帧 Show 回调，
+  // 窗口就一直是创建时的隐藏态 —— 托盘图标由 Dart 侧的 tray_manager 负责，
+  // 点一下就 windowManager.show()。等 Dart 起来再 hide 会闪一个空窗口。
+  if (StartHiddenRequested()) {
+    return true;
+  }
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
     this->Show();
