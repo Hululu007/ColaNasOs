@@ -1495,6 +1495,8 @@
     "photo.face.batchSelect": {},
     "photo.face.clusterSelected": { "count": {} },
     "photo.face.hideSelected": {},
+    "photo.face.hide": {},
+    "photo.face.mergedMany": { "count": {}, "name": {}, "faces": {} },
     "photo.face.unhideSelected": {},
     "photo.face.hiddenDone": { "count": {} },
     "photo.face.unhiddenDone": { "count": {} },

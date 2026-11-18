@@ -1155,6 +1155,8 @@ class I18nKeys {
   static const photoFaceBatchSelect = 'photo.face.batchSelect';
   static const photoFaceClusterSelected = 'photo.face.clusterSelected';
   static const photoFaceHideSelected = 'photo.face.hideSelected';
+  static const photoFaceHide = 'photo.face.hide';
+  static const photoFaceMergedMany = 'photo.face.mergedMany';
   static const photoFaceUnhideSelected = 'photo.face.unhideSelected';
   static const photoFaceHiddenDone = 'photo.face.hiddenDone';
   static const photoFaceUnhiddenDone = 'photo.face.unhiddenDone';
@@ -3096,4 +3098,4 @@ class I18nKeys {
 }
 
 /// 契约键总数（生成时确定），供完整性自检使用。
-const int i18nKeyCount = 3045;
+const int i18nKeyCount = 3047;

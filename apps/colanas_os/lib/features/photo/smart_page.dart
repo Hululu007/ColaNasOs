@@ -736,10 +736,14 @@ class _PhotoSmartPageState extends State<PhotoSmartPage> {
     }
   }
 
-  Future<void> _mergeCluster(PhotoFaceClusterItem cluster) async {
-    final targets = _clusters.where((c) => c.id != cluster.id).toList();
-    if (targets.isEmpty) return;
-    final picked = await showDialog<PhotoFaceClusterItem>(
+  /// 选一个「并入的目标组」：排除 [exclude] 里的簇（自己 / 已在多选里的那些）
+  Future<PhotoFaceClusterItem?> _pickClusterTarget(Set<String> exclude) async {
+    final targets = _clusters.where((c) => !exclude.contains(c.id)).toList();
+    if (targets.isEmpty) {
+      _toast(tr('photo.face.noOtherCluster'));
+      return null;
+    }
+    return showDialog<PhotoFaceClusterItem>(
       context: context,
       builder: (ctx) => SimpleDialog(
         title: Text(tr('ui.photo.065')),
@@ -754,7 +758,11 @@ class _PhotoSmartPageState extends State<PhotoSmartPage> {
         ],
       ),
     );
-    if (picked == null) return;
+  }
+
+  Future<void> _mergeCluster(PhotoFaceClusterItem cluster) async {
+    final picked = await _pickClusterTarget({cluster.id});
+    if (picked == null || !mounted) return;
     try {
       final res = await ApiSession.instance.client.photoFaceMerge(
         body: PhotoFaceMergeBody(fromId: cluster.id, toId: picked.id),
@@ -766,6 +774,45 @@ class _PhotoSmartPageState extends State<PhotoSmartPage> {
       if (!mounted) return;
       NasSnack.show(context, tr('photo.mergeFailed', {'error': '$e'}));
     }
+  }
+
+  /// 多选态：把选中的几个簇一起并进指定的一组。
+  ///
+  /// 服务端的 merge 是一次一簇（from → to），所以这里逐个并进去，
+  /// 目标组始终是同一个 —— 结果和「手动并 N 次」完全一致，但只选一次目标。
+  Future<void> _mergeSelectedClusters() async {
+    final ids = _clusterMultiSel.toList();
+    if (ids.isEmpty) return;
+    final target = await _pickClusterTarget(_clusterMultiSel);
+    if (target == null || !mounted) return;
+    final targetName = target.name ??
+        tr('photo.faceCluster.unnamed', {'id': target.id.substring(0, 6)});
+    var moved = 0;
+    var done = 0;
+    try {
+      for (final id in ids) {
+        final res = await ApiSession.instance.client.photoFaceMerge(
+          body: PhotoFaceMergeBody(fromId: id, toId: target.id),
+        );
+        moved += res.moved;
+        done += 1;
+      }
+    } catch (e) {
+      if (mounted) _toast(tr('photo.mergeFailed', {'error': '$e'}));
+    }
+    if (!mounted) return;
+    setState(() {
+      _clusterMulti = false;
+      _clusterMultiSel.clear();
+    });
+    if (done > 0) {
+      _toast(tr('photo.face.mergedMany', {
+        'count': '$done',
+        'name': targetName,
+        'faces': '$moved',
+      }));
+    }
+    await _load();
   }
 
   Future<void> _search() async {
@@ -1071,11 +1118,9 @@ class _PhotoSmartPageState extends State<PhotoSmartPage> {
     );
   }
 
-  /// 长按：改名 / 合并 / 隐藏
-  /// 人脸卡右键菜单（桌面 / Web）；移动端走长按 [_faceActions]。
+  /// 长按 / 右键：命名 / 并入其它组 / 隐藏 / 解散 / 成人脸管理
   ///
-  /// 人脸右键有「下载 / 重命名 / 显示隐藏 / 标记问题」，我们目前只有
-  /// 重命名、合并、解散、管理这几个能力，就只给这些 —— 不造点了没反应的项。
+  /// 只给「点了确实有反应」的项：重命名、合并、隐藏、解散、管理。
   List<NasMenuEntry> _faceMenuEntries(PhotoFaceClusterItem c) => [
     NasMenuEntry(
       label: tr('ui.photo.074'),
@@ -1086,6 +1131,11 @@ class _PhotoSmartPageState extends State<PhotoSmartPage> {
       label: tr('ui.photo.075'),
       icon: Icons.merge_type,
       onSelected: () => _mergeCluster(c),
+    ),
+    NasMenuEntry(
+      label: tr('photo.face.hide'),
+      icon: Icons.visibility_off_outlined,
+      onSelected: () => _setClustersHidden([c.id], true),
     ),
     NasMenuEntry(
       label: tr('photo.face.dissolve'),
@@ -1119,6 +1169,11 @@ class _PhotoSmartPageState extends State<PhotoSmartPage> {
               onTap: () => Navigator.pop(ctx, 'merge'),
             ),
             ListTile(
+              leading: const Icon(Icons.visibility_off_outlined),
+              title: Text(tr('photo.face.hide')),
+              onTap: () => Navigator.pop(ctx, 'hide'),
+            ),
+            ListTile(
               leading: const Icon(Icons.link_off),
               title: Text(tr('photo.face.dissolve')),
               onTap: () => Navigator.pop(ctx, 'dissolve'),
@@ -1138,6 +1193,8 @@ class _PhotoSmartPageState extends State<PhotoSmartPage> {
         await _renameCluster(c);
       case 'merge':
         await _mergeCluster(c);
+      case 'hide':
+        await _setClustersHidden([c.id], true);
       case 'dissolve':
         await _dissolveCluster(c);
       case 'manage':
@@ -1928,6 +1985,13 @@ class _PhotoSmartPageState extends State<PhotoSmartPage> {
             enabled: !empty,
             onPressed: () => _setClustersHidden(_clusterMultiSel.toList(), false),
           ),
+        // 选中的几个一起并进指定的一组（目标从「没被选中」的簇里挑）
+        NasSelectionAction(
+          label: tr('ui.photo.075'),
+          icon: Icons.merge_type,
+          enabled: !empty,
+          onPressed: _mergeSelectedClusters,
+        ),
         NasSelectionAction(
           label: tr('photo.face.dissolveSelected'),
           icon: Icons.link_off,

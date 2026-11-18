@@ -1092,6 +1092,8 @@
     "photo.face.batchSelect": "多选",
     "photo.face.clusterSelected": "已选 {count} 个人",
     "photo.face.hideSelected": "隐藏所选",
+    "photo.face.hide": "隐藏这个人",
+    "photo.face.mergedMany": "已把 {count} 个人物并入「{name}」，迁移 {faces} 张脸",
     "photo.face.unhideSelected": "取消隐藏",
     "photo.face.hiddenDone": "已隐藏 {count} 个人",
     "photo.face.unhiddenDone": "已取消隐藏 {count} 个人",

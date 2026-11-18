@@ -1123,6 +1123,8 @@
     "photo.face.batchSelect": "Multi-select",
     "photo.face.clusterSelected": "{count} selected",
     "photo.face.hideSelected": "Hide selected",
+    "photo.face.hide": "Hide this person",
+    "photo.face.mergedMany": "Merged {count} people into {name}, moved {faces} faces",
     "photo.face.unhideSelected": "Unhide",
     "photo.face.hiddenDone": "{count} hidden",
     "photo.face.unhiddenDone": "{count} unhidden",
