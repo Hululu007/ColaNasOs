@@ -80,6 +80,12 @@ class _TvVideoLibrarySectionState extends State<TvVideoLibrarySection> {
   List<VideoItem> _jpWorks = const <VideoItem>[];
   bool _jpLoading = false;
 
+  /// 演员列表一次只渲染这么多张：500 个演员 = 500 个封面请求，
+  /// 日本库的封面还在 SMB 网盘上，整批拉就是「打开很慢」。
+  static const int _jpPageSize = 36;
+  int _jpVisible = _jpPageSize;
+  final ScrollController _jpScroll = ScrollController();
+
   final FocusNode _ownedFirstFocus = FocusNode(debugLabel: 'tv-video-first');
   FocusNode get _firstFocus => widget.firstFocusNode ?? _ownedFirstFocus;
 
@@ -120,6 +126,7 @@ class _TvVideoLibrarySectionState extends State<TvVideoLibrarySection> {
     super.initState();
     widget.back.handler = _onBackPressed;
     widget.back.overlay = _hasOverlay;
+    _jpScroll.addListener(_onJpScroll);
     if (_isSeriesLibrary) {
       _loadSeries();
     } else if (_isJpLibrary) {
@@ -137,12 +144,26 @@ class _TvVideoLibrarySectionState extends State<TvVideoLibrarySection> {
 
   @override
   void dispose() {
+    _jpScroll.removeListener(_onJpScroll);
+    _jpScroll.dispose();
     if (widget.back.handler == _onBackPressed) {
       widget.back.handler = null;
       widget.back.overlay = null;
     }
     _ownedFirstFocus.dispose();
     super.dispose();
+  }
+
+  /// 滚到接近底部再补下一批演员（一次 48 张）。
+  void _onJpScroll() {
+    if (!_isJpLibrary || _jpActor != null) return;
+    if (!_jpScroll.hasClients) return;
+    final position = _jpScroll.position;
+    if (position.pixels < position.maxScrollExtent - 600) return;
+    if (_jpVisible >= _jpActors.length) return;
+    setState(() {
+      _jpVisible = (_jpVisible + _jpPageSize).clamp(0, _jpActors.length);
+    });
   }
 
   Future<T?> _safe<T>(Future<T> future) async {
@@ -481,6 +502,18 @@ class _TvVideoLibrarySectionState extends State<TvVideoLibrarySection> {
   // ---------------------------------------------------------------- 日本库：演员
 
   Future<void> _loadJpActors() async {
+    // 切 tab 回来会重建 State：有缓存就直接出，不再拉 900KB 的演员表。
+    final cached = _TvJpActorCache.get(widget.library.id);
+    if (cached != null) {
+      setState(() {
+        _jpActors = cached;
+        _jpVisible = _jpPageSize;
+        _jpLoading = false;
+        _loading = false;
+        _error = null;
+      });
+      return;
+    }
     setState(() => _jpLoading = true);
     try {
       final res = await ApiSession.instance.client.videoJpActorList(
@@ -488,11 +521,14 @@ class _TvVideoLibrarySectionState extends State<TvVideoLibrarySection> {
         limit: '500',
       );
       if (!mounted) return;
+      final list = ((res['items'] as List?) ?? const [])
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+      _TvJpActorCache.put(widget.library.id, list);
       setState(() {
-        _jpActors = ((res['items'] as List?) ?? const [])
-            .whereType<Map>()
-            .map((e) => Map<String, dynamic>.from(e))
-            .toList();
+        _jpActors = list;
+        _jpVisible = _jpPageSize;
         _jpLoading = false;
         _loading = false;
         _error = null;
@@ -859,7 +895,9 @@ class _TvVideoLibrarySectionState extends State<TvVideoLibrarySection> {
     }
     final m = TvMetricsScope.of(context);
     final scheme = Theme.of(context).colorScheme;
+    final shown = _jpVisible.clamp(0, _jpActors.length);
     return SingleChildScrollView(
+      controller: _jpScroll,
       padding: EdgeInsets.only(top: m.px(4), bottom: m.px(24)),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -867,7 +905,9 @@ class _TvVideoLibrarySectionState extends State<TvVideoLibrarySection> {
           TvSectionHeader(
             title: tr('video.jp.actorTitle'),
             trailing: Text(
-              '${_jpActors.length}',
+              shown < _jpActors.length
+                  ? '$shown / ${_jpActors.length}'
+                  : '${_jpActors.length}',
               style: TextStyle(
                 fontSize: m.px(14),
                 color: scheme.onSurfaceVariant,
@@ -875,13 +915,26 @@ class _TvVideoLibrarySectionState extends State<TvVideoLibrarySection> {
             ),
           ),
           _sixColumns(m, (w) => <Widget>[
-            for (var i = 0; i < _jpActors.length; i += 1)
+            for (var i = 0; i < shown; i += 1)
               _TvActorCard(
                 actor: _jpActors[i],
                 focusNode: i == 0 ? _firstFocus : null,
                 onTap: () => _openJpActor(_jpActors[i]),
               ),
           ]),
+          if (shown < _jpActors.length)
+            Padding(
+              padding: EdgeInsets.only(top: m.px(18)),
+              child: Center(
+                child: Text(
+                  '继续往下翻加载更多（$shown / ${_jpActors.length}）',
+                  style: TextStyle(
+                    fontSize: m.px(13),
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+            ),
         ],
       ),
     );
@@ -1137,7 +1190,9 @@ class _TvActorCard extends StatelessWidget {
               urls: urls,
               fallbackText: name,
               icon: Icons.person_outline,
-              cacheWidth: 480,
+              // 卡片宽度 ~250 逻辑像素，360 足够清晰；别再按 480 拉
+              // —— 日本库封面在 SMB 上，一次 36 张就是 36 次网盘读。
+              cacheWidth: 360,
               headers: cover != null ? videoArtHeaders : const <String, String>{},
               borderRadius: m.px(14),
             ),
@@ -1174,5 +1229,34 @@ VideoItem? _videoItemOrNull(Map<String, dynamic> json) {
     return VideoItem.fromJson(json);
   } catch (_) {
     return null;
+  }
+}
+
+/// 日本库演员表的进程内缓存（10 分钟）。
+///
+/// `/video/jp_actor/list?limit=500` 实测 900KB+，切回 tab 会重建 State 并重新拉一遍；
+/// 库里演员不会秒变，缓存一份就能「切走再回来」秒开。
+class _TvJpActorCache {
+  _TvJpActorCache._();
+
+  static const Duration _ttl = Duration(minutes: 10);
+  static final Map<
+    String,
+    ({List<Map<String, dynamic>> items, DateTime at})
+  >
+  _map = <String, ({List<Map<String, dynamic>> items, DateTime at})>{};
+
+  static List<Map<String, dynamic>>? get(String libraryId) {
+    final hit = _map[libraryId];
+    if (hit == null) return null;
+    if (DateTime.now().difference(hit.at) > _ttl) {
+      _map.remove(libraryId);
+      return null;
+    }
+    return hit.items;
+  }
+
+  static void put(String libraryId, List<Map<String, dynamic>> items) {
+    _map[libraryId] = (items: items, at: DateTime.now());
   }
 }

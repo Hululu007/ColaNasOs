@@ -75,6 +75,14 @@ class _TvShellState extends State<TvShell> {
     'settings',
   ];
 
+  /// TV 版面暂不提供的分区：相册 / 文件 / 设置在遥控器上没有像样的入口，
+  /// 挂上去只会把顶部 tab 挤满（实测 8 个 tab 就要横向滚）。
+  static const Set<String> _hiddenApps = <String>{
+    'photo',
+    'files',
+    'settings',
+  };
+
   final TvBackController _back = TvBackController();
 
   /// 顶部 tab 栏的容器节点：本身不参与焦点遍历，`hasFocus` 用来判断
@@ -247,6 +255,7 @@ class _TvShellState extends State<TvShell> {
         .where(
           (app) =>
               app.available &&
+              !_hiddenApps.contains(app.id) &&
               app.supports(ClientEndpoint.tv) &&
               appVisibleToCurrentUser(app),
         )

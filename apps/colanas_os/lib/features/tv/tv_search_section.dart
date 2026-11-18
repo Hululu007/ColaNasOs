@@ -320,6 +320,13 @@ class _TvSearchSectionState extends State<TvSearchSection> {
     return type == 'movie' || type == 'jp_movie';
   }
 
+  /// 参与搜索的库：只要电影 / 电视剧（含短剧）。
+  /// 日本库、图片库、混合库在 TV 上有各自的浏览入口，搜索结果不掺它们。
+  bool _isSearchableLibrary(String id) {
+    final type = _libTypes[id];
+    return type == 'movie' || type == 'tv' || type == 'short_tv';
+  }
+
   /// 未输入时的右侧内容：最近添加的电影 + 最近添加的电视剧（整部剧一张卡）。
   ///
   /// 只取**电影库 / 电视剧库**：混合库（下载目录）里什么都有，按「整库最近
@@ -475,9 +482,10 @@ class _TvSearchSectionState extends State<TvSearchSection> {
     // 一两个字（ad / 周）命中面太大，专辑 / 歌手的分组聚合又最慢 —— 先不给。
     // 等用户多打两个字（≥3）再补上这两个栏目。
     final rich = q.length >= 3;
+    // 影视只发一次 videoList：剧卡由条目聚合（series / 文件夹），
+    // 不再额外请求 `video/series` —— 少一次全库聚合，搜索快一截。
     final futures = <Future<Object?>>[
       _safe(client.videoList(q: q, limit: 60)),
-      _safe(client.videoSeriesList(q: q, limit: 20)),
       _safe(client.musicList(q: q, limit: 30)),
     ];
     if (rich) {
@@ -489,16 +497,20 @@ class _TvSearchSectionState extends State<TvSearchSection> {
     if (!_canSetState || seq != _searchSeq) return;
 
     final videoRes = results[0] as VideoListResponse?;
-    final seriesRes = results[1] as VideoSeriesListResponse?;
-    final trackRes = results[2] as MusicListResponse?;
-    final albumRes = results.length > 3 ? results[3] as MusicAlbumListResponse? : null;
-    final artistRes = results.length > 4 ? results[4] as MusicArtistListResponse? : null;
+    final trackRes = results[1] as MusicListResponse?;
+    final albumRes = results.length > 2 ? results[2] as MusicAlbumListResponse? : null;
+    final artistRes = results.length > 3 ? results[3] as MusicArtistListResponse? : null;
 
     final videos = <VideoItem>[];
     final tvItems = <VideoItem>[];
     final bySeries = <String, List<VideoItem>>{};
     for (final item in videoRes?.items ?? const <VideoItem>[]) {
       if (item.mediaType == 'image') continue;
+      // TV 端只搜电影 / 电视剧类型的库：日本库、图片库、混合库都不参与
+      // （它们的入口是演员 / 文件夹视图，搜索结果里混进来只会一堆无意义的单片）。
+      if (_libTypes.isNotEmpty && !_isSearchableLibrary(item.libraryId)) {
+        continue;
+      }
       // 电视剧库的条目全部按「剧」聚合：里面的散文件（健身课、单集视频）
       // 也属于电视剧库，不能落到「电影」栏目里。
       if (_isTvLibrary(item.libraryId)) {
@@ -524,19 +536,6 @@ class _TvSearchSectionState extends State<TvSearchSection> {
       if (series.any((item) => item.name == card.name)) continue;
       series.add(card);
     }
-    for (final item in seriesRes?.items ?? const <VideoSeriesItem>[]) {
-      if (series.any((card) => card.name == item.name)) continue;
-      series.add(
-        TvSeriesCard(
-          name: item.name,
-          seasons: item.seasons,
-          episodes: item.episodes,
-          watchedEpisodes: item.watchedEpisodes ?? 0,
-          coverId: item.coverId,
-          posterId: item.posterId,
-        ),
-      );
-    }
 
     setState(() {
       _videos = videos;
@@ -546,7 +545,6 @@ class _TvSearchSectionState extends State<TvSearchSection> {
       _artists = artistRes?.items ?? const <MusicArtist>[];
       _loading = false;
       _error = (videoRes == null &&
-              seriesRes == null &&
               trackRes == null &&
               albumRes == null &&
               artistRes == null)
