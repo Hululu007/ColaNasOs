@@ -2,7 +2,7 @@
 
 > 在一台 Windows 主机上自托管的 NAS OS：相册、影视、音乐、文件、下载、同步与本地 AI 收进同一个服务端；桌面 / 手机 / Web / Android TV / Apple TV / 鸿蒙共用一套 Flutter 界面。数据只留在本机。
 
-**当前版本：[v1.2.14](https://github.com/colaKot/ColaNasOs/releases/tag/v1.2.14)**　·　[官网](https://cola.gexuan.net/)　·　[源码](https://github.com/colaKot/ColaNasOs)　·　许可 GPL-3.0
+**当前版本：[v1.3.3](https://github.com/colaKot/ColaNasOs/releases/tag/v1.3.3)**　·　[官网](https://cola.gexuan.net/)　·　[源码](https://github.com/colaKot/ColaNasOs)　·　许可 GPL-3.0
 
 ---
 
@@ -16,7 +16,7 @@ ColaNasOs 把「一台常开的 Windows 电脑」变成一台 NAS：
 
 ## 快速开始
 
-1. 下载并安装 **服务端**（`ColaNasOs-Server-1.2.14-Setup.exe`）→ 装完右下角只有一个托盘图标。
+1. 下载并安装 **服务端**（`ColaNasOs-Server-1.3.3-Setup.exe`）→ 装完右下角只有一个托盘图标。
 2. 在「设置」里登记**相册库 / 影视库 / 音乐库**（都是「文件」根下的子目录）。
 3. 想在别的电脑上用，装 **客户端**（Windows / Android / Android TV 各一个包），填服务端地址登录。
 

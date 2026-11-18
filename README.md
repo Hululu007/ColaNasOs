@@ -67,15 +67,15 @@ Wiki 的源文件在 [`docs/wiki/`](docs/wiki)，改完跑 `node tool/sync-wiki.
 
 ## 快速开始
 
-下载安装（当前版本 **1.2.14**，全部产物见 [Releases](https://github.com/colaKot/ColaNasOs/releases/latest)）：
+下载安装（当前版本 **1.3.3**，全部产物见 [Releases](https://github.com/colaKot/ColaNasOs/releases/latest)）：
 
 | 平台 | 产物 | 说明 |
 | --- | --- | --- |
-| Windows 服务端 | `ColaNasOs-Server-1.2.14-Setup.exe` | 安装版：托盘 + 内核 + Web 界面 + 本地 AI 运行时 |
-| Windows 客户端 | `ColaNasOs-Client-1.2.14-Setup.exe` | Flutter 桌面客户端，装完连本机或局域网里的服务端 |
-| Windows 客户端便携 | `ColaNasOs-Client-1.2.14-windows-x64.zip` | 解压即用，适合不想安装的场景 |
-| Android 客户端 | `ColaNasOs-Client-1.2.14-android-arm64.apk` | arm64 手机 / 平板 |
-| Android TV 客户端 | `ColaNasOs-Client-1.2.14-androidtv-arm64.apk` | arm64 电视 / 盒子，遥控器操作（与手机包不是同一个包） |
+| Windows 服务端 | `ColaNasOs-Server-1.3.3-Setup.exe` | 安装版：托盘 + 内核 + Web 界面 + 本地 AI 运行时 |
+| Windows 客户端 | `ColaNasOs-Client-1.3.3-Setup.exe` | Flutter 桌面客户端，装完连本机或局域网里的服务端 |
+| Windows 客户端便携 | `ColaNasOs-Client-1.3.3-windows-x64.zip` | 解压即用，适合不想安装的场景 |
+| Android 客户端 | `ColaNasOs-Client-1.3.3-android-arm64.apk` | arm64 手机 / 平板 |
+| Android TV 客户端 | `ColaNasOs-Client-1.3.3-androidtv-arm64.apk` | arm64 电视 / 盒子，遥控器操作（与手机包不是同一个包） |
 
 服务端与客户端分开打包：服务端负责内核与 Web 界面，客户端是 Flutter 桌面端，可以只装在另一台电脑上连局域网服务端。
 

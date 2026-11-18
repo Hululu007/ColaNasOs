@@ -8,11 +8,11 @@ ColaNasOs **服务端和客户端是分开的两个包**：
 
 | 包 | 装在哪 | 干什么 |
 | --- | --- | --- |
-| `ColaNasOs-Server-1.2.14-Setup.exe` | 那台**常开的 Windows 主机**（NAS 本体） | 内核 + Web 界面 + 转码 + 本地 AI 运行时 + 内置下载器 |
-| `ColaNasOs-Client-1.2.14-Setup.exe` | 你**平时用的电脑** | 桌面客户端，连服务端用 |
-| `ColaNasOs-Client-1.2.14-windows-x64.zip` | 同上 | 便携版，解压即用，不想装就选它 |
-| `ColaNasOs-Client-1.2.14-android-arm64.apk` | 手机 / 平板 | 连服务端用 |
-| `ColaNasOs-Client-1.2.14-androidtv-arm64.apk` | 电视 / 盒子 | **和手机包不是同一个包**，遥控器操作 |
+| `ColaNasOs-Server-1.3.3-Setup.exe` | 那台**常开的 Windows 主机**（NAS 本体） | 内核 + Web 界面 + 转码 + 本地 AI 运行时 + 内置下载器 |
+| `ColaNasOs-Client-1.3.3-Setup.exe` | 你**平时用的电脑** | 桌面客户端，连服务端用 |
+| `ColaNasOs-Client-1.3.3-windows-x64.zip` | 同上 | 便携版，解压即用，不想装就选它 |
+| `ColaNasOs-Client-1.3.3-android-arm64.apk` | 手机 / 平板 | 连服务端用 |
+| `ColaNasOs-Client-1.3.3-androidtv-arm64.apk` | 电视 / 盒子 | **和手机包不是同一个包**，遥控器操作 |
 
 Web 端不用单独下载：服务端内置了 Web 界面，浏览器打开 `http://服务端地址:7788` 就能用。
 
@@ -20,7 +20,7 @@ Web 端不用单独下载：服务端内置了 Web 界面，浏览器打开 `htt
 
 ## 1. 装服务端
 
-1. 下载 `ColaNasOs-Server-1.2.14-Setup.exe`（550 MB，含 FFmpeg 与本地 AI 运行时）。
+1. 下载 `ColaNasOs-Server-1.3.3-Setup.exe`（550 MB，含 FFmpeg 与本地 AI 运行时）。
 2. 安装。**安装包未做代码签名**，SmartScreen 会提示「未知发布者」——确认文件来自官网或 GitHub Releases、并核对 SHA256 之后，选「更多信息 → 仍要运行」。
 3. 装完**右下角只有一个托盘图标**，没有窗口。托盘右键可以看到版本号、开机自启开关、打开 Web 界面、退出。
 4. 浏览器打开 `http://127.0.0.1:7788`，用首次启动时的管理员账号登录。
