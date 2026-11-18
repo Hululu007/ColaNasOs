@@ -882,11 +882,15 @@ class OfflineDownloadManager {
   }
 
   /// 抓外挂字幕。一个都没有 / 服务端转不了（图形字幕）都返回空数组，不打断入库。
+  ///
+  /// **先让服务端去抓一次**：日本片是按番号去字幕站现抓的，服务端没抓过就一定
+  /// 是 0 条 —— 那时候「自动下载字幕」看起来就是没跑。抓取是异步的（服务端立刻
+  /// 返回，后台在跑），所以最多轮询几轮，等它把 .srt 写到片源旁边。
   Future<List<String>> _fetchSubtitles(OfflineStore store, OfflineRequest req) async {
     try {
-      final list = await ApiSession.instance.client.videoSubtitles(id: req.itemId);
+      final items = await _waitForSubtitles(req.itemId);
       // `#embedded:N` 是容器内的字幕轨：视频里本来就有，单独存一份没有意义
-      final picked = list.items
+      final picked = items
           .where((s) => !s.name.startsWith('#embedded:'))
           .take(3)
           .toList();
@@ -909,6 +913,28 @@ class OfflineDownloadManager {
       // 字幕是锦上添花：拿不到就算了，别让整次下载失败
       return const <String>[];
     }
+  }
+
+  /// 列字幕；一条都没有时先让服务端抓一次，再轮询几轮等它到货。
+  ///
+  /// 没有番号的片子服务端会立刻回 `no_code`（不联网、不耗时），
+  /// 有番号的日本片才会真的去字幕站抓（几分钟级）。
+  Future<List<VideoSubtitleFile>> _waitForSubtitles(String itemId) async {
+    final client = ApiSession.instance.client;
+    for (var round = 0; round < 5; round += 1) {
+      final list = await client.videoSubtitles(id: itemId);
+      if (list.items.isNotEmpty) return list.items;
+      if (round == 0) {
+        try {
+          await client.videoSubtitleFetch(body: <String, dynamic>{'id': itemId});
+        } catch (_) {
+          // 没权限 / 网络失败：抓不到就算了
+          return const <VideoSubtitleFile>[];
+        }
+      }
+      await Future<void>.delayed(const Duration(seconds: 4));
+    }
+    return const <VideoSubtitleFile>[];
   }
 
   Future<String?> _downloadPoster(OfflineStore store, OfflineRequest req) async {

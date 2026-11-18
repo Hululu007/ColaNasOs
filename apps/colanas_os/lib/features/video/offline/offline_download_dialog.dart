@@ -334,11 +334,11 @@ class _DownloadSheetState extends State<_DownloadSheet> {
           replace: existing != null,
           // 「外挂」在服务端等同于「不内挂」（产物字节完全一样，共用同一份缓存），
           // 额外动作在客户端：下完再抓字幕文件。
-          // 选了内挂但这部片子**没有文本内嵌轨**（只有图形字幕）时也抓外挂兜底，
-          // 否则下载完的片子等于没字幕。
-          fetchSubtitles:
-              _subtitleMode == 'external' ||
-              (_subtitleMode == 'embed' && _subChecked && _subEmbedded == 0),
+          //
+          // 默认就带上：只要用户没选「不内挂」，下载完成后都会把外挂字幕也存一份
+          // （内嵌字幕进 mp4、外挂字幕进 subtitles/，播放器可随时切换语言）。
+          // 之前默认是「内挂」→ 不抓外挂，等于「自动下载字幕」根本没跑。
+          fetchSubtitles: _subtitleMode != 'none',
         ),
       );
       if (!mounted) return;

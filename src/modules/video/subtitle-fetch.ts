@@ -2,6 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
 
+import { proxyFetch } from '../../../kernel/proxy-fetch';
+
 /**
  * 日本片自动字幕：avsubtitles.com 五步链路。
  *
@@ -109,24 +111,43 @@ async function get(
   url: string,
   opts: FetchSubtitleOptions,
   extra: Record<string, string> = {},
-): Promise<{ text: string; buffer: Buffer; headers: Headers } | null> {
-  const doFetch = opts.fetchImpl ?? fetch;
+): Promise<{ text: string; buffer: Buffer; headers: Headers; url: string } | null> {
+  const doFetch = opts.fetchImpl ?? (proxyFetch as unknown as typeof fetch);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), Math.max(2000, opts.timeoutMs ?? 12_000));
   try {
-    const res = await doFetch(url, {
-      signal: controller.signal,
-      redirect: 'manual',
-      headers: {
-        'user-agent': 'Mozilla/5.0 (compatible; ColaNasOs/1.0)',
-        ...(opts.cookie ? { cookie: opts.cookie } : {}),
-        ...extra,
-      },
-    });
-    if (res.status >= 300 && res.status < 400) return null;
-    if (!res.ok) return null;
-    const buffer = Buffer.from(await res.arrayBuffer());
-    return { text: buffer.toString('utf8'), buffer, headers: res.headers };
+    const headers = {
+      'user-agent': 'Mozilla/5.0 (compatible; ColaNasOs/1.0)',
+      ...(opts.cookie ? { cookie: opts.cookie } : {}),
+      ...extra,
+    };
+    let target = url;
+    // 只跟 **301/308**（永久搬家）：avsubtitles.com 现在会 301 到 www.*，
+    // 不跟就是「拿到跳转页」→ 搜索结果永远为空（表现为 search_failed）。
+    // 302/307 一律不跟：`download_sub.php` 没过倒计时时的 302 → error_403 是要拦住的。
+    for (let hop = 0; hop < 3; hop += 1) {
+      const res = await doFetch(target, {
+        signal: controller.signal,
+        redirect: 'manual',
+        headers,
+      });
+      if (res.status === 301 || res.status === 308) {
+        const location = res.headers.get('location');
+        if (!location) return null;
+        target = new URL(location, target).toString();
+        continue;
+      }
+      if (res.status >= 300 && res.status < 400) return null;
+      if (!res.ok) return null;
+      const buffer = Buffer.from(await res.arrayBuffer());
+      return {
+        text: buffer.toString('utf8'),
+        buffer,
+        headers: res.headers,
+        url: target,
+      };
+    }
+    return null;
   } catch {
     return null;
   } finally {
@@ -161,6 +182,28 @@ export function pickLatestChineseSub(html: string): { subId: string; href: strin
 }
 
 /**
+ * 从响应里取出 PHPSESSID。
+ *
+ * `download_page.php` 会种 PHPSESSID，而 `download_sub.php` 必须带**同一个**
+ * session（带不上就是 403，表现为 download_failed）。所以整条链路要一直带着它。
+ */
+function pickSessionCookie(headers: Headers): string {
+  try {
+    const raw = (headers as unknown as { getSetCookie?: () => string[] })
+      .getSetCookie?.();
+    if (!raw || raw.length === 0) return '';
+    const parts: string[] = [];
+    for (const item of raw) {
+      const kv = String(item || '').split(';')[0]?.trim();
+      if (kv && kv.toUpperCase().includes('PHPSESSID')) parts.push(kv);
+    }
+    return parts.join('; ');
+  } catch {
+    return '';
+  }
+}
+
+/**
  * 抓一条字幕。`waitMs` 是倒计时等待（默认 6500ms；测试可设 0）。
  * 返回 `limitReached` 时调用方必须中止整轮。
  */
@@ -168,46 +211,75 @@ export async function fetchSubtitle(
   code: string,
   opts: FetchSubtitleOptions = {},
 ): Promise<SubtitleResult> {
-  const base = (opts.base || 'https://avsubtitles.com').replace(/\/$/, '');
+  let base = (opts.base || 'https://avsubtitles.com').replace(/\/$/, '');
   const clean = String(code || '')
     .toUpperCase()
     .trim();
   if (!clean) return { state: SUB_STATE.NO_CODE, reason: 'no_code' };
 
-  const search = await get(`${base}/search_results.php?search=${encodeURIComponent(clean)}`, opts);
+  // 会话 cookie 跟着链路走：任何一步种下的 PHPSESSID 都要带给下一步。
+  let session: FetchSubtitleOptions = { ...opts };
+  const track = (res: { headers: Headers } | null) => {
+    const cookie = res ? pickSessionCookie(res.headers) : '';
+    if (cookie && cookie !== session.cookie) {
+      session = { ...session, cookie };
+    }
+  };
+
+  const search = await get(
+    `${base}/search_results.php?search=${encodeURIComponent(clean)}`,
+    session,
+  );
   if (!search) return { state: SUB_STATE.FAILED, reason: 'search_failed' };
+  track(search);
   if (LIMIT_RE.test(search.text)) {
     return { state: SUB_STATE.FAILED, reason: 'daily_limit', limitReached: true };
+  }
+  // 跟随 301 之后的真实域名（avsubtitles.com → www.avsubtitles.com），
+  // 后续相对链接都要拼在这个域名上，否则每一步都吃一次 301。
+  if (search.url) {
+    try {
+      base = new URL(search.url).origin;
+    } catch {
+      // url 不合法就沿用原 base
+    }
   }
 
   const movieHref = pickMovieLink(search.text, clean);
   if (!movieHref) return { state: SUB_STATE.NOT_FOUND, reason: 'movie_not_found' };
 
-  const movie = await get(`${base}${movieHref}`, opts);
+  const movie = await get(`${base}${movieHref}`, session);
   if (!movie) return { state: SUB_STATE.FAILED, reason: 'movie_page_failed' };
+  track(movie);
 
   const sub = pickLatestChineseSub(movie.text);
   if (!sub) return { state: SUB_STATE.NO_CHINESE, reason: 'no_chinese_sub' };
 
-  const subPage = await get(`${base}${sub.href}`, opts);
+  const subPage = await get(`${base}${sub.href}`, session);
   if (!subPage) return { state: SUB_STATE.FAILED, reason: 'sub_page_failed' };
+  track(subPage);
 
   const subId = /name="subid"\s+value="(\d+)"/i.exec(subPage.text)?.[1] ?? sub.subId;
   const revId = /name="revid"\s+value="(\d+)"/i.exec(subPage.text)?.[1] ?? '';
   const countdown = Number(/countdown\s*=\s*(\d+)/i.exec(subPage.text)?.[1] ?? 6);
 
   const downloadPage = `${base}/download_page.php?subid=${subId}&revid=${revId}`;
-  const dpage = await get(downloadPage, opts);
+  const dpage = await get(downloadPage, session);
   if (!dpage) return { state: SUB_STATE.FAILED, reason: 'download_page_failed' };
+  track(dpage);
 
   // 倒计时没走完直接下 → 302 / error_403
   const wait =
     opts.waitMs ?? (Number.isFinite(countdown) ? Math.max(0, countdown) * 1000 + 500 : 6500);
   if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
 
-  const file = await get(`${base}/download_sub.php?subid=${subId}&revid=${revId}`, opts, {
-    referer: downloadPage,
-  });
+  const file = await get(
+    `${base}/download_sub.php?subid=${subId}&revid=${revId}`,
+    session,
+    {
+      referer: downloadPage,
+    },
+  );
   if (!file) return { state: SUB_STATE.FAILED, reason: 'download_failed' };
   if (LIMIT_RE.test(file.text)) {
     return { state: SUB_STATE.FAILED, reason: 'daily_limit', limitReached: true };

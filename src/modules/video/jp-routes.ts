@@ -284,7 +284,9 @@ export async function registerJpRoutes(app: any, k: KernelApi): Promise<void> {
         return reply.code(404).send({ error: Err.notFound, message: 'file missing' });
       }
 
-      const result = await fetchSubtitle(code, { waitMs: 0 });
+      // ⛔ 不能传 `waitMs: 0`：站点下载页有 6 秒倒计时，没等过就请求
+      // `download_sub.php` 会拿到 302 → error_403，表现为 download_failed。
+      const result = await fetchSubtitle(code);
       if (result.state === SUB_STATE.OK && result.text) {
         const written = writeSubtitleBeside(abs, result.text, '.srt');
         await markSubState(k, item.id, SUB_STATE.OK);
@@ -929,7 +931,9 @@ export async function fetchSubtitlesForLibrary(
     if (isJp) {
       const code = item.code || jpMetaOf(item.rel_path).code;
       if (code) {
-        const result = await fetchSubtitle(code, { waitMs: 0 });
+        // ⛔ 不能传 `waitMs: 0`：站点下载页有 6 秒倒计时，没等过就请求
+      // `download_sub.php` 会拿到 302 → error_403，表现为 download_failed。
+      const result = await fetchSubtitle(code);
         if (result.limitReached) {
           k.log.warn('avsubtitles daily limit reached, stop this round');
           break;
