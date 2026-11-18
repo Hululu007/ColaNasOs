@@ -467,9 +467,14 @@ export async function registerVideoLibrary(
           k.db,
         );
         // 打开开关时立刻补一轮，不必等下次扫描（任务内部会再确认一次开关）
+        // 用户主动开 → force 重抓失败项，不受 7 天冷却限制
         if (body.autoSubtitle) {
           void k.tasks
-            .enqueueIfIdle('video.subtitle.fetch', { libraryId: id }, { maxAttempts: 2 })
+            .enqueueIfIdle(
+              'video.subtitle.fetch',
+              { libraryId: id, force: true },
+              { maxAttempts: 2 },
+            )
             .catch((err) => k.log.warn({ err: String(err) }, 'enqueue subtitle task failed'));
         }
       }

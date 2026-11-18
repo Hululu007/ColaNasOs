@@ -242,8 +242,13 @@ export async function registerJpRoutes(app: any, k: KernelApi): Promise<void> {
         update video_libraries set auto_subtitle = ${body.enabled ? 1 : 0} where id = ${lib.id}
       `.execute(k.db);
       if (body.enabled) {
+        // 用户主动打开自动字幕 → force 重抓失败项
         void k.tasks
-          .enqueueIfIdle('video.subtitle.fetch', { libraryId: lib.id }, { maxAttempts: 2 })
+          .enqueueIfIdle(
+            'video.subtitle.fetch',
+            { libraryId: lib.id, force: true },
+            { maxAttempts: 2 },
+          )
           .catch((err) => k.log.warn({ err: String(err) }, 'enqueue subtitle task failed'));
       }
       return { ok: true };
@@ -851,6 +856,9 @@ export async function fetchSubtitlesForLibrary(
   k: KernelApi,
   libraryId: string,
   onProgress?: (pct: number, done?: number, total?: number) => void,
+  /** 用户主动点「立即下载」/ 打开自动开关：无视 7 天失败冷却，失败态也重抓。
+   *  启动 / 每日定时保持 false，避免每次启动都把失败项全扫一遍。 */
+  force = false,
 ): Promise<number> {
   const lib = (
     await sql<{ id: string; auto_subtitle: number; lib_type: string | null; jp_movie: number }>`
@@ -885,15 +893,25 @@ export async function fetchSubtitlesForLibrary(
          and (
            sub_fetch_state = ${SUB_STATE.PENDING}
            ${
-             cutoff > 0
-               ? sql`or (
-                   sub_fetch_state in (${SUB_STATE.NOT_FOUND}, ${SUB_STATE.NO_CHINESE}, ${SUB_STATE.FAILED})
-                   and coalesce(sub_fetch_at, 0) <= ${cutoff}
-                 )`
-               : sql``
+             force
+               ? // 手动强制重抓：忽略 7 天冷却，所有「站点无 / 无中文 / 失败」都算候选。
+                 // NO_CODE(2) 仍不重试 —— 文件名提不出番号，重来一次还是提不出。
+                 sql`or sub_fetch_state in (${SUB_STATE.NOT_FOUND}, ${SUB_STATE.NO_CHINESE}, ${SUB_STATE.FAILED})`
+               : cutoff > 0
+                 ? sql`or (
+                     sub_fetch_state in (${SUB_STATE.NOT_FOUND}, ${SUB_STATE.NO_CHINESE}, ${SUB_STATE.FAILED})
+                     and coalesce(sub_fetch_at, 0) <= ${cutoff}
+                   )`
+                 : sql``
            }
          )
-       order by created_at asc limit ${limit}
+       order by ${
+         force
+           ? // 强制模式下按「上次尝试时间」升序：本轮刚抓过（失败）的排到队尾，
+             // 反复点「立即下载」才能轮到下一批，而不是永远卡在最老那 30 条。
+             sql`coalesce(sub_fetch_at, 0) asc, created_at asc`
+           : sql`created_at asc`
+       } limit ${limit}
     `.execute(k.db)
   ).rows;
 

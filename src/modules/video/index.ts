@@ -396,10 +396,16 @@ export const video: ServerModule = {
     // 任务队列里是一次「未知任务」——看起来跑了，实际一个字幕都没下。
     // 日本片走 avsubtitles（番号），普通影视走多源（xunlei / assrt / opensubtitles）。
     k.tasks.register('video.subtitle.fetch', async (payload, ctx) => {
-      const libraryId = String((payload as { libraryId?: string } | null)?.libraryId || '');
+      const p = (payload || {}) as { libraryId?: string; force?: boolean };
+      const libraryId = String(p.libraryId || '');
       if (!libraryId) return 0;
-      return fetchSubtitlesForLibrary(k, libraryId, (pct, done, total) =>
-        void ctx.progress(pct, done, total),
+      // force 只来自用户主动触发（立即下载 / 打开开关）。
+      // 不同 force 的 payload 不一样，enqueueIfIdle 不会把手动任务误判成重复的自动任务。
+      return fetchSubtitlesForLibrary(
+        k,
+        libraryId,
+        (pct, done, total) => void ctx.progress(pct, done, total),
+        p.force === true,
       );
     });
     // 启动即补字幕：开了「自动补字幕」的库在内核重启后立刻排一轮，

@@ -169,7 +169,8 @@ export async function registerVideoSubtitles(app: FastifyInstance, k: KernelApi,
         if (!lib) return reply.code(404).send({ error: Err.notFound, message: 'library not found' });
         const r = await k.tasks.enqueueIfIdle(
           'video.subtitle.fetch',
-          { libraryId: id },
+          // 手动「立即下载」：无视失败冷却重抓一轮。payload 带 force 与自动任务区分。
+          { libraryId: id, force: true },
           { maxAttempts: 2 },
         );
         return { id, taskId: r.id, reused: r.reused };

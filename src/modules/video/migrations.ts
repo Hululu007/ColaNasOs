@@ -3,6 +3,20 @@ import type { Migration } from '../../../kernel/migrator';
 
 export const VIDEO_MIGRATIONS: Migration[] = [
   {
+    // 字幕链路修好后（301 跳转 / 会话 cookie / 倒计时），把此前被旧链路误判成
+    // 「站点无 / 无中文 / 失败」的条目清回待抓，让修好的链路能重来一轮。
+    // 不清 NO_CODE(2)：文件名提不出番号，重来还是提不出。
+    // 一次性的：跑过一次后由 _migrations 记录挡住，不会每次启动都全库重抓。
+    id: '184_video_subtitle_reset_failed',
+    async up(db) {
+      await sql`
+        update video_items
+           set sub_fetch_state = 0, sub_fetch_at = null
+         where sub_fetch_state in (3, 4, 5)
+      `.execute(db);
+    },
+  },
+  {
     // 拼音键只由「文件名 / 剧名」算出来的那批要重算：nfo 里的中文名没进键，
     // 文件名是 `The.Odyssey.2026.mkv` 时中文名「奥德赛」直搜得到、`ads` 搜不到。
     // 置空交给后台回填按新口径重来（回填列已含 nfo_name / nfo_original_name）。

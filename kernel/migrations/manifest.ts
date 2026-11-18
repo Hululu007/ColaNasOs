@@ -225,6 +225,8 @@ export const MIGRATION_ORDER: readonly string[] = Object.freeze([
   '182_music_search_pinyin',
   // 拼音键补 nfo 中文名：文件名是英文时「ads」也能搜到「奥德赛」
   '183_video_search_pinyin_nfo',
+  // 字幕链路修好后，把旧链路误判成「无字幕 / 失败」的条目清回待抓（一次性）
+  '184_video_subtitle_reset_failed',
 ]);
 
 export interface OrderCheck {
