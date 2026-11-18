@@ -448,6 +448,8 @@ class _TvSeriesPosterCard extends StatelessWidget {
     final urls = <String?>[
       ...seriesCoverUrls(card, size: (w * 2).round()),
       SeriesDisplayStore.posterOf(card.name),
+      // 最后一档：服务端抽帧（16:9 会被裁，但比整块色片强）
+      episodeStillFallbackUrl(card.coverId ?? card.firstItem?.id),
     ];
     final title = SeriesDisplayStore.nameOf(card.name) ?? card.name;
     return SizedBox(

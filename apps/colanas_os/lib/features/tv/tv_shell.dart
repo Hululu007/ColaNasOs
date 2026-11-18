@@ -10,6 +10,7 @@ import '../../core/app_visibility.dart';
 import '../../core/session.dart';
 import '../../shell/app_visuals.dart';
 import '../music/music_playback.dart';
+import 'tv_collections_section.dart';
 import 'tv_focus.dart';
 import 'tv_music_section.dart';
 import 'tv_placeholder_section.dart';
@@ -35,7 +36,16 @@ class TvShell extends StatefulWidget {
   State<TvShell> createState() => _TvShellState();
 }
 
-enum _TvTabKind { search, videoLibrary, videoHome, music, placeholder, profile }
+enum _TvTabKind {
+  search,
+  videoLibrary,
+  videoHome,
+  collections,
+  music,
+  placeholder,
+  profile,
+}
+
 
 class _TvTab {
   const _TvTab({
@@ -155,6 +165,23 @@ class _TvShellState extends State<TvShell> {
           ),
         );
       }
+    }
+
+    // 有合集才出现「我的合集」tab（和 PC 端二级菜单同一份数据）
+    try {
+      final collections = await ApiSession.instance.client.videoCollectionList();
+      if (collections.items.isNotEmpty) {
+        tabs.add(
+          _TvTab(
+            id: 'collections',
+            label: tr('video.collection.title'),
+            icon: Icons.collections_bookmark_outlined,
+            kind: _TvTabKind.collections,
+          ),
+        );
+      }
+    } catch (_) {
+      // 合集读不到：少一个 tab，不影响其它分区
     }
 
     for (final app in apps) {
@@ -789,6 +816,11 @@ class _TvShellState extends State<TvShell> {
         firstFocusNode: firstFocus,
       ),
       _TvTabKind.videoHome => TvVideoSection(
+        key: key,
+        back: _back,
+        firstFocusNode: firstFocus,
+      ),
+      _TvTabKind.collections => TvCollectionsSection(
         key: key,
         back: _back,
         firstFocusNode: firstFocus,

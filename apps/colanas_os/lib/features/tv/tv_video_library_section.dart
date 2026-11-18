@@ -12,6 +12,7 @@ import 'movie/tv_movie_detail.dart';
 import 'movie/tv_movie_home.dart';
 import 'movie/tv_movie_models.dart';
 import 'tv_focus.dart';
+import 'tv_media_cover.dart';
 import 'tv_video_section.dart';
 import 'video/tv_series_detail.dart';
 import 'video/tv_series_home.dart';
@@ -64,6 +65,21 @@ class _TvVideoLibrarySectionState extends State<TvVideoLibrarySection> {
   TvMovieCollection? _movieCollection;
   VideoItem? _movieDetail;
 
+  // 图片 / 混合库：文件夹视图（与 PC 端一致，不再整库平铺）。
+  String _folderPath = '';
+  String? _folderParent;
+  List<VideoImageFolderNode> _folders = const <VideoImageFolderNode>[];
+  List<VideoItem> _folderItems = const <VideoItem>[];
+  List<VideoImageFolderSegment> _folderSegments =
+      const <VideoImageFolderSegment>[];
+  bool _folderLoading = false;
+
+  // 日本电影库：演员列表 → 某位演员的作品。
+  List<Map<String, dynamic>> _jpActors = const <Map<String, dynamic>>[];
+  Map<String, dynamic>? _jpActor;
+  List<VideoItem> _jpWorks = const <VideoItem>[];
+  bool _jpLoading = false;
+
   final FocusNode _ownedFirstFocus = FocusNode(debugLabel: 'tv-video-first');
   FocusNode get _firstFocus => widget.firstFocusNode ?? _ownedFirstFocus;
 
@@ -72,6 +88,11 @@ class _TvVideoLibrarySectionState extends State<TvVideoLibrarySection> {
 
   bool get _isMovieLibrary =>
       widget.library.libType == 'movie' || widget.library.libType == 'jp_movie';
+
+  bool get _isJpLibrary => widget.library.libType == 'jp_movie';
+
+  bool get _isImageLibrary =>
+      widget.library.libType == 'image' || widget.library.libType == 'mixed';
 
   List<String> get _roots {
     final roots = <String>[
@@ -90,7 +111,9 @@ class _TvVideoLibrarySectionState extends State<TvVideoLibrarySection> {
       _seriesDetail != null ||
       _itemDetail != null ||
       _movieCollection != null ||
-      _movieDetail != null;
+      _movieDetail != null ||
+      _jpActor != null ||
+      _folderPath.isNotEmpty;
 
   @override
   void initState() {
@@ -99,8 +122,14 @@ class _TvVideoLibrarySectionState extends State<TvVideoLibrarySection> {
     widget.back.overlay = _hasOverlay;
     if (_isSeriesLibrary) {
       _loadSeries();
+    } else if (_isJpLibrary) {
+      // 日本库按 PC 端口径先进演员列表；点演员再看她的作品。
+      _loadJpActors();
     } else if (_isMovieLibrary) {
       _loadMovies();
+    } else if (_isImageLibrary) {
+      // 图片 / 混合库：文件夹视图（库根 = 第一层）。
+      unawaited(_enterFolder(''));
     } else {
       _loadFlat();
     }
@@ -405,8 +434,113 @@ class _TvVideoLibrarySectionState extends State<TvVideoLibrarySection> {
     }
   }
 
+  // ---------------------------------------------------------------- 图片 / 混合库
+
+  /// 进入某个文件夹（空串 = 库根）。一次拿「子文件夹 + 本层条目」。
+  Future<void> _enterFolder(String path) async {
+    final client = ApiSession.instance.client;
+    setState(() {
+      _folderLoading = true;
+      _folderPath = path;
+    });
+    try {
+      final foldersRes = await _safe(
+        client.videoImageFolders(
+          libraryId: widget.library.id,
+          folderPath: path.isEmpty ? null : path,
+        ),
+      );
+      final resolved = (foldersRes?.path ?? path).trim();
+      final itemsRes = await _safe(
+        client.videoList(
+          libraryId: widget.library.id,
+          folderPath: resolved.isEmpty ? null : resolved,
+          folderMode: 'exact',
+          limit: 200,
+        ),
+      );
+      if (!mounted) return;
+      setState(() {
+        _folderPath = resolved;
+        _folderParent = foldersRes?.parentPath;
+        _folderSegments = foldersRes?.segments ?? const [];
+        _folders = foldersRes?.folders ?? const <VideoImageFolderNode>[];
+        _folderItems = itemsRes?.items ?? const <VideoItem>[];
+        _folderLoading = false;
+        _error = null;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _folderLoading = false;
+        _error = '$e';
+      });
+    }
+  }
+
+  // ---------------------------------------------------------------- 日本库：演员
+
+  Future<void> _loadJpActors() async {
+    setState(() => _jpLoading = true);
+    try {
+      final res = await ApiSession.instance.client.videoJpActorList(
+        libraryId: widget.library.id,
+        limit: '500',
+      );
+      if (!mounted) return;
+      setState(() {
+        _jpActors = ((res['items'] as List?) ?? const [])
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
+        _jpLoading = false;
+        _loading = false;
+        _error = null;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _jpLoading = false;
+        _loading = false;
+        _error = '$e';
+      });
+    }
+  }
+
+  Future<void> _openJpActor(Map<String, dynamic> actor) async {
+    setState(() {
+      _jpActor = actor;
+      _jpWorks = const <VideoItem>[];
+      _jpLoading = true;
+    });
+    try {
+      final name = '${actor['name'] ?? ''}'.trim();
+      final key = '${actor['key'] ?? ''}'.trim();
+      final res = await ApiSession.instance.client.videoJpActorWorks(
+        key: key.isEmpty ? null : key,
+        name: name,
+        libraryId: widget.library.id,
+        limit: '2000',
+      );
+      if (!mounted) return;
+      setState(() {
+        _jpWorks = ((res['items'] as List?) ?? const [])
+            .whereType<Map>()
+            .map((e) => VideoItem.fromJson(Map<String, dynamic>.from(e)))
+            .toList();
+        _jpLoading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _jpLoading = false;
+        _error = '$e';
+      });
+    }
+  }
+
   Future<void> _refreshProgress() async {
-    if (!_isSeriesLibrary && !_isMovieLibrary) return;
+    if (_isJpLibrary || _isImageLibrary) return;
     try {
       final res = await ApiSession.instance.client.videoProgressList(
         libraryId: widget.library.id,
@@ -465,6 +599,19 @@ class _TvVideoLibrarySectionState extends State<TvVideoLibrarySection> {
     }
     if (_itemDetail != null) {
       setState(() => _itemDetail = null);
+      _restoreFirstFocus();
+      return true;
+    }
+    // 日本库：作品 → 演员列表
+    if (_jpActor != null) {
+      setState(() => _jpActor = null);
+      _restoreFirstFocus();
+      return true;
+    }
+    // 文件夹视图：子目录 → 上一级
+    if (_folderPath.isNotEmpty) {
+      final parent = _folderParent ?? '';
+      unawaited(_enterFolder(parent));
       _restoreFirstFocus();
       return true;
     }
@@ -537,15 +684,16 @@ class _TvVideoLibrarySectionState extends State<TvVideoLibrarySection> {
         onBack: _handleBack,
       );
     }
+    // 日本库 / 图片库的加载态由各自的视图管（_loading 只服务剧 / 电影库）。
+    if (_isJpLibrary) {
+      return _jpActor != null ? _buildJpWorks() : _buildJpActors();
+    }
+    if (_isImageLibrary) return _buildFolders();
     if (_loading) return const Center(child: CircularProgressIndicator());
     if (_error != null) {
       return NasErrorState(
         message: _error!,
-        onRetry: _isSeriesLibrary
-            ? _loadSeries
-            : _isMovieLibrary
-            ? _loadMovies
-            : _loadFlat,
+        onRetry: _isSeriesLibrary ? _loadSeries : _loadMovies,
       );
     }
     if (_isSeriesLibrary) {
@@ -600,6 +748,194 @@ class _TvVideoLibrarySectionState extends State<TvVideoLibrarySection> {
       ),
     );
   }
+
+  // ---------------------------------------------------------------- 网格工具
+
+  /// 一行 6 列的卡片网格（与剧集 / 电影列表同一口径）。
+  Widget _sixColumns(TvMetrics m, List<Widget> Function(double width) cells) {
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: m.px(8)),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final gap = m.px(18);
+          // 减 1px：浮点误差会让第 6 张掉到下一行
+          final width = (constraints.maxWidth - gap * 5) / 6 - 1;
+          return Wrap(
+            spacing: gap,
+            runSpacing: m.px(20),
+            children: <Widget>[
+              for (final cell in cells(width))
+                SizedBox(width: width, child: cell),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------- 图片 / 混合库
+
+  String get _folderTitle {
+    if (_folderSegments.isNotEmpty) return _folderSegments.last.name;
+    return widget.library.name;
+  }
+
+  Widget _buildFolders() {
+    if (_folderLoading && _folders.isEmpty && _folderItems.isEmpty) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_error != null) {
+      return NasErrorState(
+        message: _error!,
+        onRetry: () => _enterFolder(_folderPath),
+      );
+    }
+    if (_folders.isEmpty && _folderItems.isEmpty) {
+      return NasEmptyState(
+        title: tr('video.home.empty'),
+        message: tr('video.home.emptyHint'),
+        icon: Icons.folder_outlined,
+      );
+    }
+    final m = TvMetricsScope.of(context);
+    final scheme = Theme.of(context).colorScheme;
+    return SingleChildScrollView(
+      padding: EdgeInsets.only(top: m.px(4), bottom: m.px(24)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          TvSectionHeader(
+            title: _folderTitle,
+            trailing: Text(
+              '${_folders.length + _folderItems.length} 项',
+              style: TextStyle(
+                fontSize: m.px(14),
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+          if (_folders.isNotEmpty)
+            _sixColumns(m, (w) => <Widget>[
+              for (var i = 0; i < _folders.length; i += 1)
+                _TvFolderCard(
+                  folder: _folders[i],
+                  focusNode: i == 0 ? _firstFocus : null,
+                  onTap: () => _enterFolder(_folders[i].path),
+                ),
+            ]),
+          if (_folderItems.isNotEmpty) ...[
+            SizedBox(height: m.px(18)),
+            _sixColumns(m, (w) => <Widget>[
+              for (var i = 0; i < _folderItems.length; i += 1)
+                _TvLibraryCard(
+                  item: _folderItems[i],
+                  width: w,
+                  focusNode:
+                      _folders.isEmpty && i == 0 ? _firstFocus : null,
+                  onTap: () => setState(() => _itemDetail = _folderItems[i]),
+                ),
+            ]),
+          ],
+        ],
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------- 日本库（演员）
+
+  Widget _buildJpActors() {
+    if (_jpLoading && _jpActors.isEmpty) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_error != null) {
+      return NasErrorState(message: _error!, onRetry: _loadJpActors);
+    }
+    if (_jpActors.isEmpty) {
+      return NasEmptyState(
+        title: tr('video.home.empty'),
+        message: tr('video.home.emptyHint'),
+        icon: Icons.person_outline,
+      );
+    }
+    final m = TvMetricsScope.of(context);
+    final scheme = Theme.of(context).colorScheme;
+    return SingleChildScrollView(
+      padding: EdgeInsets.only(top: m.px(4), bottom: m.px(24)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          TvSectionHeader(
+            title: tr('video.jp.actorTitle'),
+            trailing: Text(
+              '${_jpActors.length}',
+              style: TextStyle(
+                fontSize: m.px(14),
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+          _sixColumns(m, (w) => <Widget>[
+            for (var i = 0; i < _jpActors.length; i += 1)
+              _TvActorCard(
+                actor: _jpActors[i],
+                focusNode: i == 0 ? _firstFocus : null,
+                onTap: () => _openJpActor(_jpActors[i]),
+              ),
+          ]),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildJpWorks() {
+    final actor = _jpActor;
+    if (actor == null) return const SizedBox.shrink();
+    if (_jpLoading && _jpWorks.isEmpty) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    final m = TvMetricsScope.of(context);
+    final scheme = Theme.of(context).colorScheme;
+    final name = '${actor['name'] ?? ''}'.trim();
+    return SingleChildScrollView(
+      padding: EdgeInsets.only(top: m.px(4), bottom: m.px(24)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          TvSectionHeader(
+            title: name.isEmpty ? widget.library.name : name,
+            trailing: Text(
+              tr('video.dup.actorCount', {'count': '${_jpWorks.length}'}),
+              style: TextStyle(
+                fontSize: m.px(14),
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+          if (_jpWorks.isEmpty)
+            Padding(
+              padding: EdgeInsets.all(m.px(24)),
+              child: Text(
+                tr('video.home.empty'),
+                style: TextStyle(
+                  fontSize: m.px(16),
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+            )
+          else
+            _sixColumns(m, (w) => <Widget>[
+              for (var i = 0; i < _jpWorks.length; i += 1)
+                _TvLibraryCard(
+                  item: _jpWorks[i],
+                  width: w,
+                  focusNode: i == 0 ? _firstFocus : null,
+                  onTap: () => setState(() => _itemDetail = _jpWorks[i]),
+                ),
+            ]),
+        ],
+      ),
+    );
+  }
 }
 
 class _TvLibraryCard extends StatelessWidget {
@@ -607,17 +943,21 @@ class _TvLibraryCard extends StatelessWidget {
     required this.item,
     required this.onTap,
     this.focusNode,
+    this.width,
   });
 
   final VideoItem item;
   final VoidCallback onTap;
   final FocusNode? focusNode;
 
+  /// 网格按列数算出来的宽度；不传用设计稿默认值。
+  final double? width;
+
   @override
   Widget build(BuildContext context) {
     final m = TvMetricsScope.of(context);
     final scheme = Theme.of(context).colorScheme;
-    final width = m.px(180);
+    final width = this.width ?? m.px(180);
     final isImage = item.mediaType == 'image';
     return SizedBox(
       width: width,
@@ -683,5 +1023,156 @@ class _TvLibraryCard extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+/// 文件夹卡（图片 / 混合库）：封面 + 名称 + 项数。
+///
+/// 和 PC 端一样「一个文件夹一张卡」，不再把整库几千张图平铺出来 ——
+/// 平铺既慢（要拉全库 id）也不是用户找图的方式。
+class _TvFolderCard extends StatelessWidget {
+  const _TvFolderCard({
+    required this.folder,
+    required this.onTap,
+    this.focusNode,
+  });
+
+  final VideoImageFolderNode folder;
+  final VoidCallback onTap;
+  final FocusNode? focusNode;
+
+  @override
+  Widget build(BuildContext context) {
+    final m = TvMetricsScope.of(context);
+    final scheme = Theme.of(context).colorScheme;
+    final cover = folder.cover is Map
+        ? _videoItemOrNull(Map<String, dynamic>.from(folder.cover as Map))
+        : null;
+    final count = folder.count > 0
+        ? folder.count
+        : folder.imageCount + folder.videoCount;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        TvFocusCard(
+          focusNode: focusNode,
+          onTap: onTap,
+          radius: m.px(14),
+          child: AspectRatio(
+            aspectRatio: 2 / 3,
+            child: TvMediaCover(
+              urls: <String?>[
+                if (cover != null) videoPosterUrl(cover, size: 480),
+              ],
+              fallbackText: folder.name,
+              icon: Icons.folder_outlined,
+              cacheWidth: 480,
+              borderRadius: m.px(14),
+            ),
+          ),
+        ),
+        SizedBox(height: m.px(9)),
+        Text(
+          folder.name,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            fontSize: m.px(16),
+            fontWeight: FontWeight.w600,
+            color: scheme.onSurface,
+          ),
+        ),
+        SizedBox(height: m.px(3)),
+        Text(
+          '$count 项',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(fontSize: m.px(12), color: scheme.onSurfaceVariant),
+        ),
+      ],
+    );
+  }
+}
+
+/// 日本库演员卡：作品海报优先，没有就用演员头像（远程 CDN）。
+///
+/// 头像走远程 CDN，**不能带 Authorization**：会触发 CORS 预检被浏览器挡掉。
+/// 只有本服务的海报接口才需要认证头。
+class _TvActorCard extends StatelessWidget {
+  const _TvActorCard({
+    required this.actor,
+    required this.onTap,
+    this.focusNode,
+  });
+
+  final Map<String, dynamic> actor;
+  final VoidCallback onTap;
+  final FocusNode? focusNode;
+
+  @override
+  Widget build(BuildContext context) {
+    final m = TvMetricsScope.of(context);
+    final scheme = Theme.of(context).colorScheme;
+    final rawCover = actor['coverItem'];
+    final cover = rawCover is Map
+        ? _videoItemOrNull(Map<String, dynamic>.from(rawCover))
+        : null;
+    final avatar = '${actor['avatarUrl'] ?? ''}'.trim();
+    final urls = <String?>[
+      if (cover != null) videoPosterUrl(cover, size: 480),
+      if (cover == null && avatar.isNotEmpty) avatar,
+    ];
+    final count = actor['count'] ?? actor['items'];
+    final name = '${actor['name'] ?? ''}'.trim();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        TvFocusCard(
+          focusNode: focusNode,
+          onTap: onTap,
+          radius: m.px(14),
+          child: AspectRatio(
+            aspectRatio: 2 / 3,
+            child: TvMediaCover(
+              urls: urls,
+              fallbackText: name,
+              icon: Icons.person_outline,
+              cacheWidth: 480,
+              headers: cover != null ? videoArtHeaders : const <String, String>{},
+              borderRadius: m.px(14),
+            ),
+          ),
+        ),
+        SizedBox(height: m.px(9)),
+        Text(
+          name,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            fontSize: m.px(16),
+            fontWeight: FontWeight.w600,
+            color: scheme.onSurface,
+          ),
+        ),
+        SizedBox(height: m.px(3)),
+        Text(
+          count is int && count > 0
+              ? tr('video.dup.actorCount', {'count': '$count'})
+              : '',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(fontSize: m.px(12), color: scheme.onSurfaceVariant),
+        ),
+      ],
+    );
+  }
+}
+
+/// 服务端 JSON → VideoItem；字段不全（老条目 / 精简结构）时返回 null，绝不抛。
+VideoItem? _videoItemOrNull(Map<String, dynamic> json) {
+  try {
+    return VideoItem.fromJson(json);
+  } catch (_) {
+    return null;
   }
 }

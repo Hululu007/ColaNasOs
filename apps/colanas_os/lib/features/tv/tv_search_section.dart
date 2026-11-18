@@ -10,6 +10,7 @@ import '../../core/settings_store.dart';
 import '../music/music_playback.dart';
 import '../video/series_display.dart';
 import '../video/video_card.dart';
+import '../video/video_series_widgets.dart' show episodeStillFallbackUrl;
 import 'tv_focus.dart';
 import 'tv_media_cover.dart';
 import 'tv_video_section.dart' show playTvVideo;
@@ -555,10 +556,16 @@ class _TvSearchSectionState extends State<TvSearchSection> {
     _rebuildCards();
   }
 
-  /// 剧卡封面：本地 / 刮削海报（多级兜底）→ TMDB 剧海报（公网 CDN，不需要鉴权）。
+  /// 剧卡封面：**TMDB 剧海报优先** → 本地 / 刮削海报（多级）→ 服务端抽帧。
+  ///
+  /// 顺序不能反：剧集的 `nfo_poster` 偶尔是目录 / 已删文件，art 请求会慢或者干脆
+  /// 不返回，`Image.network` 一直停在 loading —— 用户看到的就是「没有封面」。
+  /// TMDB 海报是公网 CDN，不需要鉴权也不会卡；抽帧是最后兜底（16:9 会被裁，
+  /// 但比色块强）。
   List<String?> _seriesCoverList(TvSeriesCard card) => <String?>[
-    ...seriesCoverUrls(card, size: 360),
     SeriesDisplayStore.posterOf(card.name),
+    ...seriesCoverUrls(card, size: 360),
+    episodeStillFallbackUrl(card.coverId ?? card.firstItem?.id),
   ];
 
   /// 把同一部剧的条目聚成剧卡（首页卡片与详情页共用同一结构）。
