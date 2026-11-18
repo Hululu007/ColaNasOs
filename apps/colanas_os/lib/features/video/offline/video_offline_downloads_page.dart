@@ -7,6 +7,7 @@ import 'package:nas_ui/nas_ui.dart';
 import '../player_page.dart';
 import 'offline_download_manager.dart';
 import 'offline_models.dart';
+import 'offline_preferences.dart';
 import 'offline_store.dart';
 
 /// 影视 → 合集 → 下载管理。
@@ -32,6 +33,9 @@ class _VideoOfflineDownloadsPageState extends State<VideoOfflineDownloadsPage> {
 
   /// 正在查占用 / 跑清理：按钮转圈并禁用，避免连点
   bool _cleaning = false;
+
+  /// 每条正在下载的任务上一次采样（算实时速度用）
+  final Map<String, _SpeedSample> _speedSamples = {};
 
   @override
   void initState() {
@@ -95,17 +99,18 @@ class _VideoOfflineDownloadsPageState extends State<VideoOfflineDownloadsPage> {
                   ],
                 ),
               ),
-              // 服务端产物：下载用的中转副本，留着只为免重编，不清会一直堆在服务器上
-              TextButton.icon(
-                onPressed: _cleaning ? null : _openServerCleanup,
+              // 下载设置：仅 WiFi / 限速 / 多连接加速，以及「清理服务端产物」
+              // （清理原来直接放在这里，占一个文字按钮太显眼，收进设置里更合理）
+              IconButton(
+                tooltip: tr('video.offline.downloadSettings'),
+                onPressed: _cleaning ? null : _openDownloadSettings,
                 icon: _cleaning
                     ? const SizedBox(
-                        width: 14,
-                        height: 14,
+                        width: 16,
+                        height: 16,
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
-                    : const Icon(Icons.cleaning_services_outlined, size: 18),
-                label: Text(tr('video.offline.serverCleanup')),
+                    : const Icon(Icons.tune, size: 20),
               ),
             ],
           ),
@@ -191,6 +196,34 @@ class _VideoOfflineDownloadsPageState extends State<VideoOfflineDownloadsPage> {
   ///
   /// 服务端那份转码产物只是「下载用的中转副本」：留着是为了同参数再下一次时
   /// 免重编，不清就会一直堆在 NAS 盘上，所以给一个显式出口。
+  /// 下载设置的入口：面板里的「清理服务端产物」关掉面板后回这里开清理对话框。
+  Future<void> _openDownloadSettings() async {
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (_) => const _DownloadSettingsSheet(),
+    );
+    if (!mounted || action != 'cleanup') return;
+    await _openServerCleanup();
+  }
+
+  /// 实时速度：每 700ms 采一次「已下字节」的差，太快采样会被抖动带偏。
+  double _sampleSpeed(OfflineTaskRecord task) {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final prev = _speedSamples[task.itemId];
+    if (prev == null) {
+      _speedSamples[task.itemId] = _SpeedSample(task.downloadedBytes, now, 0);
+      return 0;
+    }
+    if (now - prev.at < 700) return prev.bps;
+    final dt = (now - prev.at) / 1000.0;
+    final delta = task.downloadedBytes - prev.bytes;
+    final bps = (dt > 0 && delta > 0) ? delta / dt : 0.0;
+    _speedSamples[task.itemId] = _SpeedSample(task.downloadedBytes, now, bps);
+    return bps;
+  }
+
   Future<void> _openServerCleanup() async {
     if (_cleaning) return;
     final messenger = ScaffoldMessenger.of(context);
@@ -273,9 +306,12 @@ class _VideoOfflineDownloadsPageState extends State<VideoOfflineDownloadsPage> {
         final pct = (task.downloadedBytes * 100 / task.totalBytes)
             .clamp(0, 100)
             .round();
+        // 带速度：用户抱怨「慢」时，第一个问题就是「现在到底多少」
+        final bps = _sampleSpeed(task);
+        final speed = bps > 0 ? ' · ${formatBytes(bps.round())}/s' : '';
         return (
           '${tr('video.offline.stageDownloading', {'percent': '$pct'})} · '
-              '${formatBytes(task.downloadedBytes)} / ${formatBytes(task.totalBytes)}',
+              '${formatBytes(task.downloadedBytes)} / ${formatBytes(task.totalBytes)}$speed',
           pct,
         );
       case OfflineTaskState.verifying:
@@ -622,6 +658,97 @@ class _ServerCleanupDialogState extends State<_ServerCleanupDialog> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// 下载速度的一次采样（算差速用）
+class _SpeedSample {
+  const _SpeedSample(this.bytes, this.at, this.bps);
+
+  final int bytes;
+  final int at;
+  final double bps;
+}
+
+/// 下载设置面板：仅 WiFi / 限速 / 多连接加速，外加「清理服务端产物」的入口。
+///
+/// 用底部面板而不是又一个设置页：这几个开关都是「下载的时候才想起来要改」，
+/// 放在下载页里点两下就能改，不用跳走再跳回来。
+class _DownloadSettingsSheet extends StatefulWidget {
+  const _DownloadSettingsSheet();
+
+  @override
+  State<_DownloadSettingsSheet> createState() => _DownloadSettingsSheetState();
+}
+
+class _DownloadSettingsSheetState extends State<_DownloadSettingsSheet> {
+  late bool _wifiOnly = OfflinePreferences.wifiOnly;
+  late int _maxKbps = OfflinePreferences.maxKbps;
+  late bool _multi = OfflinePreferences.connections > 1;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return SafeArea(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SwitchListTile(
+            value: _wifiOnly,
+            title: Text(tr('video.offline.wifiOnly')),
+            subtitle: Text(tr('video.offline.wifiOnlyHint')),
+            onChanged: (v) async {
+              setState(() => _wifiOnly = v);
+              await OfflinePreferences.setWifiOnly(v);
+            },
+          ),
+          ListTile(
+            title: Text(tr('video.offline.speedLimit')),
+            subtitle: Text(tr('video.offline.speedHint')),
+            trailing: NasDropdown<int>(
+              value: _maxKbps,
+              isDense: true,
+              underline: const SizedBox.shrink(),
+              items: [
+                DropdownMenuItem(
+                  value: 0,
+                  child: Text(tr('video.offline.speedUnlimited')),
+                ),
+                for (final kbps in <int>[2000, 5000, 10000, 20000])
+                  DropdownMenuItem(
+                    value: kbps,
+                    child: Text('${kbps ~/ 1000} MB/s'),
+                  ),
+              ],
+              onChanged: (v) async {
+                if (v == null) return;
+                setState(() => _maxKbps = v);
+                await OfflinePreferences.setMaxKbps(v);
+              },
+            ),
+          ),
+          SwitchListTile(
+            value: _multi,
+            title: Text(tr('video.offline.multiConn')),
+            subtitle: Text(tr('video.offline.multiConnHint')),
+            onChanged: (v) async {
+              setState(() => _multi = v);
+              await OfflinePreferences.setConnections(v ? 4 : 1);
+            },
+          ),
+          const Divider(height: 1),
+          ListTile(
+            leading: Icon(
+              Icons.cleaning_services_outlined,
+              color: scheme.onSurface,
+            ),
+            title: Text(tr('video.offline.serverCleanup')),
+            subtitle: Text(tr('video.offline.serverCleanupHint')),
+            onTap: () => Navigator.pop(context, 'cleanup'),
+          ),
+        ],
       ),
     );
   }

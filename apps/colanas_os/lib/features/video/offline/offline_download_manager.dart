@@ -755,6 +755,8 @@ class OfflineDownloadManager {
         resumeFrom: resumeFrom,
         // 限速按用户设置；0 = 不限
         maxBytesPerSecond: OfflinePreferences.maxKbps * 1000 ~/ 8,
+        // 分片并发：单连接在 WiFi 中继 / 反代 / 单流限速的链路上跑不满带宽
+        connections: OfflinePreferences.connections,
         isCanceled: () =>
             _canceled.contains(req.itemId) || _pauseReasons.containsKey(req.itemId),
         onProgress: (received) {
