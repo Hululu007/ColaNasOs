@@ -22,9 +22,11 @@ class AudioFocus {
       _pause = null;
       if (pause != null) {
         try {
-          await pause();
+          // 上一路「暂停」理论上立刻返回，但它可能已经 dispose / 卡在插件通道上：
+          // 不设上限的话新一路会一直等，表现就是「点了播放没反应、底部条也空白」。
+          await pause().timeout(const Duration(seconds: 2));
         } catch (_) {
-          // 上一路已销毁 / 报错：不能挡住新的播放
+          // 上一路已销毁 / 报错 / 超时：不能挡住新的播放
         }
       }
     }

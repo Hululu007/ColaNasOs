@@ -219,8 +219,6 @@ class MusicPlaybackService extends ChangeNotifier {
 
   Future<void> _load(int next) async {
     if (queue.isEmpty) return;
-    // 开播前先让播客 / 音色试听让路：一路声音都不要叠着放
-    await AudioFocus.instance.request(this, () async => pause());
     final seq = ++_seq;
     index = next.clamp(0, queue.length - 1);
     final current = queue[index];
@@ -231,7 +229,13 @@ class MusicPlaybackService extends ChangeNotifier {
     lyrics = null;
     lyricsLoading = true;
     _times = const [];
+    // 先把「现在播这首」挂上再让路：底部播放条 / 全屏播放页立刻有内容，
+    // 不被后面的焦点仲裁（等上一路真正暂停）拖成一片空白。
     notifyListeners();
+
+    // 开播前先让播客 / 音色试听让路：一路声音都不要叠着放
+    await AudioFocus.instance.request(this, () async => pause());
+    if (seq != _seq) return;
 
     // 播放历史：失败不影响播放（自动歌单依赖这份记录）
     unawaited(
