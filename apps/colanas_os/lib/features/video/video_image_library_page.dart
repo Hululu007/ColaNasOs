@@ -377,31 +377,6 @@ class _VideoImageLibraryPageState extends State<VideoImageLibraryPage> {
     }
   }
 
-  Future<void> _downloadItem(VideoItem item) async {
-    final url =
-        '${ApiSession.instance.baseUrl}/api/v1/files/download?path=${Uri.encodeComponent(item.path)}';
-    final headers = videoArtHeaders;
-    final name = item.fileTitle.isEmpty ? item.title : item.fileTitle;
-    if (PhotoDownload.supported) {
-      try {
-        await PhotoDownload.save(
-          url: url,
-          headers: headers,
-          suggestedName: name,
-        );
-      } catch (e) {
-        if (mounted) {
-          NasSnack.show(context, '$e');
-        }
-      }
-      return;
-    }
-    await Clipboard.setData(ClipboardData(text: url));
-    if (mounted) {
-      NasSnack.show(context, tr('video.media.copyLink'));
-    }
-  }
-
   /// 已选中的条目（按当前列表顺序，避免 Set 顺序随机导致下载顺序乱跳）
   List<VideoItem> get _pickedItems =>
       _items.where((e) => _selected.contains(e.id)).toList();
@@ -551,13 +526,8 @@ class _VideoImageLibraryPageState extends State<VideoImageLibraryPage> {
       position: _relative(pos),
       items: [
         PopupMenuItem(value: 'open', child: Text(tr('video.media.open'))),
-        if (item.mediaType == 'image' || item.mediaType == 'video')
-          PopupMenuItem(
-            value: 'download',
-            child: Text(tr('video.media.download')),
-          ),
-        // 「下载到本机」：公共下载弹窗（分辨率 / 编码 / 字幕可选）。
-        // 混合库里的影片以前只有「下载原文件」，没有画质可选的离线下载。
+        // 下载统一走「下载到本机」（离线下载弹窗：分辨率 / 编码 / 字幕可选），
+        // 不再保留「下载原文件」那条入口，避免同一个右键菜单里出现两个下载。
         if (item.mediaType == 'video' && offlineSupported)
           PopupMenuItem(
             value: 'offline-download',
@@ -599,10 +569,6 @@ class _VideoImageLibraryPageState extends State<VideoImageLibraryPage> {
     if (!mounted || v == null) return;
     if (v == 'open') {
       await _openItem(item, index);
-      return;
-    }
-    if (v == 'download') {
-      await _downloadItem(item);
       return;
     }
     if (v == 'offline-download') {

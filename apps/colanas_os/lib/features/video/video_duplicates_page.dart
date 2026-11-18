@@ -19,6 +19,8 @@ import 'cola_video_detail_page.dart';
 /// 页面展示口径：
 ///   * 每组用缩略图（刮削的横版剧照，3:2）平铺，图下就是文件名 / 分辨率 / 体积；
 ///   * 缩略图左上角是勾选框，右上角是「中 / 字 / 无码 / 4K」角标；
+///   * 点卡片本体（图或文字）等于勾选，不跳详情页 —— 长按才打开详情；
+///   * 每张卡片带所在目录（只留最后三级，完整路径在 tooltip 里）；
 ///   * **默认一条都不勾**，点「自动勾选」才按日本片的保留规则批量预勾；
 ///   * 依然不自动删除任何文件：查重是启发式的，误判代价是丢片子。
 class VideoDuplicatesPage extends StatefulWidget {
@@ -638,17 +640,8 @@ class _VideoDuplicatesPageState extends State<VideoDuplicatesPage> {
 
     return InkWell(
       borderRadius: BorderRadius.circular(NasTokens.radiusSm),
-      onTap: () async {
-        final messenger = ScaffoldMessenger.of(context);
-        final navigator = Navigator.of(context);
-        try {
-          final detail = await ApiSession.instance.client.videoItem(id: item.id);
-          if (!mounted) return;
-          unawaited(openVideoDetailOn(navigator, detail));
-        } catch (e) {
-          NasSnack.showOn(messenger, '$e');
-        }
-      },
+      onTap: () => _toggleItem(item.id),
+      onLongPress: () => _openDetail(item),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -677,9 +670,7 @@ class _VideoDuplicatesPageState extends State<VideoDuplicatesPage> {
                       shape: const CircleBorder(),
                       child: InkWell(
                         customBorder: const CircleBorder(),
-                        onTap: () => setState(() {
-                          if (!_selected.remove(item.id)) _selected.add(item.id);
-                        }),
+                        onTap: () => _toggleItem(item.id),
                         child: Padding(
                           padding: const EdgeInsets.all(2),
                           child: Icon(
@@ -746,6 +737,34 @@ class _VideoDuplicatesPageState extends State<VideoDuplicatesPage> {
               color: context.nasTextSecondary,
             ),
           ),
+          // 所在目录：同组两份往往只是躺在不同文件夹里，光看文件名分不清留哪个。
+          // 完整路径放 tooltip，卡片上只留最后几级，短卡片不至于被路径撑爆。
+          if (item.path.isNotEmpty)
+            Tooltip(
+              message: item.path,
+              waitDuration: const Duration(milliseconds: 400),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.folder_open_outlined,
+                    size: 11,
+                    color: context.nasTextSecondary,
+                  ),
+                  const SizedBox(width: 3),
+                  Expanded(
+                    child: Text(
+                      _folderOf(item.path),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: NasTokens.fontMicro,
+                        color: context.nasTextSecondary,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           // 修改时间单独一行：同分辨率同体积的两份只能靠时间判断留哪份
           if (item.mtime > 0)
             Text(
@@ -762,6 +781,44 @@ class _VideoDuplicatesPageState extends State<VideoDuplicatesPage> {
         ],
       ),
     );
+  }
+
+  /// 卡片点击 = 勾选/取消，不跳详情：这一页的动作只有「勾了删掉」，
+  /// 误点进详情页再退回来会把当前勾选状态和滚动位置都丢掉。
+  /// 想看看详情走长按。
+  void _toggleItem(String id) {
+    setState(() {
+      if (!_selected.remove(id)) _selected.add(id);
+    });
+  }
+
+  /// 打开详情（长按卡片 / 封面长按触发）
+  Future<void> _openDetail(VideoDuplicateItem item) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final navigator = Navigator.of(context);
+    try {
+      final detail = await ApiSession.instance.client.videoItem(id: item.id);
+      if (!mounted) return;
+      unawaited(openVideoDetailOn(navigator, detail));
+    } catch (e) {
+      NasSnack.showOn(messenger, '$e');
+    }
+  }
+
+  /// 取文件所在目录，只留最后三级（前面用 `…/` 代替）。
+  ///
+  /// 库里 Windows 与 POSIX 两种分隔符都会出现，按 `[\\/]` 统一切开；
+  /// 留尾部而不是留头部，是因为区分两份重复靠的永远是最后那几层目录名。
+  String _folderOf(String path) {
+    final parts = path.split(RegExp(r'[\\/]'));
+    if (parts.length < 2) return '';
+    final dirs = parts.sublist(0, parts.length - 1);
+    const keep = 3;
+    final tail = dirs.length > keep
+        ? dirs.sublist(dirs.length - keep)
+        : dirs;
+    final prefix = dirs.length > keep ? '…/' : '';
+    return '$prefix${tail.join('/')}';
   }
 
   String? _artUrl(VideoDuplicateItem item, {int size = 0}) {
