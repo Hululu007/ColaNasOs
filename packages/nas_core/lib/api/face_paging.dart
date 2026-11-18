@@ -19,6 +19,8 @@ extension PhotoFacePaging on ApiClient {
   /// 全部人脸簇（按人数倒序；minCount 交给服务端按 AI 设置过滤）
   Future<List<PhotoFaceClusterItem>> photoFaceClustersAll({
     int? minCount,
+    /// 连「已隐藏」的人物一起拉（人物列表里「显示已隐藏」开关用）
+    bool includeHidden = false,
     int pageSize = kFacePageSize,
     int maxItems = kFaceMaxItems,
     void Function(int loaded)? onPage,
@@ -31,6 +33,7 @@ extension PhotoFacePaging on ApiClient {
         minCount: minCount,
         limit: pageSize,
         cursor: offset,
+        includeHidden: includeHidden,
       );
       if (page.items.isEmpty) break;
       final take = page.items.take(maxItems - out.length).toList(growable: false);

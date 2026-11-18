@@ -353,6 +353,8 @@ export const FaceClusterFilterQuery = Type.Object(
     limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 5000 })),
     /** 下一页 cursor（offset）；缺省从 0 开始 */
     cursor: Type.Optional(Type.Integer({ minimum: 0 })),
+    /** 连「已隐藏」的人物一起返回（默认不带，隐藏就是为了不看见） */
+    includeHidden: Type.Optional(Type.Boolean({ default: false })),
   },
   { $id: 'PhotoFaceClusterFilter' },
 );
@@ -367,6 +369,23 @@ export const FaceDissolveBody = Type.Object(
     clusterId: Type.String({ minLength: 1 }),
   },
   { $id: 'PhotoFaceDissolveBody' },
+);
+
+/** 隐藏 / 取消隐藏人物（批量）。隐藏只影响列表可见性 */
+export const FaceHideBody = Type.Object(
+  {
+    ids: Type.Array(Type.String({ minLength: 1 }), { minItems: 1, maxItems: 200 }),
+    hidden: Type.Optional(Type.Boolean({ default: true })),
+  },
+  { $id: 'PhotoFaceHideBody' },
+);
+
+export const FaceHideResult = Type.Object(
+  {
+    ok: Type.Boolean(),
+    affected: Type.Integer({ description: '实际改了状态的簇数' }),
+  },
+  { $id: 'PhotoFaceHideResult' },
 );
 
 export const FaceSweepBody = Type.Object(
@@ -678,6 +697,8 @@ export const PHOTO_AI_SCHEMAS = [
   FaceClusterFilterQuery,
   FaceNameBody,
   FaceDissolveBody,
+  FaceHideBody,
+  FaceHideResult,
   FaceSweepBody,
   FaceSweepResult,
   FaceMergeBody,

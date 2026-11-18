@@ -7891,6 +7891,10 @@
           "cursor": {
             "minimum": 0,
             "type": "integer"
+          },
+          "includeHidden": {
+            "default": false,
+            "type": "boolean"
           }
         }
       },
@@ -7920,6 +7924,43 @@
           "clusterId": {
             "minLength": 1,
             "type": "string"
+          }
+        }
+      },
+      "PhotoFaceHideBody": {
+        "type": "object",
+        "required": [
+          "ids"
+        ],
+        "properties": {
+          "ids": {
+            "minItems": 1,
+            "maxItems": 200,
+            "type": "array",
+            "items": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "hidden": {
+            "default": true,
+            "type": "boolean"
+          }
+        }
+      },
+      "PhotoFaceHideResult": {
+        "type": "object",
+        "required": [
+          "ok",
+          "affected"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "affected": {
+            "description": "实际改了状态的簇数",
+            "type": "integer"
           }
         }
       },
@@ -24896,6 +24937,15 @@
             "in": "query",
             "name": "cursor",
             "required": false
+          },
+          {
+            "schema": {
+              "default": false,
+              "type": "boolean"
+            },
+            "in": "query",
+            "name": "includeHidden",
+            "required": false
           }
         ],
         "security": [
@@ -25090,6 +25140,42 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/PhotoAiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/photo/faces/hide": {
+      "post": {
+        "operationId": "photoFaceHide",
+        "summary": "隐藏 / 取消隐藏人物（批量，只影响列表可见性）",
+        "tags": [
+          "photo"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PhotoFaceHideBody"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PhotoFaceHideResult"
                 }
               }
             }

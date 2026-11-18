@@ -1,7 +1,7 @@
 # API 参考
 
 > 由 `tool/gen-api-doc.js` 从 `contracts/openapi.json` 生成，**请勿手改**；改契约后执行 `npm run api:doc`。
-> 当前：**425 个路径 / 453 个操作 / 19 个域**。鉴权统一为 `Authorization: Bearer <jwt>`，媒体直链另支持 `?token=`（5 分钟）。
+> 当前：**426 个路径 / 454 个操作 / 19 个域**。鉴权统一为 `Authorization: Bearer <jwt>`，媒体直链另支持 `?token=`（5 分钟）。
 
 ## 域索引
 
@@ -15,7 +15,7 @@
 - **音乐**（`music`）· 35 个操作 · [跳转](#music)
 - **offline**（`offline`）· 11 个操作 · [跳转](#offline)
 - **其他**（`other`）· 2 个操作 · [跳转](#other)
-- **相册**（`photo`）· 141 个操作 · [跳转](#photo)
+- **相册**（`photo`）· 142 个操作 · [跳转](#photo)
 - **player**（`player`）· 2 个操作 · [跳转](#player)
 - **pt**（`pt`）· 26 个操作 · [跳转](#pt)
 - **RSS 订阅**（`rss`）· 15 个操作 · [跳转](#rss)
@@ -1363,7 +1363,7 @@ MCP 开放平台状态 · `photoMcpStatus`
 
 人脸聚类列表（按人数倒序，分页；少于 minCount 的碎片组不显示，具名组豁免） · `photoFaceClusters`
 
-- 参数：`minCount` · 查询 · integer · 可选<br>`limit` · 查询 · integer · 可选<br>`cursor` · 查询 · integer · 可选
+- 参数：`minCount` · 查询 · integer · 可选<br>`limit` · 查询 · integer · 可选<br>`cursor` · 查询 · integer · 可选<br>`includeHidden` · 查询 · boolean · 可选
 - 响应：200 `PhotoFaceClusterList`
 
 #### `POST /api/v1/photo/faces/cover`
@@ -1379,6 +1379,13 @@ MCP 开放平台状态 · `photoMcpStatus`
 
 - 请求体：（空对象）
 - 响应：200 `PhotoFaceOk` · 错误 404
+
+#### `POST /api/v1/photo/faces/hide`
+
+隐藏 / 取消隐藏人物（批量，只影响列表可见性） · `photoFaceHide`
+
+- 请求体：（空对象）
+- 响应：200 `PhotoFaceHideResult`
 
 #### `POST /api/v1/photo/faces/merge`
 

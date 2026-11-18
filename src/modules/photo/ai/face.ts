@@ -1094,7 +1094,13 @@ export async function registerPhotoFaces(app: any, k: KernelApi): Promise<void> 
       },
     }),
     async (req: FastifyRequest) => {
-      const q = (req.query || {}) as { minCount?: number; limit?: number; cursor?: number };
+      const q = (req.query || {}) as {
+        minCount?: number;
+        limit?: number;
+        cursor?: number;
+        includeHidden?: boolean;
+      };
+      const includeHidden = q.includeHidden === true;
       const minCount = Math.max(
         1,
         Math.min(Number(q.minCount) || aiConfig(k).faceMinShowCount, 1000),
@@ -1142,12 +1148,15 @@ export async function registerPhotoFaces(app: any, k: KernelApi): Promise<void> 
             from ranked
            group by cluster_id
         )
-        select c.id, c.name,
+        select c.id, c.name, c.hidden,
                coalesce(a.size, 0) as size,
                a.cover_photo_id, a.cover_face_id
           from photo_face_clusters c
           left join agg a on a.cluster_id = c.id`;
-      const where = sql`where size >= ${minCount} or (name is not null and name <> '')`;
+      // 「已隐藏」的人物默认不出现在列表里（隐藏是给「这不是个人 / 不想看」用的），
+      // 需要在设置里翻出来时带 includeHidden。
+      const where = sql`where (size >= ${minCount} or (name is not null and name <> ''))
+        ${includeHidden ? sql`` : sql`and hidden = 0`}`;
 
       // total 用窗口计数跟分页同一次查出来，省掉重复跑一遍同样的聚合
       // （40k 张照片 / 160k 张人脸时约省 45% 时间）。翻页越界拿不到行时才补一次。
@@ -1534,6 +1543,39 @@ export async function registerPhotoFaces(app: any, k: KernelApi): Promise<void> 
       // 索引里还留着旧分组会污染后续归属；invalidate 让下次 load 真正回表重建
       faceIndex.invalidate();
       return { ok: true };
+    },
+  );
+
+  // 隐藏 / 取消隐藏人物：只改列表可见性，不动人脸数据，也不解散簇 ——
+  // 「这不是个人 / 我不想在人物列表里看到」和「把这组拆掉」是两件事。
+  app.post(
+    '/api/v1/photo/faces/hide',
+    secured('photo:write', {
+      schema: {
+        operationId: 'photoFaceHide',
+        tags: ['photo'],
+        summary: '隐藏 / 取消隐藏人物（批量，只影响列表可见性）',
+        body: ref('PhotoFaceHideBody'),
+        response: { 200: ref('PhotoFaceHideResult') },
+      },
+    }),
+    async (req: FastifyRequest) => {
+      const body = (req.body || {}) as { ids?: string[]; hidden?: boolean };
+      const ids = [
+        ...new Set(
+          (body.ids || []).filter((x) => typeof x === 'string' && x.trim()).map((x) => x.trim()),
+        ),
+      ].slice(0, 200);
+      const hidden = body.hidden !== false;
+      if (ids.length === 0) return { ok: true, affected: 0 };
+      const rows = (
+        await sql<{ id: string }>`
+          update photo_face_clusters set hidden = ${hidden ? 1 : 0}
+           where id in (${sql.join(ids.map((id) => sql`${id}`), sql`, `)})
+          returning id
+        `.execute(k.db)
+      ).rows;
+      return { ok: true, affected: rows.length };
     },
   );
 

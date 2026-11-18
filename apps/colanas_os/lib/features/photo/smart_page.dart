@@ -58,9 +58,18 @@ class _PhotoSmartPageState extends State<PhotoSmartPage> {
   PhotoFaceClusterItem? _activeCluster;
 
   /// 簇详情多选：选中项存 faceId（批量接口按 face id 操作）。
-  /// 右键 / 长按菜单里的「多选」进入，单击切换勾选。
+  /// 右键 / 长按菜单里的「多选」进入，右上角也有一个按钮（手机上长按不一定想得到）。
   bool _clusterSelecting = false;
   final Set<String> _clusterSelected = <String>{};
+
+  /// 人物列表多选：批量隐藏 / 批量解散。
+  ///
+  /// 和簇详情里的「多选照片」是两件事：这里选的是「人」，不是人脸。
+  bool _clusterMulti = false;
+  final Set<String> _clusterMultiSel = <String>{};
+
+  /// 列表里是否连「已隐藏」的人物一起列出来（隐藏只是不显示，数据还在）
+  bool _includeHidden = false;
 
   bool _loading = true;
   bool _analyzing = false;
@@ -115,6 +124,7 @@ class _PhotoSmartPageState extends State<PhotoSmartPage> {
       // 边拉边显示：簇可能上万个，等全量拉完才出画面会卡很久。
       // 最终仍要完整列表 —— 合并 / 改封面 / 关系操作依赖完整候选集。
       final clusters = await c.photoFaceClustersAll(
+        includeHidden: _includeHidden,
         onPageItems: (page) {
           if (!mounted) return;
           setState(() {
@@ -937,19 +947,33 @@ class _PhotoSmartPageState extends State<PhotoSmartPage> {
     // 那种近黑底上（2026-11-14 反馈：人物列表卡片发黑，和极光背景割裂）。
     final solidPanel = Color.alphaBlend(style.panelColor, style.baseColor);
     final named = (c.name ?? '').trim().isNotEmpty;
+    final selected = _clusterMultiSel.contains(c.id);
     final label = named
         ? c.name!
         : tr('photo.faceCluster.unnamed', {'id': c.id.substring(0, 6)});
-    // 桌面 / Web 右键：重命名 / 合并 / 解散 / 管理人脸（与长按同一批动作）
+    // 桌面 / Web 右键：重命名 / 合并 / 解散 / 管理人脸（与长按同一批动作）。
+    // 多选态下不给右键菜单：这时点/长按都是勾选，弹菜单只会让人以为点错了。
     return NasContextMenuRegion(
-      entries: _faceMenuEntries(c),
+      entries: _clusterMulti ? const <NasMenuEntry>[] : _faceMenuEntries(c),
       child: GestureDetector(
-        onLongPress: () => _faceActions(c),
+        onLongPress: () {
+          if (_clusterMulti) {
+            _toggleClusterSel(c.id);
+            return;
+          }
+          _faceActions(c);
+        },
         child: NasCard(
           padding: const EdgeInsets.fromLTRB(8, 10, 8, 8),
           radius: NasTokens.radiusMd,
-          highlight: named,
-          onTap: () => _openCluster(c),
+          highlight: named || selected,
+          onTap: () {
+            if (_clusterMulti) {
+              _toggleClusterSel(c.id);
+              return;
+            }
+            _openCluster(c);
+          },
           child: Column(
             children: [
               Expanded(
@@ -998,18 +1022,34 @@ class _PhotoSmartPageState extends State<PhotoSmartPage> {
                         ),
                       ),
                     ),
-                    // 命名入口放右上角，避免长按才想得起来
-                    Positioned(
-                      right: -2,
-                      top: -2,
-                      child: IconButton(
-                        tooltip: tr('ui.photo.074'),
-                        visualDensity: VisualDensity.compact,
-                        iconSize: 15,
-                        onPressed: () => _renameCluster(c),
-                        icon: const Icon(Icons.edit_outlined),
+                    // 命名入口放右上角，避免长按才想得起来（多选态下先收起来）
+                    if (!_clusterMulti)
+                      Positioned(
+                        right: -2,
+                        top: -2,
+                        child: IconButton(
+                          tooltip: tr('ui.photo.074'),
+                          visualDensity: VisualDensity.compact,
+                          iconSize: 15,
+                          onPressed: () => _renameCluster(c),
+                          icon: const Icon(Icons.edit_outlined),
+                        ),
                       ),
-                    ),
+                    // 多选态：左上角勾选圈（头像压在上面，必须画在之后）
+                    if (_clusterMulti)
+                      Positioned(
+                        left: 0,
+                        top: 0,
+                        child: Icon(
+                          selected
+                              ? Icons.check_circle
+                              : Icons.radio_button_unchecked,
+                          size: 20,
+                          color: selected
+                              ? scheme.primary
+                              : context.nasTextSecondary,
+                        ),
+                      ),
                   ],
                 ),
               ),
@@ -1786,8 +1826,9 @@ class _PhotoSmartPageState extends State<PhotoSmartPage> {
     );
   }
 
-  /// 人脸区顶栏：候选合并与撤消（比藏在长按里好找）
+  /// 人脸区顶栏：多选 / 候选合并 / 撤消 / 显示已隐藏（比藏在长按里好找）
   Widget _faceToolbar() {
+    if (_clusterMulti) return _clusterMultiBar();
     return Padding(
       padding: const EdgeInsets.fromLTRB(
         NasTokens.spaceMd,
@@ -1802,6 +1843,17 @@ class _PhotoSmartPageState extends State<PhotoSmartPage> {
             style: TextStyle(fontSize: NasTokens.fontCaption, color: context.nasTextSecondary),
           ),
           const Spacer(),
+          // 多选摆在「合并建议」前面：批量隐藏 / 解散是整理人物列表时最常做的事
+          TextButton.icon(
+            onPressed: () {
+              setState(() {
+                _clusterMulti = true;
+                _clusterMultiSel.clear();
+              });
+            },
+            icon: const Icon(Icons.checklist, size: 18),
+            label: Text(tr('photo.face.batchSelect')),
+          ),
           TextButton.icon(
             onPressed: _openMergeCandidates,
             icon: const Icon(Icons.auto_fix_high, size: 18),
@@ -1812,9 +1864,154 @@ class _PhotoSmartPageState extends State<PhotoSmartPage> {
             icon: const Icon(Icons.undo, size: 20),
             onPressed: _undoMerge,
           ),
+          // 隐藏只是不显示：给一个能翻回来的开关，否则藏了就再也找不回
+          IconButton(
+            tooltip: tr(
+              _includeHidden
+                  ? 'photo.face.hideHidden'
+                  : 'photo.face.showHidden',
+            ),
+            icon: Icon(
+              _includeHidden
+                  ? Icons.visibility_outlined
+                  : Icons.visibility_off_outlined,
+              size: 20,
+            ),
+            onPressed: () {
+              setState(() => _includeHidden = !_includeHidden);
+              _load();
+            },
+          ),
         ],
       ),
     );
+  }
+
+  /// 人物多选态的操作栏（左上角：全选 / 隐藏 / 解散 / 退出）
+  Widget _clusterMultiBar() {
+    final ids = [for (final c in _clusters) c.id];
+    final empty = _clusterMultiSel.isEmpty;
+    return NasSelectionBar(
+      title: tr('photo.face.clusterSelected', {
+        'count': '${_clusterMultiSel.length}',
+      }),
+      allSelected: ids.isNotEmpty && _clusterMultiSel.length >= ids.length,
+      onToggleAll: () {
+        setState(() {
+          if (_clusterMultiSel.length >= ids.length) {
+            _clusterMultiSel.clear();
+          } else {
+            _clusterMultiSel
+              ..clear()
+              ..addAll(ids);
+          }
+        });
+      },
+      onClose: () {
+        setState(() {
+          _clusterMulti = false;
+          _clusterMultiSel.clear();
+        });
+      },
+      actions: [
+        NasSelectionAction(
+          label: tr('photo.face.hideSelected'),
+          icon: Icons.visibility_off_outlined,
+          enabled: !empty,
+          onPressed: () => _setClustersHidden(_clusterMultiSel.toList(), true),
+        ),
+        // 只有把「已隐藏」翻出来时才需要反操作
+        if (_includeHidden)
+          NasSelectionAction(
+            label: tr('photo.face.unhideSelected'),
+            icon: Icons.visibility_outlined,
+            enabled: !empty,
+            onPressed: () => _setClustersHidden(_clusterMultiSel.toList(), false),
+          ),
+        NasSelectionAction(
+          label: tr('photo.face.dissolveSelected'),
+          icon: Icons.link_off,
+          danger: true,
+          enabled: !empty,
+          onPressed: _dissolveSelectedClusters,
+        ),
+      ],
+    );
+  }
+
+  void _toggleClusterSel(String id) {
+    setState(() {
+      if (!_clusterMultiSel.remove(id)) _clusterMultiSel.add(id);
+    });
+  }
+
+  /// 批量隐藏 / 取消隐藏。隐藏只改可见性，不动人脸数据、不解散簇。
+  Future<void> _setClustersHidden(List<String> ids, bool hidden) async {
+    if (ids.isEmpty) return;
+    try {
+      final res = await ApiSession.instance.client.photoFaceHide(
+        body: PhotoFaceHideBody(ids: ids, hidden: hidden),
+      );
+      if (!mounted) return;
+      setState(() {
+        _clusterMulti = false;
+        _clusterMultiSel.clear();
+      });
+      _toast(tr(
+        hidden ? 'photo.face.hiddenDone' : 'photo.face.unhiddenDone',
+        {'count': '${res.affected}'},
+      ));
+      await _load();
+    } catch (e) {
+      if (!mounted) return;
+      _toast('$e');
+    }
+  }
+
+  /// 批量解散：逐个调单簇接口（服务端按簇做事务，一次一个更稳）
+  Future<void> _dissolveSelectedClusters() async {
+    final ids = _clusterMultiSel.toList();
+    if (ids.isEmpty) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(tr('photo.face.dissolveSelected')),
+        content: Text(
+          tr('photo.face.dissolveSelectedBody', {'count': '${ids.length}'}),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(tr('common.cancel')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(tr('common.ok')),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    var done = 0;
+    try {
+      for (final id in ids) {
+        await ApiSession.instance.client.photoFaceDissolve(
+          body: PhotoFaceDissolveBody(clusterId: id),
+        );
+        done += 1;
+      }
+    } catch (e) {
+      if (mounted) _toast('$e');
+    }
+    if (!mounted) return;
+    setState(() {
+      _clusterMulti = false;
+      _clusterMultiSel.clear();
+    });
+    if (done > 0) {
+      _toast(tr('photo.face.dissolvedMany', {'count': '$done'}));
+    }
+    await _load();
   }
 
   /// 解散簇：脸放回未分组（不删人脸数据，可再被归属投票重新聚起来）
@@ -1853,6 +2050,19 @@ class _PhotoSmartPageState extends State<PhotoSmartPage> {
     final selectable = [for (final p in visible) if (p.faceId != null) p.faceId!];
     return Column(
       children: [
+        // 右上角「多选照片」：长按 / 右键也能进，但手机上没人会去试长按
+        if (_activeCluster != null && !_clusterSelecting)
+          Align(
+            alignment: Alignment.centerRight,
+            child: Padding(
+              padding: const EdgeInsets.only(right: NasTokens.spaceSm, top: 2),
+              child: TextButton.icon(
+                onPressed: () => setState(() => _clusterSelecting = true),
+                icon: const Icon(Icons.checklist, size: 18),
+                label: Text(tr('photo.face.selectPhotos')),
+              ),
+            ),
+          ),
         // 簇详情多选条：右键 / 长按菜单里的「多选」进入
         if (_clusterSelecting && _activeCluster != null)
           NasSelectionBar(

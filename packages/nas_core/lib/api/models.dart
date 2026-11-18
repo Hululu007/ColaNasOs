@@ -7014,23 +7014,27 @@ class PhotoFaceClusterFilter {
   final int? minCount;
   final int? limit;
   final int? cursor;
+  final bool? includeHidden;
 
   const PhotoFaceClusterFilter({
     this.minCount,
     this.limit,
     this.cursor,
+    this.includeHidden,
   });
 
   factory PhotoFaceClusterFilter.fromJson(Map<String, dynamic> json) => PhotoFaceClusterFilter(
         minCount: json['minCount'] == null ? null : json['minCount'] as int,
         limit: json['limit'] == null ? null : json['limit'] as int,
         cursor: json['cursor'] == null ? null : json['cursor'] as int,
+        includeHidden: json['includeHidden'] == null ? null : json['includeHidden'] as bool,
       );
 
   Map<String, dynamic> toJson() => <String, dynamic>{
         if (minCount != null) 'minCount': minCount!,
         if (limit != null) 'limit': limit!,
         if (cursor != null) 'cursor': cursor!,
+        if (includeHidden != null) 'includeHidden': includeHidden!,
       };
 }
 
@@ -7067,6 +7071,46 @@ class PhotoFaceDissolveBody {
 
   Map<String, dynamic> toJson() => <String, dynamic>{
         'clusterId': clusterId,
+      };
+}
+
+class PhotoFaceHideBody {
+  final List<String> ids;
+  final bool? hidden;
+
+  const PhotoFaceHideBody({
+    required this.ids,
+    this.hidden,
+  });
+
+  factory PhotoFaceHideBody.fromJson(Map<String, dynamic> json) => PhotoFaceHideBody(
+        ids: (json['ids'] as List<dynamic>).cast<String>(),
+        hidden: json['hidden'] == null ? null : json['hidden'] as bool,
+      );
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+        'ids': ids,
+        if (hidden != null) 'hidden': hidden!,
+      };
+}
+
+class PhotoFaceHideResult {
+  final bool ok;
+  final int affected;
+
+  const PhotoFaceHideResult({
+    required this.ok,
+    required this.affected,
+  });
+
+  factory PhotoFaceHideResult.fromJson(Map<String, dynamic> json) => PhotoFaceHideResult(
+        ok: json['ok'] as bool,
+        affected: json['affected'] as int,
+      );
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+        'ok': ok,
+        'affected': affected,
       };
 }
 

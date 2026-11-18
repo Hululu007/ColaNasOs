@@ -2098,6 +2098,7 @@ export type PhotoFaceClusterFilter = {
   "minCount"?: number;
   "limit"?: number;
   "cursor"?: number;
+  "includeHidden"?: boolean;
 };
 
 export type PhotoFaceNameBody = {
@@ -2107,6 +2108,16 @@ export type PhotoFaceNameBody = {
 
 export type PhotoFaceDissolveBody = {
   "clusterId": string;
+};
+
+export type PhotoFaceHideBody = {
+  "ids": string[];
+  "hidden"?: boolean;
+};
+
+export type PhotoFaceHideResult = {
+  "ok": boolean;
+  "affected": number;
 };
 
 export type PhotoFaceSweepBody = {

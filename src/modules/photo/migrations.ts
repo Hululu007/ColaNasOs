@@ -1093,4 +1093,17 @@ export const PHOTO_MIGRATIONS: Migration[] = [
         `.execute(db);
       },
     },
+    {
+      // 人物的「隐藏」：只影响列表可见性，不动人脸数据。
+      //
+      // 用户会把「不是一个人」「误聚的杂物」「不想在列表里看到的人」藏起来 ——
+      // 「移除人脸」是硬删（下次重扫又会认回来），「解散」会连已起的名字一起丢，
+      // 两个都不是隐藏该有的语义。
+      id: '185_photo_face_cluster_hidden',
+      async up(db) {
+        await sql`
+          alter table photo_face_clusters add column hidden integer not null default 0
+        `.execute(db);
+      },
+    },
 ];

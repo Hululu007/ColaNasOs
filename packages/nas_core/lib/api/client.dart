@@ -1178,11 +1178,12 @@ class ApiClient {
   }
 
   /// 人脸聚类列表（按人数倒序，分页；少于 minCount 的碎片组不显示，具名组豁免）
-  Future<PhotoFaceClusterList> photoFaceClusters({int? minCount, int? limit, int? cursor}) async {
+  Future<PhotoFaceClusterList> photoFaceClusters({int? minCount, int? limit, int? cursor, bool? includeHidden}) async {
     final query = <String, String>{
       if (minCount != null) 'minCount': '$minCount',
       if (limit != null) 'limit': '$limit',
       if (cursor != null) 'cursor': '$cursor',
+      if (includeHidden != null) 'includeHidden': includeHidden.toString(),
     };
     final res = await transport.send('GET', _uri('/api/v1/photo/faces/clusters', query), headers: await _headers());
     return PhotoFaceClusterList.fromJson(_asMap(_decode(res)));
@@ -1219,6 +1220,12 @@ class ApiClient {
   Future<PhotoFaceOk> photoFaceDissolve({required PhotoFaceDissolveBody body}) async {
     final res = await transport.send('POST', _uri('/api/v1/photo/faces/dissolve'), headers: await _headers(jsonBody: true), body: utf8.encode(jsonEncode(body.toJson())));
     return PhotoFaceOk.fromJson(_asMap(_decode(res)));
+  }
+
+  /// 隐藏 / 取消隐藏人物（批量，只影响列表可见性）
+  Future<PhotoFaceHideResult> photoFaceHide({required PhotoFaceHideBody body}) async {
+    final res = await transport.send('POST', _uri('/api/v1/photo/faces/hide'), headers: await _headers(jsonBody: true), body: utf8.encode(jsonEncode(body.toJson())));
+    return PhotoFaceHideResult.fromJson(_asMap(_decode(res)));
   }
 
   /// 二轮收割：把挂起脸与历史碎片簇按成员级相似度重新归位

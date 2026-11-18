@@ -1153,6 +1153,17 @@ class I18nKeys {
   static const photoFaceBatchNone = 'photo.face.batchNone';
   static const photoFaceBatchNoneSelected = 'photo.face.batchNoneSelected';
   static const photoFaceBatchSelect = 'photo.face.batchSelect';
+  static const photoFaceClusterSelected = 'photo.face.clusterSelected';
+  static const photoFaceHideSelected = 'photo.face.hideSelected';
+  static const photoFaceUnhideSelected = 'photo.face.unhideSelected';
+  static const photoFaceHiddenDone = 'photo.face.hiddenDone';
+  static const photoFaceUnhiddenDone = 'photo.face.unhiddenDone';
+  static const photoFaceShowHidden = 'photo.face.showHidden';
+  static const photoFaceHideHidden = 'photo.face.hideHidden';
+  static const photoFaceDissolveSelected = 'photo.face.dissolveSelected';
+  static const photoFaceDissolveSelectedBody = 'photo.face.dissolveSelectedBody';
+  static const photoFaceDissolvedMany = 'photo.face.dissolvedMany';
+  static const photoFaceSelectPhotos = 'photo.face.selectPhotos';
   static const photoFaceBatchSelected = 'photo.face.batchSelected';
   static const photoFaceCandidates = 'photo.face.candidates';
   static const photoFaceCandidatesTitle = 'photo.face.candidatesTitle';
@@ -2843,6 +2854,9 @@ class I18nKeys {
   static const videoOfflineSpeedHint = 'video.offline.speedHint';
   static const videoOfflineSpeedLimit = 'video.offline.speedLimit';
   static const videoOfflineSpeedUnlimited = 'video.offline.speedUnlimited';
+  static const videoOfflineDownloadSettings = 'video.offline.downloadSettings';
+  static const videoOfflineMultiConn = 'video.offline.multiConn';
+  static const videoOfflineMultiConnHint = 'video.offline.multiConnHint';
   static const videoOfflineSubtitle = 'video.offline.subtitle';
   static const videoOfflineSubtitleEmbed = 'video.offline.subtitleEmbed';
   static const videoOfflineSubtitleExternal = 'video.offline.subtitleExternal';
@@ -3082,4 +3096,4 @@ class I18nKeys {
 }
 
 /// 契约键总数（生成时确定），供完整性自检使用。
-const int i18nKeyCount = 3031;
+const int i18nKeyCount = 3045;

@@ -1036,6 +1036,96 @@ function buildJpegWithExif(dateStr) {
   });
   check('face_dissolve_400', r.statusCode === 400, 'status=' + r.statusCode);
 
+  // ---- 人物「隐藏」：只影响列表可见性（185 迁移加的 hidden 列）----
+  const livePhoto = (
+    await app.inject({ method: 'GET', url: '/api/v1/photo/timeline?limit=1', headers: bearer })
+  ).json().items?.[0];
+  if (livePhoto) {
+    const nowTs = Math.floor(Date.now() / 1000);
+    await k.db
+      .insertInto('photo_face_clusters')
+      .values({
+        id: 'c-hide',
+        name: '冒烟人物',
+        size: 1,
+        cover_photo_id: livePhoto.id,
+        centroid: Buffer.from([0, 0, 0, 0]),
+        created_at: nowTs,
+      })
+      .execute();
+    await k.db
+      .insertInto('photo_faces')
+      .values({
+        id: 'f-hide',
+        photo_id: livePhoto.id,
+        emb: Buffer.from([1, 2, 3]),
+        cluster_id: 'c-hide',
+        score: 1,
+        created_at: nowTs,
+      })
+      .execute();
+
+    const listHasHidden = async (extra) => {
+      const body = (
+        await app.inject({
+          method: 'GET',
+          url: '/api/v1/photo/faces/clusters?minCount=1' + extra,
+          headers: bearer,
+        })
+      ).json();
+      return (body.items || []).some((c) => c.id === 'c-hide');
+    };
+
+    r = await app.inject({
+      method: 'POST',
+      url: '/api/v1/photo/faces/hide',
+      headers: bearer,
+      payload: { ids: ['c-hide'] },
+    });
+    check(
+      'face_hide_ok',
+      r.statusCode === 200 && r.json().affected === 1,
+      'status=' + r.statusCode + ' ' + r.body.slice(0, 80),
+    );
+    check('face_hide_gone_from_list', (await listHasHidden('')) === false, '隐藏后不该出现在列表');
+    check(
+      'face_hide_include_hidden',
+      (await listHasHidden('&includeHidden=true')) === true,
+      'includeHidden=true 应该能翻出来',
+    );
+
+    r = await app.inject({
+      method: 'POST',
+      url: '/api/v1/photo/faces/hide',
+      headers: bearer,
+      payload: { ids: ['c-hide'], hidden: false },
+    });
+    check(
+      'face_unhide_ok',
+      r.statusCode === 200 && r.json().affected === 1,
+      'status=' + r.statusCode,
+    );
+    check('face_unhide_back', (await listHasHidden('')) === true, '取消隐藏后应回到列表');
+
+    // 空 ids 由 schema（minItems 1）挡住，不能静默成功
+    r = await app.inject({
+      method: 'POST',
+      url: '/api/v1/photo/faces/hide',
+      headers: bearer,
+      payload: { ids: [] },
+    });
+    check('face_hide_empty_400', r.statusCode === 400, 'status=' + r.statusCode);
+  } else {
+    for (const n of [
+      'face_hide_ok',
+      'face_hide_gone_from_list',
+      'face_hide_include_hidden',
+      'face_unhide_ok',
+      'face_unhide_back',
+      'face_hide_empty_400',
+    ]) check(n, true, 'skipped: 没有可用照片');
+  }
+
   // 19. P2：相册元数据 / 年视图 / 回收站批次 / 行程连线 / 人脸候选
   // 前面的用例会永久删除部分照片，这里重新取当前还在索引里的照片
   const fresh = (

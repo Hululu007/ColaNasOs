@@ -723,6 +723,10 @@ class ColanasClient:
         """解散人脸簇（脸放回未分组，不删数据）"""
         return self._request("POST", "/api/v1/photo/faces/dissolve", params, "body")
 
+    def photo_face_hide(self, **params):
+        """隐藏 / 取消隐藏人物（批量，只影响列表可见性）"""
+        return self._request("POST", "/api/v1/photo/faces/hide", params, "body")
+
     def photo_face_image(self, **params):
         """人脸裁剪图（JPEG；无 bbox 的老数据回退整图缩略图）"""
         return self._request("GET", "/api/v1/photo/face/image", params, "query")

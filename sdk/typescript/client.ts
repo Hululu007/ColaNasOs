@@ -892,6 +892,11 @@ export class ColanasClient {
     return this.request('POST', '/api/v1/photo/faces/dissolve', params, 'body');
   }
 
+  /** 隐藏 / 取消隐藏人物（批量，只影响列表可见性） */
+  async photoFaceHide(params: Record<string, any> = {}): Promise<any> {
+    return this.request('POST', '/api/v1/photo/faces/hide', params, 'body');
+  }
+
   /** 人脸裁剪图（JPEG；无 bbox 的老数据回退整图缩略图） */
   async photoFaceImage(params: Record<string, any> = {}): Promise<any> {
     return this.request('GET', '/api/v1/photo/face/image', params, 'query');

@@ -227,6 +227,8 @@ export const MIGRATION_ORDER: readonly string[] = Object.freeze([
   '183_video_search_pinyin_nfo',
   // 字幕链路修好后，把旧链路误判成「无字幕 / 失败」的条目清回待抓（一次性）
   '184_video_subtitle_reset_failed',
+  // 人物列表支持「隐藏」：只影响可见性，不动人脸数据
+  '185_photo_face_cluster_hidden',
 ]);
 
 export interface OrderCheck {
