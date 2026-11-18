@@ -1,6 +1,42 @@
 import 'package:nas_core/nas_core.dart';
 import 'package:nas_ui/nas_ui.dart';
 
+import '../../../core/session.dart';
+import '../../video/video_series_widgets.dart';
+
+/// 整部剧的封面地址：只认竖版海报，绝不用横版剧照 / 首帧充当封面。
+///
+/// - 服务端聚合的剧：优先 `posterId`（真有 `nfo_poster` 的那一集），再 `coverId`；
+/// - 文件夹聚合的剧（健身课等无刮削信息）：用条目 id 直接请求 `art?kind=poster`，
+///   服务端在 art 内部按 poster → thumb 兜底，并会现场按
+///   `-poster/-post/-cover/-folder` 命名找图；
+/// - 都拿不到就返回空，由 `TvMediaCover` 生成名称哈希渐变海报，
+///   而不是把 16:9 的 fanart 铺进 2:3 的封面位（那就是「封面像截图」的原因）。
+List<String?> seriesCoverUrls(TvSeriesCard card, {int size = 0}) {
+  final urls = <String?>[
+    if ((card.posterId ?? '').trim().isNotEmpty)
+      seriesArtUrl(card.posterId, size: size),
+    if ((card.coverId ?? '').trim().isNotEmpty)
+      seriesArtUrl(card.coverId, size: size),
+    if ((card.coverId ?? '').trim().isEmpty && card.firstItem != null)
+      _itemPosterUrl(card.firstItem!.id, size: size),
+  ];
+  final seen = <String>{};
+  return <String?>[
+    for (final url in urls)
+      if (url != null && url.trim().isNotEmpty && seen.add(url)) url,
+  ];
+}
+
+/// 直接走 `art?kind=poster`，绕开 `videoPosterUrl` 的「无图就回首帧」分支。
+String? _itemPosterUrl(String id, {int size = 0}) {
+  final value = id.trim();
+  if (value.isEmpty) return null;
+  final base = ApiSession.instance.baseUrl;
+  final sizeQ = size > 0 ? '&size=$size' : '';
+  return '$base/api/v1/video/art?id=${Uri.encodeComponent(value)}&kind=poster$sizeQ';
+}
+
 /// 一部剧在 TV 首页的聚合卡片。既可能来自服务端 `series` 聚合，
 /// 也可能是本地文件夹聚合（没有 TMDB / 文件名不带 SxxExx 的健身课等）。
 class TvSeriesCard {

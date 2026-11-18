@@ -10,8 +10,8 @@ import '../../core/settings_store.dart';
 import '../music/music_playback.dart';
 import '../video/series_display.dart';
 import '../video/video_card.dart';
-import '../video/video_series_widgets.dart' show seriesArtUrl;
 import 'tv_focus.dart';
+import 'tv_media_cover.dart';
 import 'tv_video_section.dart' show playTvVideo;
 import 'music/tv_music_detail.dart';
 import 'movie/tv_movie_detail.dart';
@@ -101,7 +101,18 @@ class _TvSearchSectionState extends State<TvSearchSection> {
   List<MusicArtist> _artists = const <MusicArtist>[];
 
   List<String> _history = const <String>[];
-  List<String> _hot = const <String>[];
+
+  /// 未输入时右侧展示的「最近添加」：电影单体 + 电视剧（整部剧一张卡）。
+  List<VideoItem> _recentMovies = const <VideoItem>[];
+  List<TvSeriesCard> _recentSeries = const <TvSeriesCard>[];
+
+  /// 库 id → 库类型。搜索结果必须按库类型分流，否则电视剧库里的散文件
+  /// （健身课、单集视频）会混进「电影」栏目。
+  Map<String, String> _libTypes = const <String, String>{};
+  List<VideoLibraryItem> _libs = const <VideoLibraryItem>[];
+
+  /// 电视剧库的来源根，给「按文件夹聚合成剧」用。
+  List<String> _libRoots = const <String>[];
 
   VideoItem? _videoDetail;
   TvSeriesCard? _seriesDetail;
@@ -142,14 +153,12 @@ class _TvSearchSectionState extends State<TvSearchSection> {
     widget.back.overlay = _hasOverlay;
     _query.addListener(_onQueryChanged);
     _loadHistory();
-    _loadHot();
+    _loadLibraries();
     // 中文剧名：服务端 `series` 列是英文发布名，展示要换成 TMDB / 路径里的中文名。
     unawaited(
       SeriesDisplayStore.ensure().then((_) {
         if (!_canSetState) return;
         setState(() {});
-        // 热门搜索用的是剧名，中文名到位后重算一次，避免热词还是英文。
-        _loadHot();
       }),
     );
   }
@@ -271,37 +280,166 @@ class _TvSearchSectionState extends State<TvSearchSection> {
     await SettingsStore.instance.setString(_historyKey, next.join('\u0000'));
   }
 
-  /// 热门搜索：库里的影视标题 + 最近听过的艺人。
-  /// 真「全站热度」要额外的统计接口，为搜索页加一个不值当。
-  Future<void> _loadHot() async {
-    final client = ApiSession.instance.client;
-    final out = <String>[];
+  /// 先拿库列表：搜索与「最近添加」都要按库类型把电影 / 电视剧分开。
+  Future<void> _loadLibraries() async {
     try {
-      final res = await client.videoList(limit: 16);
-      for (final item in res.items) {
-        final series = (item.series ?? '').trim();
-        final name = series.isNotEmpty
-            ? (SeriesDisplayStore.nameOf(series) ?? series)
-            : item.title.trim();
-        if (name.isNotEmpty && !out.contains(name)) out.add(name);
-        if (out.length >= 8) break;
-      }
-    } catch (_) {
-      // 影视取不到就只显示音乐侧
-    }
-    if (out.length < 10) {
-      try {
-        final hist = await client.musicHistory(limit: 20);
-        for (final track in hist.items) {
-          final name = (track.artist ?? '').trim();
-          if (name.isNotEmpty && !out.contains(name)) out.add(name);
-          if (out.length >= 10) break;
+      final res = await ApiSession.instance.client.videoLibraryList();
+      final types = <String, String>{};
+      final roots = <String>[];
+      for (final lib in res.items) {
+        types[lib.id] = lib.libType;
+        final isTv = lib.libType == 'tv' || lib.libType == 'short_tv';
+        if (!isTv) continue;
+        final sources = lib.sources ?? const <VideoSourceItem>[];
+        for (final source in sources) {
+          final path = source.path.trim();
+          if (path.isNotEmpty) roots.add(path);
         }
-      } catch (_) {
-        // 忽略
+        if (sources.isEmpty && lib.path.trim().isNotEmpty) {
+          roots.add(lib.path.trim());
+        }
       }
+      if (!_canSetState) return;
+      _libTypes = types;
+      _libRoots = roots;
+      _libs = res.items;
+    } catch (_) {
+      // 库列表拉不到就按老逻辑（有 series / 集号的归剧，其余归电影）
     }
-    if (_canSetState) setState(() => _hot = out);
+    await _loadRecent();
+  }
+
+  bool _isTvLibrary(String id) {
+    final type = _libTypes[id];
+    return type == 'tv' || type == 'short_tv';
+  }
+
+  bool _isMovieLibrary(String id) {
+    final type = _libTypes[id];
+    return type == 'movie' || type == 'jp_movie';
+  }
+
+  /// 未输入时的右侧内容：最近添加的电影 + 最近添加的电视剧（整部剧一张卡）。
+  ///
+  /// 只取**电影库 / 电视剧库**：混合库（下载目录）里什么都有，按「整库最近
+  /// 200 条」拉会把搜索页占满，而且全是下载杂项。按库分别拉 12 条，
+  /// 保证每个库都有代表、又不会互相挤掉。
+  Future<void> _loadRecent() async {
+    final client = ApiSession.instance.client;
+    try {
+      final libs = _libs
+          .where((lib) => _isTvLibrary(lib.id) || _isMovieLibrary(lib.id))
+          .toList();
+      final movies = <VideoItem>[];
+      final tvItems = <VideoItem>[];
+      if (libs.isEmpty) {
+        // 库列表没拿到：退回整库最近 200 条，按剧集信息分流。
+        final res = await client.videoList(
+          sortBy: 'createTime',
+          sortOrder: 'desc',
+          limit: 200,
+        );
+        for (final item in res.items) {
+          if (item.mediaType == 'image') continue;
+          if ((item.series ?? '').trim().isNotEmpty ||
+              item.season != null ||
+              item.episode != null) {
+            tvItems.add(item);
+          } else {
+            movies.add(item);
+          }
+        }
+      } else {
+        final responses = await Future.wait(
+          libs.map(
+            (lib) => _safe(
+              client.videoList(
+                libraryId: lib.id,
+                sortBy: 'createTime',
+                sortOrder: 'desc',
+                limit: 12,
+              ),
+            ),
+          ),
+        );
+        for (var i = 0; i < libs.length; i += 1) {
+          final items = responses[i]?.items ?? const <VideoItem>[];
+          if (_isTvLibrary(libs[i].id)) {
+            tvItems.addAll(items);
+          } else {
+            movies.addAll(items.where((item) => item.mediaType != 'image'));
+          }
+        }
+      }
+      if (!_canSetState) return;
+      final series = _orderRecentSeries(_groupSeriesCards(tvItems), tvItems);
+      setState(() {
+        _recentMovies = movies.take(10).toList();
+        _recentSeries = series.take(10).toList();
+      });
+      _rebuildCards();
+    } catch (_) {
+      // 最近添加拉不到就只显示历史记录
+    }
+  }
+
+  /// 剧卡按「这部剧最新一集在时间倒序列表里的位置」排。
+  List<TvSeriesCard> _orderRecentSeries(
+    List<TvSeriesCard> cards,
+    List<VideoItem> items,
+  ) {
+    final itemIndex = <String, int>{
+      for (var i = 0; i < items.length; i += 1) items[i].id: i,
+    };
+    final seriesIndex = <String, int>{};
+    for (var i = 0; i < items.length; i += 1) {
+      final name = (items[i].series ?? '').trim();
+      if (name.isEmpty) continue;
+      seriesIndex.putIfAbsent(name, () => i);
+    }
+    final order = <TvSeriesCard, int>{};
+    for (final card in cards) {
+      if (!card.isFolder) {
+        order[card] = seriesIndex[card.name] ?? 1 << 30;
+        continue;
+      }
+      var best = 1 << 30;
+      for (final item in card.preloadedItems) {
+        final index = itemIndex[item.id];
+        if (index != null && index < best) best = index;
+      }
+      order[card] = best;
+    }
+    return [...cards]..sort((a, b) {
+      final byOrder = (order[a] ?? 1 << 30).compareTo(order[b] ?? 1 << 30);
+      if (byOrder != 0) return byOrder;
+      return a.name.compareTo(b.name);
+    });
+  }
+
+  /// 电视剧库条目 → 剧卡：有 `series` 的按剧名聚，没有的按文件夹聚
+  /// （与服务端聚合口径一致，整部剧只出一张卡）。
+  List<TvSeriesCard> _groupSeriesCards(List<VideoItem> items) {
+    if (items.isEmpty) return const <TvSeriesCard>[];
+    final bySeries = <String, List<VideoItem>>{};
+    final loose = <VideoItem>[];
+    for (final item in items) {
+      final name = (item.series ?? '').trim();
+      if (name.isEmpty) {
+        loose.add(item);
+        continue;
+      }
+      bySeries.putIfAbsent(name, () => <VideoItem>[]).add(item);
+    }
+    return <TvSeriesCard>[
+      for (final entry in bySeries.entries)
+        _seriesCardFrom(name: entry.key, items: entry.value),
+      ...buildFolderSeries(
+        items: loose,
+        roots: _libRoots,
+        progressById: const <String, VideoProgressItem>{},
+      ),
+    ];
   }
 
   // ---------------------------------------------------------------- 搜索
@@ -356,8 +494,16 @@ class _TvSearchSectionState extends State<TvSearchSection> {
     final artistRes = results.length > 4 ? results[4] as MusicArtistListResponse? : null;
 
     final videos = <VideoItem>[];
+    final tvItems = <VideoItem>[];
     final bySeries = <String, List<VideoItem>>{};
     for (final item in videoRes?.items ?? const <VideoItem>[]) {
+      if (item.mediaType == 'image') continue;
+      // 电视剧库的条目全部按「剧」聚合：里面的散文件（健身课、单集视频）
+      // 也属于电视剧库，不能落到「电影」栏目里。
+      if (_isTvLibrary(item.libraryId)) {
+        tvItems.add(item);
+        continue;
+      }
       final name = (item.series ?? '').trim();
       // 带集号的条目一定是剧的某一集：不管有没有 series 字段，都归到剧名下，
       // 不然搜索「XXX」会刷出一排「第 1 集 / 第 2 集」，用户要的是那部剧。
@@ -373,6 +519,10 @@ class _TvSearchSectionState extends State<TvSearchSection> {
       for (final entry in bySeries.entries)
         _seriesCardFrom(name: entry.key, items: entry.value),
     ];
+    for (final card in _groupSeriesCards(tvItems)) {
+      if (series.any((item) => item.name == card.name)) continue;
+      series.add(card);
+    }
     for (final item in seriesRes?.items ?? const <VideoSeriesItem>[]) {
       if (series.any((card) => card.name == item.name)) continue;
       series.add(
@@ -404,6 +554,12 @@ class _TvSearchSectionState extends State<TvSearchSection> {
     });
     _rebuildCards();
   }
+
+  /// 剧卡封面：本地 / 刮削海报（多级兜底）→ TMDB 剧海报（公网 CDN，不需要鉴权）。
+  List<String?> _seriesCoverList(TvSeriesCard card) => <String?>[
+    ...seriesCoverUrls(card, size: 360),
+    SeriesDisplayStore.posterOf(card.name),
+  ];
 
   /// 把同一部剧的条目聚成剧卡（首页卡片与详情页共用同一结构）。
   TvSeriesCard _seriesCardFrom({
@@ -441,13 +597,18 @@ class _TvSearchSectionState extends State<TvSearchSection> {
   // ---------------------------------------------------------------- 焦点
 
   /// 栏目的可见顺序（空栏目不渲染，也就不参与焦点）
-  List<String> get _visibleKeys => <String>[
-    if (_videos.isNotEmpty) 'movie',
-    if (_series.isNotEmpty) 'tv',
-    if (_tracks.isNotEmpty) 'track',
-    if (_albums.isNotEmpty) 'album',
-    if (_artists.isNotEmpty) 'artist',
-  ];
+  List<String> get _visibleKeys => _submitted.isEmpty
+      ? <String>[
+          if (_recentMovies.isNotEmpty) 'recentMovie',
+          if (_recentSeries.isNotEmpty) 'recentTv',
+        ]
+      : <String>[
+          if (_videos.isNotEmpty) 'movie',
+          if (_series.isNotEmpty) 'tv',
+          if (_tracks.isNotEmpty) 'track',
+          if (_albums.isNotEmpty) 'album',
+          if (_artists.isNotEmpty) 'artist',
+        ];
 
   bool get _resultsFocused =>
       _cards.values.any((list) => list.any((node) => node.hasFocus));
@@ -628,6 +789,8 @@ class _TvSearchSectionState extends State<TvSearchSection> {
       });
     }
 
+    build('recentMovie', _recentMovies.length);
+    build('recentTv', _recentSeries.length);
     build('movie', _videos.length);
     build('tv', _series.length);
     build('track', _tracks.length);
@@ -1039,9 +1202,14 @@ class _TvSearchSectionState extends State<TvSearchSection> {
     );
   }
 
-  /// 未输入时的默认栏目：热门搜索 + 历史记录
+  /// 未输入时的默认栏目：最近添加（电影 / 电视剧）+ 历史记录
   Widget _defaultSections(TvMetrics m) {
-    if (_hot.isEmpty && _history.isEmpty) {
+    final sections = <Widget>[
+      ..._recentSections(m),
+      if (_history.isNotEmpty)
+        _keywordSection(m, tr('tv.search.history'), _history),
+    ];
+    if (sections.isEmpty) {
       return Center(
         child: Text(
           tr('tv.search.empty'),
@@ -1051,11 +1219,46 @@ class _TvSearchSectionState extends State<TvSearchSection> {
     }
     return ListView(
       padding: EdgeInsets.only(bottom: m.px(24)),
-      children: [
-        if (_hot.isNotEmpty) _keywordSection(m, tr('tv.search.hot'), _hot),
-        if (_history.isNotEmpty) _keywordSection(m, tr('tv.search.history'), _history),
-      ],
+      children: sections,
     );
+  }
+
+  /// 「最近添加」两行：电影一行、电视剧一行（整部剧只出一张卡）。
+  List<Widget> _recentSections(TvMetrics m) {
+    final title = tr('video.home.recentAdd');
+    return <Widget>[
+      if (_recentMovies.isNotEmpty)
+        TvSearchRow(
+          title: '$title · ${tr('tv.search.group.movie')}',
+          count: _recentMovies.length,
+          itemBuilder: (i) {
+            final item = _recentMovies[i];
+            return TvSearchCard(
+              title: item.title,
+              subtitle: (item.year ?? 0) > 0 ? '${item.year}' : '',
+              coverUrl: videoPosterUrl(item, size: 360),
+              headers: videoArtHeaders,
+              focusNode: _cards['recentMovie']?[i],
+              onTap: () => _openVideo(item),
+            );
+          },
+        ),
+      if (_recentSeries.isNotEmpty)
+        TvSearchRow(
+          title: '$title · ${tr('tv.search.group.tv')}',
+          count: _recentSeries.length,
+          itemBuilder: (i) {
+            final card = _recentSeries[i];
+            return TvSearchCard(
+              title: SeriesDisplayStore.nameOf(card.name) ?? card.name,
+              subtitle: card.episodes > 0 ? '${card.episodes} 集' : '',
+              coverUrls: _seriesCoverList(card),
+              focusNode: _cards['recentTv']?[i],
+              onTap: () => _openSeries(card),
+            );
+          },
+        ),
+    ];
   }
 
   Widget _keywordSection(TvMetrics m, String title, List<String> keywords) {
@@ -1121,7 +1324,7 @@ class _TvSearchSectionState extends State<TvSearchSection> {
       return TvSearchCard(
         title: SeriesDisplayStore.nameOf(card.name) ?? card.name,
         subtitle: card.episodes > 0 ? '${card.episodes} 集' : '',
-        coverUrl: card.coverId == null ? null : seriesArtUrl(card.coverId!),
+        coverUrls: _seriesCoverList(card),
         focusNode: _cards['tv']?[i],
         onTap: () => _openSeries(card),
       );
@@ -1225,8 +1428,9 @@ class TvSearchCard extends StatelessWidget {
     super.key,
     required this.title,
     required this.subtitle,
-    required this.coverUrl,
     required this.onTap,
+    this.coverUrl,
+    this.coverUrls,
     this.headers = const <String, String>{},
     this.circular = false,
     this.focusNode,
@@ -1235,6 +1439,11 @@ class TvSearchCard extends StatelessWidget {
   final String title;
   final String subtitle;
   final String? coverUrl;
+
+  /// 多级兜底封面（影视剧用）：逐个尝试，最后落到名称渐变占位。
+  /// 单级 `coverUrl` 一张 404 就整块空白，剧卡的封面地址本来就有好几级。
+  final List<String?>? coverUrls;
+
   final VoidCallback onTap;
   final Map<String, String> headers;
   final bool circular;
@@ -1263,7 +1472,13 @@ class TvSearchCard extends StatelessWidget {
               height: height,
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(circular ? width : m.px(14)),
-                child: coverUrl == null
+                child: coverUrls != null && coverUrls!.isNotEmpty
+                    ? TvMediaCover(
+                        urls: coverUrls!,
+                        fallbackText: title,
+                        cacheWidth: (width * 2).round(),
+                      )
+                    : coverUrl == null || coverUrl!.isEmpty
                     ? Container(
                         color: Theme.of(context).colorScheme.surfaceContainerHighest,
                         child: Icon(
