@@ -859,6 +859,8 @@ export async function fetchSubtitlesForLibrary(
   /** 用户主动点「立即下载」/ 打开自动开关：无视 7 天失败冷却，失败态也重抓。
    *  启动 / 每日定时保持 false，避免每次启动都把失败项全扫一遍。 */
   force = false,
+  /** 任务被取消时返回 true，用于长跑循环及时退出 */
+  isCanceled?: () => Promise<boolean>,
 ): Promise<number> {
   const lib = (
     await sql<{ id: string; auto_subtitle: number; lib_type: string | null; jp_movie: number }>`
@@ -872,48 +874,8 @@ export async function fetchSubtitlesForLibrary(
   const rawRetry = Number(k.config.get('video.subtitleRetryDays'));
   const retryDays = Number.isFinite(rawRetry) ? Math.max(0, Math.min(rawRetry, 365)) : 7;
   const cutoff = retryDays > 0 ? now() - retryDays * 24 * 60 * 60 : 0;
-  // 普通影视一部要 2~4 次外网请求，一轮只处理 12 条，别把扫描收尾拖成十几分钟
-  const limit = isJp ? 30 : 12;
   // 离线来源上的文件连读都读不到，别去下字幕（会一路超时/失败）
   const offline = await offlineSmbPrefixes(k.db);
-
-  const items = (
-    await sql<{
-      id: string;
-      rel_path: string;
-      code: string | null;
-      nfo_name: string | null;
-      nfo_year: number | null;
-      nfo_imdb_id: string | null;
-    }>`
-      select id, rel_path, code, nfo_name, nfo_year, nfo_imdb_id
-        from video_items
-       where library_id = ${libraryId} and media_type = 'video'
-         ${offline.length > 0 ? sql`and ${offlineCond(offline, 'rel_path')}` : sql``}
-         and (
-           sub_fetch_state = ${SUB_STATE.PENDING}
-           ${
-             force
-               ? // 手动强制重抓：忽略 7 天冷却，所有「站点无 / 无中文 / 失败」都算候选。
-                 // NO_CODE(2) 仍不重试 —— 文件名提不出番号，重来一次还是提不出。
-                 sql`or sub_fetch_state in (${SUB_STATE.NOT_FOUND}, ${SUB_STATE.NO_CHINESE}, ${SUB_STATE.FAILED})`
-               : cutoff > 0
-                 ? sql`or (
-                     sub_fetch_state in (${SUB_STATE.NOT_FOUND}, ${SUB_STATE.NO_CHINESE}, ${SUB_STATE.FAILED})
-                     and coalesce(sub_fetch_at, 0) <= ${cutoff}
-                   )`
-                 : sql``
-           }
-         )
-       order by ${
-         force
-           ? // 强制模式下按「上次尝试时间」升序：本轮刚抓过（失败）的排到队尾，
-             // 反复点「立即下载」才能轮到下一批，而不是永远卡在最老那 30 条。
-             sql`coalesce(sub_fetch_at, 0) asc, created_at asc`
-           : sql`created_at asc`
-       } limit ${limit}
-    `.execute(k.db)
-  ).rows;
 
   // 字幕源凭据来自「影视设置 → 字幕」（k.config 的 video.subtitle 对象）；
   // 环境变量作为回退，方便容器部署时不进界面也能配。
@@ -939,59 +901,148 @@ export async function fetchSubtitlesForLibrary(
     }
   }
 
+  // 单轮批量上限：
+  //   未登录 —— 每条要 2~4 次外网请求 + 6 秒倒计时，一轮只处理 12~30 条，
+  //            免得把扫描收尾拖成十几分钟；
+  //   已登录 —— 每日上限已解除，没有再压着批量的理由，放大到 300 / 60 一次抓一大批。
+  const batchLimit = authCookie ? (isJp ? 300 : 60) : isJp ? 30 : 12;
+  // 登录后连着跑：候选没清空就一直续下一轮，直到跑完 / 撞站点每日上限 / 超时 / 被取消。
+  const continuous = Boolean(authCookie) && force;
+  const startedAt = Date.now();
+  // 安全阀：连续跑最多 2 小时，避免一条坏数据把任务队列占死。
+  const maxRunMs = 2 * 60 * 60 * 1000;
+
   let done = 0;
-  for (let i = 0; i < items.length; i += 1) {
-    // 条数一起报：一轮只处理 12~30 条，光看百分号会误以为没动
-    onProgress?.(Math.round((i / items.length) * 100), i, items.length);
-    const item = items[i];
-    // 已有同名字幕就跳过（不覆盖用户自己放的字幕）
-    let abs: string;
-    try {
-      // 影视库来源可以是任意本机盘 / UNC，必须走 resolveAnyPath；
-      // 只用 resolveInRoot(filesRoot) 会把绝对路径全部判成越界，任务秒退、一条都不处理
-      abs = resolveAnyPath(VIDEO_ROOT(), item.rel_path);
-    } catch {
-      continue;
-    }
-    if (findSubtitleBeside(abs)) {
-      await markSubState(k, item.id, SUB_STATE.OK);
-      continue;
+  let processed = 0;
+  let stopRound = false;
+  /**
+   * 本次任务已尝试过的条目 id。
+   * force 模式下失败条目会留在候选池里，所以「候选非空」不等于「还有新活」——
+   * 只有当下一轮取到的候选**全是**已试过的，才说明真的穷尽了，可以收工。
+   */
+  const attempted = new Set<string>();
+
+  while (true) {
+    const items = (
+      await sql<{
+        id: string;
+        rel_path: string;
+        code: string | null;
+        nfo_name: string | null;
+        nfo_year: number | null;
+        nfo_imdb_id: string | null;
+      }>`
+        select id, rel_path, code, nfo_name, nfo_year, nfo_imdb_id
+          from video_items
+         where library_id = ${libraryId} and media_type = 'video'
+           ${offline.length > 0 ? sql`and ${offlineCond(offline, 'rel_path')}` : sql``}
+           and (
+             sub_fetch_state = ${SUB_STATE.PENDING}
+             ${
+               force
+                 ? // 手动强制重抓：忽略 7 天冷却，所有「站点无 / 无中文 / 失败」都算候选。
+                   // NO_CODE(2) 仍不重试 —— 文件名提不出番号，重来一次还是提不出。
+                   sql`or sub_fetch_state in (${SUB_STATE.NOT_FOUND}, ${SUB_STATE.NO_CHINESE}, ${SUB_STATE.FAILED})`
+                 : cutoff > 0
+                   ? sql`or (
+                       sub_fetch_state in (${SUB_STATE.NOT_FOUND}, ${SUB_STATE.NO_CHINESE}, ${SUB_STATE.FAILED})
+                       and coalesce(sub_fetch_at, 0) <= ${cutoff}
+                     )`
+                   : sql``
+             }
+           )
+         order by ${
+           force
+             ? // 强制模式下按「上次尝试时间」升序：本轮刚抓过（失败）的排到队尾，
+               // 反复点「立即下载」才能轮到下一批，而不是永远卡在最老那 30 条。
+               sql`coalesce(sub_fetch_at, 0) asc, created_at asc`
+             : sql`created_at asc`
+         } limit ${batchLimit}
+      `.execute(k.db)
+    ).rows;
+
+    // 候选清空 = 这一轮跑完了
+    if (items.length === 0) break;
+
+    // 全是已试过的 = 候选穷尽（force 模式下失败条目会留在池子里，不能只看非空）
+    if (continuous && items.every((it) => attempted.has(it.id))) {
+      k.log.info({ processed, done }, 'avsubtitles 候选已全部尝试过，收工');
+      break;
     }
 
-    // ① 日本片：先按番号找中文站字幕
-    if (isJp) {
-      const code = item.code || jpMetaOf(item.rel_path).code;
-      if (code) {
-        // ⛔ 不能传 `waitMs: 0`：站点下载页有 6 秒倒计时，没等过就请求
-      // `download_sub.php` 会拿到 302 → error_403，表现为 download_failed。
-        const result = await fetchSubtitle(code, authCookie ? { authCookie } : {});
-        if (result.limitReached) {
-          k.log.warn('avsubtitles daily limit reached, stop this round');
-          break;
-        }
-        if (result.state === SUB_STATE.OK && result.text) {
-          writeSubtitleBeside(abs, result.text, '.srt');
-          await markSubState(k, item.id, SUB_STATE.OK);
-          done += 1;
-          continue;
-        }
-        // 提不出番号 / 站点没有中字：继续走普通多源兜底
+    for (let i = 0; i < items.length; i += 1) {
+      // 条数一起报：光看百分号会误以为没动
+      onProgress?.(Math.round((processed / Math.max(1, processed + items.length - i)) * 100), processed, processed + items.length - i);
+      processed += 1;
+      const item = items[i];
+      attempted.add(item.id);
+      // 已有同名字幕就跳过（不覆盖用户自己放的字幕）
+      let abs: string;
+      try {
+        // 影视库来源可以是任意本机盘 / UNC，必须走 resolveAnyPath；
+        // 只用 resolveInRoot(filesRoot) 会把绝对路径全部判成越界，任务秒退、一条都不处理
+        abs = resolveAnyPath(VIDEO_ROOT(), item.rel_path);
+      } catch {
+        continue;
       }
+      if (findSubtitleBeside(abs)) {
+        await markSubState(k, item.id, SUB_STATE.OK);
+        continue;
+      }
+
+      // ① 日本片：先按番号找中文站字幕
+      if (isJp) {
+        const code = item.code || jpMetaOf(item.rel_path).code;
+        if (code) {
+          // ⛔ 不能传 `waitMs: 0`：站点下载页有 6 秒倒计时，没等过就请求
+          // `download_sub.php` 会拿到 302 → error_403，表现为 download_failed。
+          const result = await fetchSubtitle(code, authCookie ? { authCookie } : {});
+          if (result.limitReached) {
+            k.log.warn('avsubtitles daily limit reached, stop this round');
+            stopRound = true;
+            break;
+          }
+          if (result.state === SUB_STATE.OK && result.text) {
+            writeSubtitleBeside(abs, result.text, '.srt');
+            await markSubState(k, item.id, SUB_STATE.OK);
+            done += 1;
+            continue;
+          }
+          // 提不出番号 / 站点没有中字：继续走普通多源兜底
+        }
+      }
+
+      // ② 普通多源（迅雷免配置；Assrt / OpenSubtitles 配了才用）
+      const normal = await fetchNormalSubtitle(
+        abs,
+        {
+          filename: path.basename(abs),
+          nfoName: item.nfo_name,
+          year: item.nfo_year,
+          imdbId: item.nfo_imdb_id,
+        },
+        normalOpts,
+      );
+      await markSubState(k, item.id, normal.state);
+      if (normal.state === SUB_STATE.OK) done += 1;
     }
 
-    // ② 普通多源（迅雷免配置；Assrt / OpenSubtitles 配了才用）
-    const normal = await fetchNormalSubtitle(
-      abs,
-      {
-        filename: path.basename(abs),
-        nfoName: item.nfo_name,
-        year: item.nfo_year,
-        imdbId: item.nfo_imdb_id,
-      },
-      normalOpts,
-    );
-    await markSubState(k, item.id, normal.state);
-    if (normal.state === SUB_STATE.OK) done += 1;
+    // 撞到站点每日上限：不管连不连续跑都停（再跑也是白跑）
+    if (stopRound) break;
+
+    // 非连续模式（未登录 / 自动定时）：一轮跑完就收
+    if (!continuous) break;
+
+    // 连续模式：本轮候选可能没清空（比如这批全失败但还在 force 候选里），
+    // 没到上限就接着跑下一轮，把剩下的候选也过一遍。
+    if (Date.now() - startedAt > maxRunMs) {
+      k.log.warn({ processed, done }, 'avsubtitles 连续抓取达到 2 小时安全阀，停止');
+      break;
+    }
+    if (isCanceled && (await isCanceled())) {
+      k.log.info({ processed, done }, 'avsubtitles 连续抓取被取消');
+      break;
+    }
   }
   return done;
 }

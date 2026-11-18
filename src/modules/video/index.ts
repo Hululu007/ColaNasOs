@@ -406,6 +406,8 @@ export const video: ServerModule = {
         libraryId,
         (pct, done, total) => void ctx.progress(pct, done, total),
         p.force === true,
+        // 登录后是长跑（可能几小时），要能随时取消
+        () => ctx.isCanceled(),
       );
     });
     // 启动即补字幕：开了「自动补字幕」的库在内核重启后立刻排一轮，
