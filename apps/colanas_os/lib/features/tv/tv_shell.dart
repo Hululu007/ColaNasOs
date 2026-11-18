@@ -148,7 +148,7 @@ class _TvShellState extends State<TvShell> {
         libraries = const <VideoLibraryItem>[];
       }
       // 有合集才出现「我的合集」tab：位置在「电视剧」之后、「日本电影库」之前
-      // （合集本身是电影 / 剧集的集合，排在图片库后面没道理）。
+      // （合集本身是电影 / 剧集的集合，排在图片库后面没道理）。音乐紧跟其后。
       var hasCollections = false;
       try {
         final collections = await ApiSession.instance.client.videoCollectionList();
@@ -156,13 +156,17 @@ class _TvShellState extends State<TvShell> {
       } catch (_) {
         hasCollections = false;
       }
-      var collectionsAdded = false;
+      final musicApp = _appById(apps, 'music');
+      var inserted = false;
+      void addMidTabs() {
+        if (hasCollections) tabs.add(_collectionsTab());
+        if (musicApp != null) tabs.add(_musicTab(musicApp));
+      }
+
       for (final lib in libraries) {
-        if (hasCollections &&
-            !collectionsAdded &&
-            _libraryRank(lib.libType) >= 3) {
-          tabs.add(_collectionsTab());
-          collectionsAdded = true;
+        if (!inserted && _libraryRank(lib.libType) >= 3) {
+          addMidTabs();
+          inserted = true;
         }
         tabs.add(
           _TvTab(
@@ -174,7 +178,7 @@ class _TvShellState extends State<TvShell> {
           ),
         );
       }
-      if (hasCollections && !collectionsAdded) tabs.add(_collectionsTab());
+      if (!inserted) addMidTabs();
       if (libraries.isEmpty) {
         tabs.add(
           _TvTab(
@@ -188,7 +192,8 @@ class _TvShellState extends State<TvShell> {
     }
 
     for (final app in apps) {
-      if (app.id == 'video') continue;
+      // video 已经按库展开成多个 tab；music 已经提前到合集后面
+      if (app.id == 'video' || app.id == 'music') continue;
       tabs.add(
         _TvTab(
           id: app.id,
@@ -304,6 +309,14 @@ class _TvShellState extends State<TvShell> {
     label: tr('video.collection.title'),
     icon: Icons.collections_bookmark_outlined,
     kind: _TvTabKind.collections,
+  );
+
+  static _TvTab _musicTab(AppDescriptor app) => _TvTab(
+    id: app.id,
+    label: tr(app.nameKey),
+    icon: AppVisuals.iconFor(app.icon),
+    kind: _TvTabKind.music,
+    app: app,
   );
 
   FocusNode _tabNodeFor(String id) => _tabNodes.putIfAbsent(

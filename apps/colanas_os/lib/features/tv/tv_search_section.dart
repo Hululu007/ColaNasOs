@@ -482,10 +482,22 @@ class _TvSearchSectionState extends State<TvSearchSection> {
     // 一两个字（ad / 周）命中面太大，专辑 / 歌手的分组聚合又最慢 —— 先不给。
     // 等用户多打两个字（≥3）再补上这两个栏目。
     final rich = q.length >= 3;
-    // 影视只发一次 videoList：剧卡由条目聚合（series / 文件夹），
-    // 不再额外请求 `video/series` —— 少一次全库聚合，搜索快一截。
+    // 影视**按库**查，而不是全局查一遍再过滤：全局只取前 60 条，命中面大时
+    // 整屏都是混合库 / 日本库的杂项，电影库里的目标片根本进不了结果集
+    //（搜 `gf` 看不到「功夫女足」就是这个原因）。可搜库通常只有 1~2 个。
+    final searchableLibs = <String>[
+      for (final entry in _libTypes.entries)
+        if (_isSearchableLibrary(entry.key)) entry.key,
+    ];
+    final videoFutures = <Future<VideoListResponse?>>[
+      if (searchableLibs.isEmpty)
+        _safe(client.videoList(q: q, limit: 60))
+      else
+        for (final libId in searchableLibs)
+          _safe(client.videoList(libraryId: libId, q: q, limit: 40)),
+    ];
     final futures = <Future<Object?>>[
-      _safe(client.videoList(q: q, limit: 60)),
+      ...videoFutures,
       _safe(client.musicList(q: q, limit: 30)),
     ];
     if (rich) {
@@ -496,15 +508,23 @@ class _TvSearchSectionState extends State<TvSearchSection> {
     // 输入还在继续：这一批结果已经过期，直接丢掉（防抖后仍可能连发）
     if (!_canSetState || seq != _searchSeq) return;
 
-    final videoRes = results[0] as VideoListResponse?;
-    final trackRes = results[1] as MusicListResponse?;
-    final albumRes = results.length > 2 ? results[2] as MusicAlbumListResponse? : null;
-    final artistRes = results.length > 3 ? results[3] as MusicArtistListResponse? : null;
+    final videoCount = videoFutures.length;
+    final videoRes = <VideoItem>[
+      for (var i = 0; i < videoCount; i += 1)
+        ...(results[i] as VideoListResponse?)?.items ?? const <VideoItem>[],
+    ];
+    final trackRes = results[videoCount] as MusicListResponse?;
+    final albumRes = results.length > videoCount + 1
+        ? results[videoCount + 1] as MusicAlbumListResponse?
+        : null;
+    final artistRes = results.length > videoCount + 2
+        ? results[videoCount + 2] as MusicArtistListResponse?
+        : null;
 
     final videos = <VideoItem>[];
     final tvItems = <VideoItem>[];
     final bySeries = <String, List<VideoItem>>{};
-    for (final item in videoRes?.items ?? const <VideoItem>[]) {
+    for (final item in videoRes) {
       if (item.mediaType == 'image') continue;
       // TV 端只搜电影 / 电视剧类型的库：日本库、图片库、混合库都不参与
       // （它们的入口是演员 / 文件夹视图，搜索结果里混进来只会一堆无意义的单片）。
@@ -544,7 +564,7 @@ class _TvSearchSectionState extends State<TvSearchSection> {
       _albums = albumRes?.items ?? const <MusicAlbum>[];
       _artists = artistRes?.items ?? const <MusicArtist>[];
       _loading = false;
-      _error = (videoRes == null &&
+      _error = (videoRes.isEmpty &&
               trackRes == null &&
               albumRes == null &&
               artistRes == null)
