@@ -52,6 +52,17 @@ let quitting = false;
 let crashes = 0;
 /** 内核是否已经回传监听端口：没就绪时点「打开 Web 页面」只提示，不打开空白页 */
 let kernelReady = false;
+/**
+ * 「等内核就绪再打开网页」的请求标记。
+ *
+ * 开机自启、托盘单击、手动双击 exe（撞单实例锁后转发过来）都会在内核还没
+ * listen 时就要求打开页面；以前这里直接弹「服务正在启动」，用户每次开机都
+ * 得关一个弹窗。现在先记账，内核回传端口后自动打开。
+ */
+let pendingOpen = false;
+let pendingOpenTimer: NodeJS.Timeout | null = null;
+/** 内核启动的兜底观察窗口：起不来才提示，不然用户会以为点了没反应 */
+const OPEN_DEFER_MS = 20_000;
 
 /**
  * 版本号（`package.json#version`，由 `tool/version.js` 同步）。
@@ -163,6 +174,15 @@ function startKernel(): void {
       trace(`kernel listening port=${kernelPort}`);
       // 托盘提示里直接给地址：用户鼠标悬停就知道服务在哪
       tray?.setToolTip(trayTip(kernelUrl()));
+      // 启动期间攒下的「打开网页」请求：现在真的可以开了
+      if (pendingOpen) {
+        pendingOpen = false;
+        if (pendingOpenTimer) {
+          clearTimeout(pendingOpenTimer);
+          pendingOpenTimer = null;
+        }
+        openWeb();
+      }
       return;
     }
     if (payload && payload.type === 'heartbeat') {
@@ -237,14 +257,26 @@ async function shutdownKernelGracefully(timeoutMs = 4000): Promise<void> {
 /** 用系统默认浏览器打开服务端 Web 页面（服务端自己没有窗口） */
 function openWeb(): void {
   if (!kernelReady) {
-    // 内核还没回传端口：这时候打开浏览器只会看到连接被拒，先给个明确提示
-    void dialog.showMessageBox({
-      type: 'info',
-      title: 'ColaNasOs 服务端',
-      message: '服务正在启动，请稍候再试',
-      detail: `端口 ${kernelPort}，就绪后会自动更新托盘提示。`,
-      buttons: ['好'],
-    });
+    // 内核还没回传端口时不要弹窗：托盘单击、开机自启的第二实例都会走到这里，
+    // 而开机那一刻内核必然还没起好 —— 每次都弹「服务正在启动」只能手动点掉。
+    // 改成记下这次请求，等内核 listen 后自动打开。
+    if (pendingOpen) return;
+    pendingOpen = true;
+    trace('openWeb deferred: kernel not ready');
+    pendingOpenTimer = setTimeout(() => {
+      pendingOpenTimer = null;
+      if (!pendingOpen) return;
+      pendingOpen = false;
+      // 真的起不来（崩溃重启失败 / 端口被占）才提示，免得用户以为点了没反应
+      void dialog.showMessageBox({
+        type: 'info',
+        title: 'ColaNasOs 服务端',
+        message: '服务正在启动，请稍候再试',
+        detail: `端口 ${kernelPort}，就绪后会自动更新托盘提示。`,
+        buttons: ['好'],
+      });
+    }, OPEN_DEFER_MS);
+    pendingOpenTimer.unref();
     return;
   }
   void shell.openExternal(`${kernelUrl()}/`);

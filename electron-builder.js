@@ -149,6 +149,9 @@ module.exports = {
     shortcutName: 'ColaNasOs 服务端',
     uninstallDisplayName: 'ColaNasOs 服务端 ${version}',
     deleteAppDataOnUninstall: false,
+    // 升级前自动关掉正在运行的服务端（含 detached 的 transmission 守护进程），
+    // 见 resources/installer.nsh：不关的话文件占用会让安装卡在覆盖写上。
+    include: 'resources/installer.nsh',
   },
   mac: {
     icon: 'resources/icon.png',

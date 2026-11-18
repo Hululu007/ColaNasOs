@@ -116,6 +116,7 @@ function writeNsi(makensis) {
 
   const nsi = `Unicode true
 !include "MUI2.nsh"
+!include "LogicLib.nsh"
 
 !define APP_NAME "${escapeNsis(appName)}"
 !define APP_EXE "${exeName}"
@@ -149,8 +150,42 @@ VIAddVersionKey "FileVersion" "\${APP_VERSION}"
 VIAddVersionKey "ProductVersion" "\${APP_VERSION}"
 VIAddVersionKey "LegalCopyright" "Copyright © 2026 ColaNasOs"
 
+; 关掉正在运行的客户端，安装/卸载都不用用户先手动退出。
+;
+; 按「可执行文件路径在 $INSTDIR 下」精确匹配，而不是按进程名：开发态
+; （build/windows 下那份 release/debug 产物）用的是同一个 exe 名，
+; 按名字会把它一起杀掉。
+; PowerShell 不可用（极老系统 / 策略禁用）时才退化为按进程名强杀。
+!macro STOP_RUNNING_APP
+  nsExec::Exec \`"$SYSDIR\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -NonInteractive -Command "Get-CimInstance Win32_Process | Where-Object { $$_.ExecutablePath -and $$_.ExecutablePath.StartsWith('$INSTDIR', 'CurrentCultureIgnoreCase') } | ForEach-Object { Stop-Process -Id $$_.ProcessId -Force -ErrorAction SilentlyContinue }"\`
+  Pop $0
+  \${If} $0 != 0
+    nsExec::Exec 'taskkill /F /IM \${APP_EXE} /T'
+    Pop $0
+  \${EndIf}
+  ; 句柄释放有几毫秒延迟，紧接着就是覆盖写
+  Sleep 600
+!macroend
+
 Section "\${APP_NAME}" SecMain
   SetShellVarContext current
+  ; 先关掉正在运行的客户端：不关的话安装目录里的 exe/dll 被占用，覆盖写会失败，
+  ; 最后留下新旧混杂的一堆文件。
+  !insertmacro STOP_RUNNING_APP
+  ; 上一版的残留先清干净（只在目录里确实有我们的 exe 时才删，避免误删别的目录）。
+  ; 删不掉多半是句柄还没释放完，重试几次再往下走。
+  \${If} \${FileExists} "$INSTDIR\\\${APP_EXE}"
+    StrCpy $1 0
+    colanas_rm_retry:
+      IntOp $1 $1 + 1
+      RMDir /r "$INSTDIR"
+      \${If} \${FileExists} "$INSTDIR\\\${APP_EXE}"
+        \${If} $1 < 3
+          Sleep 700
+          Goto colanas_rm_retry
+        \${EndIf}
+      \${EndIf}
+  \${EndIf}
   SetOutPath "$INSTDIR"
   File /r "${escapeNsis(releaseDir)}\\*.*"
 
@@ -174,6 +209,8 @@ SectionEnd
 
 Section "Uninstall"
   SetShellVarContext current
+  ; 卸载同理：客户端还开着的话，安装目录里的文件删不掉，会留下半个残骸
+  !insertmacro STOP_RUNNING_APP
   Delete "$DESKTOP\\\${APP_NAME}.lnk"
   RMDir /r "$SMPROGRAMS\\\${APP_NAME}"
   RMDir /r "$INSTDIR"
