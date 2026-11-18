@@ -391,17 +391,40 @@ class _VideoImageLibraryPageState extends State<VideoImageLibraryPage> {
   String _nameOf(VideoItem item) =>
       item.fileTitle.isEmpty ? item.title : item.fileTitle;
 
-  /// 批量下载：桌面端只弹一次「选文件夹」，Web / 移动端退回到复制全部链接。
-  Future<void> _downloadSelected() async {
-    final items = _pickedItems;
+  /// 存到本机（图片 / 视频原文件）。
+  ///
+  /// 单张走「另存为」：手机上就是系统文件选择器，能直接落到「下载」目录 ——
+  /// 这也是长按菜单里那条「下载」的实现。多张才退到桌面端的「选一个文件夹」，
+  /// Web / 移动端没有选目录接口，最后兜底成复制下载链接。
+  Future<void> _saveItems(List<VideoItem> items) async {
     if (items.isEmpty) return;
+    final messenger = ScaffoldMessenger.of(context);
+
+    if (items.length == 1 && PhotoDownload.supported) {
+      final item = items.first;
+      try {
+        final path = await PhotoDownload.save(
+          url: _downloadUrlOf(item),
+          headers: videoArtHeaders,
+          suggestedName: _nameOf(item),
+        );
+        if (path == null || !mounted) return; // 用户取消
+        NasSnack.showOn(
+          messenger,
+          tr('video.media.downloadDone', {'count': '1'}),
+        );
+      } catch (e) {
+        if (mounted) NasSnack.showOn(messenger, '$e');
+      }
+      return;
+    }
+
     final urls = items.map(_downloadUrlOf).toList();
     if (!PhotoDownload.folderBatch) {
       await Clipboard.setData(ClipboardData(text: urls.join('\n')));
       if (mounted) NasSnack.show(context, tr('video.media.copyLink'));
       return;
     }
-    final messenger = ScaffoldMessenger.of(context);
     try {
       final res = await PhotoDownload.saveAll(
         files: [
@@ -424,6 +447,9 @@ class _VideoImageLibraryPageState extends State<VideoImageLibraryPage> {
       if (mounted) NasSnack.show(context, '$e');
     }
   }
+
+  /// 多选操作条上的「下载」：一批一起存
+  Future<void> _downloadSelected() => _saveItems(_pickedItems);
 
   Future<void> _copySelectedPaths() async {
     final paths = _pickedItems.map((e) => e.path).toList();
@@ -520,95 +546,158 @@ class _VideoImageLibraryPageState extends State<VideoImageLibraryPage> {
     );
   }
 
-  Future<void> _showItemMenu(VideoItem item, int index, Offset pos) async {
-    final v = await showMenu<String>(
-      context: context,
-      position: _relative(pos),
-      items: [
-        PopupMenuItem(value: 'open', child: Text(tr('video.media.open'))),
-        // 下载统一走「下载到本机」（离线下载弹窗：分辨率 / 编码 / 字幕可选），
-        // 不再保留「下载原文件」那条入口，避免同一个右键菜单里出现两个下载。
-        if (item.mediaType == 'video' && offlineSupported)
-          PopupMenuItem(
-            value: 'offline-download',
-            child: Text(tr('video.offline.dialogTitle')),
-          ),
-        // 图片没有 NFO / TMDB，刮削和已看只对影片开放
-        if (item.mediaType == 'video') ...[
-          PopupMenuItem(
-            value: VideoItemAction.watched,
-            child: Text(
-              tr(
-                item.watched
-                    ? 'video.action.markUnwatched'
-                    : 'video.action.markWatched',
+  /// 条目动作表：桌面右键、手机长按共用同一批动作，避免两处漂移。
+  List<NasMenuEntry> _itemEntries(VideoItem item, int index) => <NasMenuEntry>[
+        NasMenuEntry(
+          label: tr('video.media.open'),
+          icon: Icons.open_in_new,
+          onSelected: () => unawaited(_openItem(item, index)),
+        ),
+        // 下载：视频走离线转码弹窗（分辨率 / 编码 / 字幕可选）；
+        // 图片没有转码，直接存原文件 —— 手机上是系统文件选择器，能落到下载目录。
+        if (item.mediaType == 'image')
+          NasMenuEntry(
+            label: PhotoDownload.supported
+                ? tr('video.media.download')
+                : tr('video.media.copyLink'),
+            icon: PhotoDownload.supported
+                ? Icons.download_outlined
+                : Icons.link,
+            onSelected: () => unawaited(_saveItems([item])),
+          )
+        else if (offlineSupported)
+          NasMenuEntry(
+            label: tr('video.offline.dialogTitle'),
+            icon: Icons.download_for_offline_outlined,
+            onSelected: () => unawaited(
+              openOfflineDownloadDialog(
+                context,
+                item,
+                libraryName: widget.title,
               ),
             ),
           ),
-          PopupMenuItem(
-            value: VideoItemAction.scrape,
-            child: Text(tr('video.action.scrape')),
+        // 图片没有 NFO / TMDB，刮削和已看只对影片开放
+        if (item.mediaType != 'image') ...[
+          NasMenuEntry(
+            label: tr(
+              item.watched
+                  ? 'video.action.markUnwatched'
+                  : 'video.action.markWatched',
+            ),
+            icon: item.watched ? Icons.remove_done : Icons.done_all,
+            onSelected: () =>
+                unawaited(_applyItemAction(VideoItemAction.watched, item)),
+          ),
+          NasMenuEntry(
+            label: tr('video.action.scrape'),
+            icon: Icons.travel_explore,
+            onSelected: () =>
+                unawaited(_applyItemAction(VideoItemAction.scrape, item)),
           ),
         ],
         if (!_selectionMode)
-          PopupMenuItem(
-            value: 'select',
-            child: Text(tr('video.list.multiSelect')),
+          NasMenuEntry(
+            label: tr('video.list.multiSelect'),
+            icon: Icons.checklist,
+            // 长按 / 右键某一项直接进多选，并把这一项选上
+            onSelected: () => _selection.enter(initialId: item.id),
           ),
-        PopupMenuItem(
-          value: VideoItemAction.copyPath,
-          child: Text(tr('video.action.copyPath')),
+        NasMenuEntry(
+          label: tr('video.action.copyPath'),
+          icon: Icons.copy_all_outlined,
+          onSelected: () => unawaited(_copyPath(item)),
         ),
-        const PopupMenuDivider(),
-        PopupMenuItem(
-          value: VideoItemAction.delete,
-          child: Text(tr('common.delete')),
+        const NasMenuEntry.divider(),
+        NasMenuEntry(
+          label: tr('common.delete'),
+          icon: Icons.delete_outline,
+          danger: true,
+          onSelected: () =>
+              unawaited(_applyItemAction(VideoItemAction.delete, item)),
         ),
-      ],
-    );
-    if (!mounted || v == null) return;
-    if (v == 'open') {
-      await _openItem(item, index);
-      return;
-    }
-    if (v == 'offline-download') {
-      await openOfflineDownloadDialog(
-        context,
-        item,
-        libraryName: widget.title,
-      );
-      return;
-    }
-    if (v == 'select') {
-      // 长按 / 右键某一项直接进多选，并把这一项选上
-      _selection.enter(initialId: item.id);
-      return;
-    }
-    // 删除 / 刮削 / 已看 / 复制路径与其它列表共用同一套动作与确认框
-    final changed = await runVideoItemAction(context, v, item);
+      ];
+
+  /// 删除 / 刮削 / 已看与其它列表共用同一套动作与确认框
+  Future<void> _applyItemAction(String action, VideoItem item) async {
+    final changed = await runVideoItemAction(context, action, item);
     if (changed && mounted) await _load(reset: true);
   }
 
-  Future<void> _showFolderMenu(VideoImageFolderNode folder, Offset pos) async {
-    final v = await showMenu<String>(
-      context: context,
-      position: _relative(pos),
-      items: [
-        PopupMenuItem(value: 'open', child: Text(tr('video.media.open'))),
-        const PopupMenuDivider(),
-        PopupMenuItem(value: 'delete', child: Text(tr('video.media.delete'))),
-      ],
-    );
-    if (!mounted || v == null) return;
-    if (v == 'open') await _enterFolder(folder.path);
-    if (v == 'delete') await _deleteFolder(folder);
+  Future<void> _copyPath(VideoItem item) async {
+    await Clipboard.setData(ClipboardData(text: item.path));
+    if (mounted) NasSnack.show(context, tr('common.copied'));
   }
 
-  RelativeRect _relative(Offset pos) {
-    final overlay =
-        Overlay.of(context).context.findRenderObject() as RenderBox?;
-    final size = overlay?.size ?? MediaQuery.of(context).size;
-    return RelativeRect.fromRect(Rect.fromPoints(pos, pos), Offset.zero & size);
+  List<NasMenuEntry> _folderEntries(VideoImageFolderNode folder) =>
+      <NasMenuEntry>[
+        NasMenuEntry(
+          label: tr('video.media.open'),
+          icon: Icons.folder_open,
+          onSelected: () => unawaited(_enterFolder(folder.path)),
+        ),
+        const NasMenuEntry.divider(),
+        NasMenuEntry(
+          label: tr('video.media.delete'),
+          icon: Icons.delete_outline,
+          danger: true,
+          onSelected: () => unawaited(_deleteFolder(folder)),
+        ),
+      ];
+
+  /// 触屏端用底部操作表，鼠标端用指针位置的弹出菜单。
+  ///
+  /// 手机上的格子只有百来像素宽，在格子里弹一个 40px 行高的小菜单既难点、
+  /// 又容易顶到屏幕边缘 —— 相册页早就改成底部表了（`photo_page.dart#_longPressPhoto`），
+  /// 这里跟它保持一致。
+  bool get _touchUi {
+    // 用主题里的 platform（桌面端也可被强制成别的值），不引 foundation
+    final p = Theme.of(context).platform;
+    return p == TargetPlatform.android || p == TargetPlatform.iOS;
+  }
+
+  Future<void> _presentActions(
+    List<NasMenuEntry> entries, {
+    Offset? at,
+  }) async {
+    if (entries.isEmpty) return;
+    if (_touchUi) {
+      final scheme = Theme.of(context).colorScheme;
+      await showModalBottomSheet<void>(
+        context: context,
+        showDragHandle: true,
+        builder: (ctx) => SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (final e in entries)
+                if (e.isDivider)
+                  const Divider(height: 1)
+                else
+                  ListTile(
+                    enabled: e.enabled,
+                    leading: e.icon == null
+                        ? null
+                        : Icon(e.icon, color: e.danger ? scheme.error : null),
+                    title: Text(
+                      e.label,
+                      style: TextStyle(color: e.danger ? scheme.error : null),
+                    ),
+                    onTap: e.onSelected == null
+                        ? null
+                        : () {
+                            Navigator.of(ctx).pop();
+                            e.onSelected!();
+                          },
+                  ),
+            ],
+          ),
+        ),
+      );
+      return;
+    }
+    if (at == null) return;
+    await showNasContextMenu(context, at, entries);
   }
 
   @override
@@ -1001,13 +1090,6 @@ class _VideoImageLibraryPageState extends State<VideoImageLibraryPage> {
     final card = InkWell(
       borderRadius: BorderRadius.circular(10),
       onTap: () => _enterFolder(folder.path),
-      onLongPress: () {
-        final box = context.findRenderObject() as RenderBox?;
-        final pos = box == null
-            ? Offset.zero
-            : box.localToGlobal(box.size.center(Offset.zero));
-        _showFolderMenu(folder, pos);
-      },
       child: ClipRRect(
         borderRadius: BorderRadius.circular(10),
         child: Stack(
@@ -1091,7 +1173,12 @@ class _VideoImageLibraryPageState extends State<VideoImageLibraryPage> {
       ),
     );
     return GestureDetector(
-      onSecondaryTapDown: (d) => _showFolderMenu(folder, d.globalPosition),
+      // 桌面：右键；触屏：长按。两者给同一份动作表（`_folderEntries`），
+      // 位置都取指针按下点，底部表/菜单才不会跑到屏幕角落。
+      onSecondaryTapDown: (d) =>
+          unawaited(_presentActions(_folderEntries(folder), at: d.globalPosition)),
+      onLongPressStart: (d) =>
+          unawaited(_presentActions(_folderEntries(folder), at: d.globalPosition)),
       child: card,
     );
   }
@@ -1201,17 +1288,6 @@ class _VideoImageLibraryPageState extends State<VideoImageLibraryPage> {
         }
         _openItem(item, index);
       },
-      onLongPress: () {
-        if (_selectionMode) {
-          _selection.toggle(item.id);
-          return;
-        }
-        final box = context.findRenderObject() as RenderBox?;
-        final pos = box == null
-            ? Offset.zero
-            : box.localToGlobal(box.size.center(Offset.zero));
-        _showItemMenu(item, index, pos);
-      },
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -1284,12 +1360,24 @@ class _VideoImageLibraryPageState extends State<VideoImageLibraryPage> {
       ),
     );
     return GestureDetector(
+      // 桌面右键、手机长按走同一份动作表；选择态下长按 = 勾选/取消。
       onSecondaryTapDown: (d) {
         if (_selectionMode) {
           _selection.toggle(item.id);
           return;
         }
-        _showItemMenu(item, index, d.globalPosition);
+        unawaited(
+          _presentActions(_itemEntries(item, index), at: d.globalPosition),
+        );
+      },
+      onLongPressStart: (d) {
+        if (_selectionMode) {
+          _selection.toggle(item.id);
+          return;
+        }
+        unawaited(
+          _presentActions(_itemEntries(item, index), at: d.globalPosition),
+        );
       },
       child: cell,
     );
