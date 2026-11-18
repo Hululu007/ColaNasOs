@@ -246,38 +246,61 @@ export async function storageUsageOf(
  * 手动清理产物。`olderThanDays = 0` 表示全清。
  *
  * 与 sweeper 的区别：sweeper 是保守的自动回收（还看引用计数），这里听用户的。
- * 只守两条底线，都是为了不把别人正在用的文件删掉：
- *   · 此刻正被下载的（进程内有登记的流）；
- *   · 两分钟内刚变成 ready 的（客户端已经建好任务，马上要来取）。
+ * 底线只有一条硬性的：**此刻正被下载的那份不能删**（进程内登记的下载流）。
+ *
+ * 「两分钟内刚 ready 的先跳过」原本是怕删掉客户端马上要取的文件，但它把
+ * 「转完立刻点全部清理」变成了「什么都没清掉」—— 用户点了全部清理，结果
+ * 一个个都没动。所以 `force`（界面上就是「全部清理」）直接不看这个时间窗，
+ * 只有「只清 N 天前用过的」这种保守档才需要它。
  */
 export async function cleanupArtifacts(
   k: KernelApi,
   olderThanDays: number,
-): Promise<{ removed: number; freedBytes: number; count: number; bytes: number }> {
+  opts: { force?: boolean } = {},
+): Promise<{
+  removed: number;
+  freedBytes: number;
+  skipped: number;
+  count: number;
+  bytes: number;
+}> {
   const t = Math.floor(Date.now() / 1000);
   const days = Number.isFinite(olderThanDays) ? Math.max(0, olderThanDays) : 0;
+  const force = opts.force === true;
   const cutoff = t - days * 86400;
 
+  // `days = 0` 就是「全部」：不再拿 `last_hit_at < now` 过滤 ——
+  // 同一秒内刚建好的产物 last_hit_at 正好等于 now，那个写法会把它漏掉。
   const rows = (
-    await sql<{ id: string; rel_path: string; size: number }>`
-      select id, rel_path, size from offline_artifacts where last_hit_at < ${cutoff}
-    `.execute(k.db)
+    days === 0
+      ? await sql<{ id: string; rel_path: string; size: number }>`
+          select id, rel_path, size from offline_artifacts
+        `.execute(k.db)
+      : await sql<{ id: string; rel_path: string; size: number }>`
+          select id, rel_path, size from offline_artifacts where last_hit_at < ${cutoff}
+        `.execute(k.db)
   ).rows;
 
-  // 刚 ready 的任务可能正在建立下载，等两分钟再说
-  const fresh = new Set(
-    (
-      await sql<{ artifact_id: string | null }>`
-        select distinct artifact_id from offline_jobs
-         where state = 'ready' and artifact_id is not null and updated_at >= ${t - CLEANUP_RECENT_READY_SEC}
-      `.execute(k.db)
-    ).rows.map((r) => String(r.artifact_id || '')),
-  );
+  // 刚 ready 的任务可能正在建立下载，保守档先跳过它
+  const fresh = force
+    ? new Set<string>()
+    : new Set(
+        (
+          await sql<{ artifact_id: string | null }>`
+            select distinct artifact_id from offline_jobs
+             where state = 'ready' and artifact_id is not null and updated_at >= ${t - CLEANUP_RECENT_READY_SEC}
+          `.execute(k.db)
+        ).rows.map((r) => String(r.artifact_id || '')),
+      );
 
   let freed = 0;
   let removed = 0;
+  let skipped = 0;
   for (const row of rows) {
-    if (downloading.has(row.id) || fresh.has(row.id)) continue;
+    if (downloading.has(row.id) || fresh.has(row.id)) {
+      skipped += 1;
+      continue;
+    }
     const abs = path.join(k.paths.dataDir, row.rel_path);
     // 整个缓存目录一起删：一个目录只放一份产物
     await fsp.rm(path.dirname(abs), { recursive: true, force: true }).catch(() => undefined);
@@ -308,10 +331,10 @@ export async function cleanupArtifacts(
   }
 
   const after = await storageUsageOf(k);
-  if (removed > 0) {
-    k.log.info({ removed, freed, days }, 'offline artifacts cleaned');
+  if (removed > 0 || skipped > 0) {
+    k.log.info({ removed, skipped, freed, days, force }, 'offline artifacts cleaned');
   }
-  return { removed, freedBytes: freed, count: after.count, bytes: after.bytes };
+  return { removed, freedBytes: freed, skipped, count: after.count, bytes: after.bytes };
 }
 
 /**

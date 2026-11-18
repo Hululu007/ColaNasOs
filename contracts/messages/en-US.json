@@ -2934,6 +2934,7 @@
     "video.offline.serverKeepAll": "Clean everything",
     "video.offline.serverCleanupDone": "Removed {count}, freed {size}",
     "video.offline.serverCleanupNone": "Nothing matched the cleanup rule",
+    "video.offline.serverCleanupSkipped": "{count} still downloading, skipped",
     "video.offline.serverCleanupFailed": "Cleanup failed: {error}",
     "video.offline.failed": "Download failed",
     "video.offline.retry": "Retry",

@@ -221,17 +221,25 @@ class _VideoOfflineDownloadsPageState extends State<VideoOfflineDownloadsPage> {
 
     setState(() => _cleaning = true);
     try {
+      // days == 0 是「全部清理」：带上 force，服务端才不会把刚转好的产物
+      // 当成「客户端正要来取」而跳过（否则点了等于没点）。
       final res = await OfflineDownloadManager.instance.cleanupServerArtifacts(
         olderThanDays: days,
+        force: days == 0,
       );
+      final done = tr('video.offline.serverCleanupDone', {
+        'count': '${res.removed}',
+        'size': formatBytes(res.freedBytes),
+      });
+      final skippedText = tr('video.offline.serverCleanupSkipped', {
+        'count': '${res.skipped}',
+      });
       NasSnack.showOn(
         messenger,
         res.removed > 0
-            ? tr('video.offline.serverCleanupDone', {
-                'count': '${res.removed}',
-                'size': formatBytes(res.freedBytes),
-              })
-            : tr('video.offline.serverCleanupNone'),
+            // 有删有跳：两句都说清楚，不然「删了 2 个」会让人以为全清了
+            ? (res.skipped > 0 ? '$done · $skippedText' : done)
+            : (res.skipped > 0 ? skippedText : tr('video.offline.serverCleanupNone')),
       );
     } catch (e) {
       NasSnack.showOn(

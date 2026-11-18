@@ -3751,6 +3751,9 @@
       "size": {}
     },
     "video.offline.serverCleanupNone": {},
+    "video.offline.serverCleanupSkipped": {
+      "count": {}
+    },
     "video.offline.serverCleanupFailed": {
       "error": {}
     },

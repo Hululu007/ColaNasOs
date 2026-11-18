@@ -3888,11 +3888,13 @@ export type OfflineStorageUsage = {
 
 export type OfflineCleanupBody = {
   "olderThanDays"?: number;
+  "force"?: boolean;
 };
 
 export type OfflineCleanupResult = {
   "removed": number;
   "freedBytes": number;
+  "skipped": number;
   "count": number;
   "bytes": number;
 };

@@ -214,11 +214,18 @@ export const CleanupBody = Type.Object(
   {
     /**
      * 只清理「最后一次被下载」早于这么多天的产物，`0` = 全部清理。
-     * 无论传几，正在下载的、以及两分钟内刚就绪的产物会跳过（客户端可能正要取）。
+     * 无论传几，正在下载的产物一定会跳过。
      */
     olderThanDays: Type.Optional(
       Type.Integer({ minimum: 0, maximum: 3650, default: 0 }),
     ),
+    /**
+     * 「全部清理」用：连两分钟内刚转好的产物也删。
+     *
+     * 不加这个的话，用户刚转完就去点全部清理会一个都删不掉（那些产物正落在
+     * 「刚 ready、客户端可能马上来取」的保护区里），看着就像按钮没生效。
+     */
+    force: Type.Optional(Type.Boolean({ default: false })),
   },
   { $id: 'OfflineCleanupBody' },
 );
@@ -227,6 +234,9 @@ export const CleanupResult = Type.Object(
   {
     removed: Type.Integer({ description: '本次删掉的产物个数' }),
     freedBytes: Type.Integer({ description: '本次释放的字节数' }),
+    skipped: Type.Integer({
+      description: '被跳过的个数（此刻正在下载 / 保守档下刚转好不久的）',
+    }),
     count: Type.Integer({ description: '清理后剩余的产物个数' }),
     bytes: Type.Integer({ description: '清理后剩余的体积' }),
   },

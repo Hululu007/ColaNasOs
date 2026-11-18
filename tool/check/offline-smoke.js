@@ -465,14 +465,37 @@ async function main() {
 
   // 做旧：清理只看 last_hit_at，以及「两分钟内刚 ready」的保护窗
   const { sql } = require('kysely');
+  const nowSec = Math.floor(Date.now() / 1000);
   await sql`update offline_artifacts set last_hit_at = 0`.execute(k.db);
   await sql`update offline_jobs set updated_at = 0 where state = 'ready'`.execute(k.db);
 
-  const cleaned = (
+  // ---- 保护窗：产物「刚转好」时，保守档要跳过它 ----
+  // 这正是「转完立刻点全部清理，一个都没删掉」的成因；这里把任务做新复现一遍。
+  await sql`update offline_artifacts set last_hit_at = ${nowSec}`.execute(k.db);
+  await sql`update offline_jobs set updated_at = ${nowSec} where state = 'ready'`.execute(k.db);
+  const guarded = (
     await inject('POST', '/api/v1/offline-downloads/storage/cleanup', admin, { olderThanDays: 0 })
   ).json();
+  const stillThere = await inject(
+    'GET',
+    `/api/v1/offline-downloads/jobs/${json.id}/artifact`,
+    admin,
+  );
   check(
-    'storage_cleanup',
+    'cleanup_skips_fresh',
+    guarded.skipped > 0 && guarded.count > 0 && stillThere.statusCode === 200,
+    JSON.stringify(guarded),
+  );
+
+  // ---- 全部清理（force）：刚转好的也要删 ----
+  const cleaned = (
+    await inject('POST', '/api/v1/offline-downloads/storage/cleanup', admin, {
+      olderThanDays: 0,
+      force: true,
+    })
+  ).json();
+  check(
+    'storage_cleanup_force',
     cleaned.removed > 0 && cleaned.freedBytes > 0 && cleaned.count === 0,
     JSON.stringify(cleaned),
   );

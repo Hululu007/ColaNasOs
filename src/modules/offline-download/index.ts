@@ -649,11 +649,11 @@ export const offlineDownload: ServerModule = {
         },
       }),
       async (req) => {
-        const body = (req.body || {}) as { olderThanDays?: number };
+        const body = (req.body || {}) as { olderThanDays?: number; force?: boolean };
         const days = Number.isFinite(Number(body.olderThanDays))
           ? Number(body.olderThanDays)
           : 0;
-        return cleanupArtifacts(k, days);
+        return cleanupArtifacts(k, days, { force: body.force === true });
       },
     );
 

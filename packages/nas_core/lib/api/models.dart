@@ -12820,29 +12820,35 @@ class OfflineStorageUsage {
 
 class OfflineCleanupBody {
   final int? olderThanDays;
+  final bool? force;
 
   const OfflineCleanupBody({
     this.olderThanDays,
+    this.force,
   });
 
   factory OfflineCleanupBody.fromJson(Map<String, dynamic> json) => OfflineCleanupBody(
         olderThanDays: json['olderThanDays'] == null ? null : json['olderThanDays'] as int,
+        force: json['force'] == null ? null : json['force'] as bool,
       );
 
   Map<String, dynamic> toJson() => <String, dynamic>{
         if (olderThanDays != null) 'olderThanDays': olderThanDays!,
+        if (force != null) 'force': force!,
       };
 }
 
 class OfflineCleanupResult {
   final int removed;
   final int freedBytes;
+  final int skipped;
   final int count;
   final int bytes;
 
   const OfflineCleanupResult({
     required this.removed,
     required this.freedBytes,
+    required this.skipped,
     required this.count,
     required this.bytes,
   });
@@ -12850,6 +12856,7 @@ class OfflineCleanupResult {
   factory OfflineCleanupResult.fromJson(Map<String, dynamic> json) => OfflineCleanupResult(
         removed: json['removed'] as int,
         freedBytes: json['freedBytes'] as int,
+        skipped: json['skipped'] as int,
         count: json['count'] as int,
         bytes: json['bytes'] as int,
       );
@@ -12857,6 +12864,7 @@ class OfflineCleanupResult {
   Map<String, dynamic> toJson() => <String, dynamic>{
         'removed': removed,
         'freedBytes': freedBytes,
+        'skipped': skipped,
         'count': count,
         'bytes': bytes,
       };

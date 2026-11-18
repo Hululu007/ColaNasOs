@@ -15368,6 +15368,10 @@
             "maximum": 3650,
             "default": 0,
             "type": "integer"
+          },
+          "force": {
+            "default": false,
+            "type": "boolean"
           }
         }
       },
@@ -15376,6 +15380,7 @@
         "required": [
           "removed",
           "freedBytes",
+          "skipped",
           "count",
           "bytes"
         ],
@@ -15386,6 +15391,10 @@
           },
           "freedBytes": {
             "description": "本次释放的字节数",
+            "type": "integer"
+          },
+          "skipped": {
+            "description": "被跳过的个数（此刻正在下载 / 保守档下刚转好不久的）",
             "type": "integer"
           },
           "count": {

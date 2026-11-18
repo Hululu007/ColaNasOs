@@ -474,10 +474,16 @@ class OfflineDownloadManager {
   ///
   /// 产物只是「下载用的中转副本」：留着是为了同参数再下一次时免重编，
   /// 但不清的话会一直堆在服务端盘上，所以给用户一个显式出口。
+  /// 清理服务端转码产物。
+  ///
+  /// `force` 对应界面上的「全部清理」：连刚转好不久的产物也删。
+  /// 不加它的话，转完立刻点清理会一个都删不掉（那些产物落在服务端
+  /// 「刚 ready、客户端可能正要来取」的保护窗里），看着像按钮没生效。
   Future<OfflineCleanupResult> cleanupServerArtifacts({
     int olderThanDays = 0,
+    bool force = false,
   }) => ApiSession.instance.client.offlineStorageCleanup(
-    body: OfflineCleanupBody(olderThanDays: olderThanDays),
+    body: OfflineCleanupBody(olderThanDays: olderThanDays, force: force),
   );
 
   /// 记录播放进度（离线也写；联网后再由播放页同步给服务端）

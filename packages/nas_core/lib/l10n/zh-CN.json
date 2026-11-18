@@ -2830,6 +2830,7 @@
     "video.offline.serverKeepAll": "全部清理",
     "video.offline.serverCleanupDone": "已清理 {count} 个，释放 {size}",
     "video.offline.serverCleanupNone": "没有符合条件的产物可清理",
+    "video.offline.serverCleanupSkipped": "另有 {count} 个正在下载，本次已跳过",
     "video.offline.serverCleanupFailed": "清理失败：{error}",
     "video.offline.failed": "下载失败",
     "video.offline.retry": "重试",

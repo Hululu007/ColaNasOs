@@ -2874,6 +2874,7 @@ class I18nKeys {
   static const videoOfflineServerKeepAll = 'video.offline.serverKeepAll';
   static const videoOfflineServerCleanupDone = 'video.offline.serverCleanupDone';
   static const videoOfflineServerCleanupNone = 'video.offline.serverCleanupNone';
+  static const videoOfflineServerCleanupSkipped = 'video.offline.serverCleanupSkipped';
   static const videoOfflineServerCleanupFailed = 'video.offline.serverCleanupFailed';
   static const videoOfflineFailed = 'video.offline.failed';
   static const videoOfflineRetry = 'video.offline.retry';
@@ -3081,4 +3082,4 @@ class I18nKeys {
 }
 
 /// 契约键总数（生成时确定），供完整性自检使用。
-const int i18nKeyCount = 3030;
+const int i18nKeyCount = 3031;
