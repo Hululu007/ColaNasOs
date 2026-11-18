@@ -11,6 +11,7 @@ import 'package:nas_ui/nas_ui.dart';
 import '../../core/session.dart';
 import '../../core/settings_store.dart';
 import '../photo/photo_download.dart';
+import 'offline/offline_entry.dart';
 import 'video_card.dart';
 import 'video_collection_picker.dart';
 import 'video_item_actions.dart';
@@ -555,6 +556,13 @@ class _VideoImageLibraryPageState extends State<VideoImageLibraryPage> {
             value: 'download',
             child: Text(tr('video.media.download')),
           ),
+        // 「下载到本机」：公共下载弹窗（分辨率 / 编码 / 字幕可选）。
+        // 混合库里的影片以前只有「下载原文件」，没有画质可选的离线下载。
+        if (item.mediaType == 'video' && offlineSupported)
+          PopupMenuItem(
+            value: 'offline-download',
+            child: Text(tr('video.offline.dialogTitle')),
+          ),
         // 图片没有 NFO / TMDB，刮削和已看只对影片开放
         if (item.mediaType == 'video') ...[
           PopupMenuItem(
@@ -595,6 +603,14 @@ class _VideoImageLibraryPageState extends State<VideoImageLibraryPage> {
     }
     if (v == 'download') {
       await _downloadItem(item);
+      return;
+    }
+    if (v == 'offline-download') {
+      await openOfflineDownloadDialog(
+        context,
+        item,
+        libraryName: widget.title,
+      );
       return;
     }
     if (v == 'select') {

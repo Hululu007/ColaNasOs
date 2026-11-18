@@ -26,8 +26,11 @@ const QualityUnion = Type.Union(
 );
 
 const SubtitleUnion = Type.Union(
-  [Type.Literal('none'), Type.Literal('embed')] as any,
-  { description: '字幕处理：none = 不带；embed = 内挂（mp4 内嵌 mov_text）' },
+  [Type.Literal('none'), Type.Literal('embed'), Type.Literal('external')] as any,
+  {
+    description:
+      '字幕处理：none = 不带；embed = 内挂（mp4 内嵌 mov_text）；external = 产物不带字幕，客户端另行抓取外挂字幕文件',
+  },
 );
 
 const JobStateUnion = Type.Union(

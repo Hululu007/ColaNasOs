@@ -14479,7 +14479,7 @@
             "type": "integer"
           },
           "subtitleMode": {
-            "description": "字幕处理：none = 不带；embed = 内挂（mp4 内嵌 mov_text）",
+            "description": "字幕处理：none = 不带；embed = 内挂（mp4 内嵌 mov_text）；external = 产物不带字幕，客户端另行抓取外挂字幕文件",
             "anyOf": [
               {
                 "type": "string",
@@ -14491,6 +14491,12 @@
                 "type": "string",
                 "enum": [
                   "embed"
+                ]
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "external"
                 ]
               }
             ]
@@ -14831,7 +14837,7 @@
             "type": "integer"
           },
           "subtitleMode": {
-            "description": "字幕处理：none = 不带；embed = 内挂（mp4 内嵌 mov_text）",
+            "description": "字幕处理：none = 不带；embed = 内挂（mp4 内嵌 mov_text）；external = 产物不带字幕，客户端另行抓取外挂字幕文件",
             "anyOf": [
               {
                 "type": "string",
@@ -14843,6 +14849,12 @@
                 "type": "string",
                 "enum": [
                   "embed"
+                ]
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "external"
                 ]
               }
             ]

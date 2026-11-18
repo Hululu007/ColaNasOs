@@ -14,6 +14,7 @@ import 'cola_video_detail_page.dart';
 import 'video_genre_labels.dart';
 import 'video_item_actions.dart';
 import 'video_jp_filters.dart';
+import 'offline/offline_entry.dart';
 import 'video_region_labels.dart';
 import 'video_scrape_dialogs.dart';
 
@@ -1215,6 +1216,15 @@ class _VideoListViewState extends State<VideoListView> {
       icon: Icons.open_in_new,
       onSelected: () => _videoAction('detail', item),
     ),
+    if (offlineSupported)
+      NasMenuEntry(
+        // 「下载到本机」：公共下载弹窗（分辨率 / 编码 / 字幕可选）。
+        label: tr('video.offline.dialogTitle'),
+        icon: Icons.download_outlined,
+        onSelected: () => unawaited(
+          openOfflineDownloadDialog(context, item),
+        ),
+      ),
     const NasMenuEntry.divider(),
     NasMenuEntry(
       label: tr('video.action.scrape'),

@@ -2803,6 +2803,8 @@
     "video.offline.subtitleEmbed": "内挂到文件",
     "video.offline.subtitleExternal": "外挂字幕文件",
     "video.offline.subtitleNone": "不内挂",
+    "video.offline.subtitleCounts": "内嵌 {embedded} · 外挂 {external}",
+    "video.offline.subtitleNoneFound": "未找到可用字幕（内嵌 0 / 外挂 0）",
     "video.offline.tabActive": "进行中",
     "video.offline.tabDone": "已完成",
     "video.offline.tabFailed": "失败",

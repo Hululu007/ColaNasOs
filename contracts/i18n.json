@@ -3709,6 +3709,11 @@
     "video.offline.subtitleEmbed": {},
     "video.offline.subtitleExternal": {},
     "video.offline.subtitleNone": {},
+    "video.offline.subtitleCounts": {
+      "embedded": {},
+      "external": {}
+    },
+    "video.offline.subtitleNoneFound": {},
     "video.offline.tabActive": {},
     "video.offline.tabDone": {},
     "video.offline.tabFailed": {},

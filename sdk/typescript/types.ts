@@ -3726,7 +3726,7 @@ export type OfflineQuoteBody = {
   "videoKbps"?: number;
   "audioIndex"?: number;
   "audioBitrateKbps"?: number;
-  "subtitleMode"?: "none" | "embed";
+  "subtitleMode"?: "none" | "embed" | "external";
 };
 
 export type OfflineQuoteResponse = {
@@ -3776,7 +3776,7 @@ export type OfflineCreateJobBody = {
   "videoKbps"?: number;
   "audioIndex"?: number;
   "audioBitrateKbps"?: number;
-  "subtitleMode"?: "none" | "embed";
+  "subtitleMode"?: "none" | "embed" | "external";
   "operation"?: "create" | "replace";
   "idempotencyKey"?: string;
 };

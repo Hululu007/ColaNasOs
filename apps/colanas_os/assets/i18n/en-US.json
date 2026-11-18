@@ -2803,6 +2803,8 @@
     "video.offline.subtitleEmbed": "Embed in file",
     "video.offline.subtitleExternal": "Separate subtitle file",
     "video.offline.subtitleNone": "None",
+    "video.offline.subtitleCounts": "Embedded {embedded} · external {external}",
+    "video.offline.subtitleNoneFound": "No subtitle found (0 embedded / 0 external)",
     "video.offline.tabActive": "Active",
     "video.offline.tabDone": "Completed",
     "video.offline.tabFailed": "Failed",

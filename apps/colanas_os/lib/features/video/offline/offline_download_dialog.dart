@@ -102,6 +102,19 @@ class _DownloadSheetState extends State<_DownloadSheet> {
   /// 默认内挂：剧集没字幕基本没法看；源片没有字幕轨时服务端 `-map 0:s?` 是空操作。
   /// 原画档由服务端强制走 `none`（`-c copy` 本来就把字幕带过去了）。
   String _subtitleMode = 'embed';
+
+  /// 字幕探测：内嵌文本轨 / 外挂字幕文件各几条。
+  ///
+  /// 服务端只把**文本类**内嵌轨列进 `#embedded:<n>`（图形字幕 PGS / VobSub
+  /// 转不了，内挂必然失败），外挂字幕是同目录同主名的 srt / ass。
+  /// 有了这两个数才能判断「这部片子到底要不要下字幕」：
+  /// 有文本内嵌轨 → 内挂；只有外挂 → 外挂；都没有 → 这片子没字幕可下。
+  int _subEmbedded = 0;
+  int _subExternal = 0;
+  bool _subChecked = false;
+
+  /// 用户手动改过字幕选项：之后不再自动改默认值。
+  bool _subtitleTouched = false;
   final TextEditingController _kbps = TextEditingController();
 
   /// 手填值（空 = 用服务端推荐）
@@ -114,6 +127,67 @@ class _DownloadSheetState extends State<_DownloadSheet> {
     super.initState();
     // 默认用原画：不重编码、最快、体积最省，且画质无损
     _quoteNow();
+    // 字幕情况：决定「要不要下字幕」「下哪种」，探测在后台跑，不挡界面
+    _probeSubtitles();
+  }
+
+  /// 探测这部片子有哪些字幕可用（内嵌文本轨 / 外挂字幕文件）。
+  ///
+  /// 一条都探不到、而这部片子又是日本片（有番号）时，顺手让服务端抓一次：
+  /// 服务端按番号去字幕站抓 .srt 写到片源旁边，抓完再探一次。
+  /// 这样「哪些片子需要下字幕、哪些压根没有字幕」在弹窗里就能看清楚。
+  Future<void> _probeSubtitles({bool allowFetch = true}) async {
+    try {
+      final res = await ApiSession.instance.client
+          .videoSubtitles(id: widget.item.id)
+          .timeout(const Duration(seconds: 10));
+      var embedded = 0;
+      var external = 0;
+      for (final sub in res.items) {
+        if (sub.name.startsWith('#embedded:')) {
+          embedded += 1;
+        } else {
+          external += 1;
+        }
+      }
+      if (!mounted) return;
+      setState(() {
+        _subEmbedded = embedded;
+        _subExternal = external;
+        _subChecked = true;
+        if (_subtitleTouched) return;
+        // 有文本内嵌轨就内挂（播放器直接能开）；只有外挂字幕就外挂。
+        _subtitleMode = embedded > 0
+            ? 'embed'
+            : (external > 0 ? 'external' : 'none');
+      });
+      if (!_subtitleTouched) _scheduleQuote();
+      if (embedded == 0 && external == 0 && allowFetch && _canFetchSubtitle) {
+        await _fetchSubtitleAndReprobe();
+      }
+    } catch (_) {
+      if (!mounted) return;
+      // 探测失败（源离线 / ffprobe 慢）不该挡住下载：保持默认，不提示。
+      setState(() => _subChecked = true);
+    }
+  }
+
+  /// 有番号 = 日本片：服务端能按番号去字幕站抓外挂字幕。
+  bool get _canFetchSubtitle => (widget.item.code ?? '').trim().isNotEmpty;
+
+  Future<void> _fetchSubtitleAndReprobe() async {
+    try {
+      await ApiSession.instance.client.videoSubtitleFetch(body: <String, dynamic>{
+        'id': widget.item.id,
+      });
+    } catch (_) {
+      // 没权限 / 网络失败：抓不到就算了，不该挡住下载
+      return;
+    }
+    // 抓取是异步的（服务端立刻返回，抓在后台跑），等一会儿再探一次。
+    await Future<void>.delayed(const Duration(seconds: 3));
+    if (!mounted) return;
+    await _probeSubtitles(allowFetch: false);
   }
 
   @override
@@ -160,6 +234,8 @@ class _DownloadSheetState extends State<_DownloadSheet> {
       if (!mounted) return;
       setState(() {
         _error = '$e';
+        // 旧 quote 的预估体积是上一组参数的，留着会让人以为「改了没变」。
+        _quote = null;
         _loading = false;
       });
     }
@@ -258,7 +334,11 @@ class _DownloadSheetState extends State<_DownloadSheet> {
           replace: existing != null,
           // 「外挂」在服务端等同于「不内挂」（产物字节完全一样，共用同一份缓存），
           // 额外动作在客户端：下完再抓字幕文件。
-          fetchSubtitles: _subtitleMode == 'external',
+          // 选了内挂但这部片子**没有文本内嵌轨**（只有图形字幕）时也抓外挂兜底，
+          // 否则下载完的片子等于没字幕。
+          fetchSubtitles:
+              _subtitleMode == 'external' ||
+              (_subtitleMode == 'embed' && _subChecked && _subEmbedded == 0),
         ),
       );
       if (!mounted) return;
@@ -341,6 +421,7 @@ class _DownloadSheetState extends State<_DownloadSheet> {
             ),
           const SizedBox(height: 6),
           _subtitleField(),
+          _subtitleHint(),
 
           const SizedBox(height: 16),
           Container(
@@ -526,9 +607,11 @@ class _DownloadSheetState extends State<_DownloadSheet> {
     String labelOf(String mode) {
       switch (mode) {
         case 'embed':
-          return tr('video.offline.subtitleEmbed');
+          final base = tr('video.offline.subtitleEmbed');
+          return _subChecked ? '$base（$_subEmbedded）' : base;
         case 'external':
-          return tr('video.offline.subtitleExternal');
+          final base = tr('video.offline.subtitleExternal');
+          return _subChecked ? '$base（$_subExternal）' : base;
         default:
           return tr('video.offline.subtitleNone');
       }
@@ -543,9 +626,35 @@ class _DownloadSheetState extends State<_DownloadSheet> {
       ],
       onChanged: (v) {
         if (v == null || v == _subtitleMode) return;
-        setState(() => _subtitleMode = v);
+        setState(() {
+          _subtitleMode = v;
+          _subtitleTouched = true;
+        });
         _scheduleQuote();
       },
+    );
+  }
+
+  /// 字幕可用性提示：让用户一眼看出「这部片子有没有字幕可下」。
+  Widget _subtitleHint() {
+    if (!_subChecked) return const SizedBox.shrink();
+    final none = _subEmbedded == 0 && _subExternal == 0;
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Text(
+        none
+            ? tr('video.offline.subtitleNoneFound')
+            : tr('video.offline.subtitleCounts', {
+                'embedded': '$_subEmbedded',
+                'external': '$_subExternal',
+              }),
+        style: TextStyle(
+          fontSize: NasTokens.fontCaption,
+          color: none
+              ? Theme.of(context).colorScheme.error
+              : context.nasTextSecondary,
+        ),
+      ),
     );
   }
 
