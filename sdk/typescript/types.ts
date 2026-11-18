@@ -3880,6 +3880,28 @@ export type OfflineOk = {
   "affected"?: number;
 };
 
+export type OfflineStorageUsage = {
+  "count": number;
+  "bytes": number;
+  "oldestDays": number;
+};
+
+export type OfflineCleanupBody = {
+  "olderThanDays"?: number;
+};
+
+export type OfflineCleanupResult = {
+  "removed": number;
+  "freedBytes": number;
+  "count": number;
+  "bytes": number;
+};
+
+export type OfflineReleaseResult = {
+  "ok": boolean;
+  "refCount": number;
+};
+
 export type PlayerSessionCreateBody = {
   "id": string;
   "preset"?: "original" | "2160p_15m" | "1440p_10m" | "1440p_8m" | "1440p_5m" | "1440p_3m" | "1080p_8m" | "1080p_5m" | "1080p_3m" | "1080p_2m" | "720p_3m" | "720p_2m" | "720p_1m" | "480p_1m";

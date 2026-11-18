@@ -3332,6 +3332,24 @@ class ApiClient {
     return OfflineOk.fromJson(_asMap(_decode(res)));
   }
 
+  /// 服务端转码产物占用（个数 / 体积 / 最久天数）
+  Future<OfflineStorageUsage> offlineStorage() async {
+    final res = await transport.send('GET', _uri('/api/v1/offline-downloads/storage'), headers: await _headers());
+    return OfflineStorageUsage.fromJson(_asMap(_decode(res)));
+  }
+
+  /// 清理服务端转码产物（不动原始影片，不动已下载到本机的文件）
+  Future<OfflineCleanupResult> offlineStorageCleanup({required OfflineCleanupBody body}) async {
+    final res = await transport.send('POST', _uri('/api/v1/offline-downloads/storage/cleanup'), headers: await _headers(jsonBody: true), body: utf8.encode(jsonEncode(body.toJson())));
+    return OfflineCleanupResult.fromJson(_asMap(_decode(res)));
+  }
+
+  /// 释放任务占用的产物引用（下载完成后调用）
+  Future<OfflineReleaseResult> offlineJobRelease({required String id}) async {
+    final res = await transport.send('POST', _uri('/api/v1/offline-downloads/jobs/${Uri.encodeComponent(id)}/release'), headers: await _headers());
+    return OfflineReleaseResult.fromJson(_asMap(_decode(res)));
+  }
+
   /// 任务产物的元信息（大小 / sha256 / etag / 规格）
   Future<OfflineArtifact> offlineJobArtifact({required String id}) async {
     final res = await transport.send('GET', _uri('/api/v1/offline-downloads/jobs/${Uri.encodeComponent(id)}/artifact'), headers: await _headers());

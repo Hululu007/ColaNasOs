@@ -192,3 +192,45 @@ export const OkResponse = Type.Object(
   { ok: Type.Boolean(), affected: Type.Optional(Type.Integer()) },
   { $id: 'OfflineOk' },
 );
+
+/** 服务端转码产物的占用（下载管理页「清理服务端产物」用） */
+export const StorageUsage = Type.Object(
+  {
+    count: Type.Integer({ description: '产物个数' }),
+    bytes: Type.Integer({ description: '产物体积合计（字节）' }),
+    oldestDays: Type.Integer({ description: '最久没被用过的那份产物存了多少天；没有产物为 0' }),
+  },
+  { $id: 'OfflineStorageUsage' },
+);
+
+export const CleanupBody = Type.Object(
+  {
+    /**
+     * 只清理「最后一次被下载」早于这么多天的产物，`0` = 全部清理。
+     * 无论传几，正在下载的、以及两分钟内刚就绪的产物会跳过（客户端可能正要取）。
+     */
+    olderThanDays: Type.Optional(
+      Type.Integer({ minimum: 0, maximum: 3650, default: 0 }),
+    ),
+  },
+  { $id: 'OfflineCleanupBody' },
+);
+
+export const CleanupResult = Type.Object(
+  {
+    removed: Type.Integer({ description: '本次删掉的产物个数' }),
+    freedBytes: Type.Integer({ description: '本次释放的字节数' }),
+    count: Type.Integer({ description: '清理后剩余的产物个数' }),
+    bytes: Type.Integer({ description: '清理后剩余的体积' }),
+  },
+  { $id: 'OfflineCleanupResult' },
+);
+
+/** 释放引用：下载完成后客户端把这条任务占用的产物引用还回去 */
+export const ReleaseResult = Type.Object(
+  {
+    ok: Type.Boolean(),
+    refCount: Type.Integer({ description: '释放后该产物还剩几个引用' }),
+  },
+  { $id: 'OfflineReleaseResult' },
+);

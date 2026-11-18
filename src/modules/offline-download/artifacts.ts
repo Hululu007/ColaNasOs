@@ -195,19 +195,159 @@ const ARTIFACT_TTL_SEC = 24 * 3600;
 const ARTIFACT_SWEEP_MS = 60 * 60 * 1000;
 
 /**
+ * 硬 TTL：`ref_count` 只增不减过的产物（老版本任务从不 release）不该永远占着盘。
+ *
+ * 引用本身是**瞬时**概念 —— 一条任务从 ready 到下载完最多几小时，
+ * 七天没被碰过就说明谁都不需要它了，引用计数再高也照收。
+ */
+const ARTIFACT_HARD_TTL_SEC = 7 * 24 * 3600;
+
+/**
+ * 正在被下载的产物 id（进程内实时状态）。
+ *
+ * 清理时唯一需要保护的就是「别人正在传的这份」—— 用时间窗猜既不准又会让
+ * 「刚下完就点清理」看着像没生效，所以直接盯住真正的下载流。
+ */
+const downloading = new Set<string>();
+
+/** 登记一条正在下载的产物流；流关闭 / 出错时自动解登记 */
+export function markDownloading(id: string, stream: fs.ReadStream): void {
+  downloading.add(id);
+  const done = (): void => {
+    downloading.delete(id);
+  };
+  stream.once('close', done);
+  stream.once('error', done);
+}
+
+/** 清理时跳过「刚 ready 不久」的产物：客户端可能正要开始传 */
+const CLEANUP_RECENT_READY_SEC = 120;
+
+/** 服务端产物的占用情况 */
+export async function storageUsageOf(
+  k: KernelApi,
+): Promise<{ count: number; bytes: number; oldestDays: number }> {
+  const row = (
+    await sql<{ n: number | null; bytes: number | null; oldest: number | null }>`
+      select count(*) as n, coalesce(sum(size), 0) as bytes, min(last_hit_at) as oldest
+        from offline_artifacts
+    `.execute(k.db)
+  ).rows[0];
+  const n = Number(row?.n) || 0;
+  const bytes = Number(row?.bytes) || 0;
+  const oldest = Number(row?.oldest) || 0;
+  const oldestDays = n > 0 && oldest > 0
+    ? Math.max(0, Math.floor((Math.floor(Date.now() / 1000) - oldest) / 86400))
+    : 0;
+  return { count: n, bytes, oldestDays };
+}
+
+/**
+ * 手动清理产物。`olderThanDays = 0` 表示全清。
+ *
+ * 与 sweeper 的区别：sweeper 是保守的自动回收（还看引用计数），这里听用户的。
+ * 只守两条底线，都是为了不把别人正在用的文件删掉：
+ *   · 此刻正被下载的（进程内有登记的流）；
+ *   · 两分钟内刚变成 ready 的（客户端已经建好任务，马上要来取）。
+ */
+export async function cleanupArtifacts(
+  k: KernelApi,
+  olderThanDays: number,
+): Promise<{ removed: number; freedBytes: number; count: number; bytes: number }> {
+  const t = Math.floor(Date.now() / 1000);
+  const days = Number.isFinite(olderThanDays) ? Math.max(0, olderThanDays) : 0;
+  const cutoff = t - days * 86400;
+
+  const rows = (
+    await sql<{ id: string; rel_path: string; size: number }>`
+      select id, rel_path, size from offline_artifacts where last_hit_at < ${cutoff}
+    `.execute(k.db)
+  ).rows;
+
+  // 刚 ready 的任务可能正在建立下载，等两分钟再说
+  const fresh = new Set(
+    (
+      await sql<{ artifact_id: string | null }>`
+        select distinct artifact_id from offline_jobs
+         where state = 'ready' and artifact_id is not null and updated_at >= ${t - CLEANUP_RECENT_READY_SEC}
+      `.execute(k.db)
+    ).rows.map((r) => String(r.artifact_id || '')),
+  );
+
+  let freed = 0;
+  let removed = 0;
+  for (const row of rows) {
+    if (downloading.has(row.id) || fresh.has(row.id)) continue;
+    const abs = path.join(k.paths.dataDir, row.rel_path);
+    // 整个缓存目录一起删：一个目录只放一份产物
+    await fsp.rm(path.dirname(abs), { recursive: true, force: true }).catch(() => undefined);
+    await sql`delete from offline_artifacts where id = ${row.id}`.execute(k.db);
+    freed += Number(row.size) || 0;
+    removed += 1;
+  }
+
+  // 行删了但目录还在（手工清过库 / 上次删到一半）：顺手按 mtime 收掉
+  try {
+    const alive = new Set(
+      (
+        await sql<{ cache_key: string }>`select cache_key from offline_artifacts`.execute(k.db)
+      ).rows.map((r) => r.cache_key),
+    );
+    const names = await fsp.readdir(artifactsRootOf(k)).catch(() => [] as string[]);
+    for (const name of names) {
+      if (alive.has(name)) continue;
+      const dir = path.join(artifactsRootOf(k), name);
+      const st = await fsp.stat(dir).catch(() => null);
+      if (!st || !st.isDirectory()) continue;
+      // 刚写出来的目录留给 sweeper，别跟正在收尾的编码抢
+      if (Date.now() - st.mtimeMs < CLEANUP_RECENT_READY_SEC * 1000) continue;
+      await fsp.rm(dir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  } catch {
+    // 根目录不存在 / 没权限：不影响主流程
+  }
+
+  const after = await storageUsageOf(k);
+  if (removed > 0) {
+    k.log.info({ removed, freed, days }, 'offline artifacts cleaned');
+  }
+  return { removed, freedBytes: freed, count: after.count, bytes: after.bytes };
+}
+
+/**
+ * 归还引用：客户端把产物下载完并校验通过后调一次。
+ *
+ * 不这么做的话 `ref_count` 只增不减，sweeper 的「无人引用」条件永远不成立，
+ * 服务端会无限攒转码产物（这也是加手动清理的原因）。
+ */
+export async function releaseArtifact(k: KernelApi, id: string): Promise<number> {
+  const row = await artifactById(k, id);
+  if (!row) return 0;
+  const next = Math.max(0, Number(row.ref_count) - 1);
+  await sql`
+    update offline_artifacts set ref_count = ${next} where id = ${id}
+  `.execute(k.db);
+  return next;
+}
+
+/**
  * 回收无人引用的产物。
  *
  * 三个安全条件（照 hls 的 sweep 口径）：
  *   · 只删 `ref_count = 0` 的 —— 还有任务指着它就不能动；
  *   · 只删 `last_hit_at` 超过 24h 的 —— 刚下完正在传的不能动；
  *   · 目录存在但行不存在（手工清过库）按 mtime 兜底收。
+ *
+ * 例外：`ref_count > 0` 但七天没被碰过的照删（`ARTIFACT_HARD_TTL_SEC`）。
+ * 引用只增不减的老数据否则永远不会被回收，服务端会一直涨。
  */
 export async function sweepArtifacts(k: KernelApi): Promise<number> {
   const t = Math.floor(Date.now() / 1000);
   const rows = (
     await sql<{ id: string; rel_path: string }>`
       select id, rel_path from offline_artifacts
-       where ref_count = 0 and last_hit_at < ${t - ARTIFACT_TTL_SEC}
+       where last_hit_at < ${t - ARTIFACT_TTL_SEC}
+         and (ref_count = 0 or last_hit_at < ${t - ARTIFACT_HARD_TTL_SEC})
     `.execute(k.db)
   ).rows;
 

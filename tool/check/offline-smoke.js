@@ -451,6 +451,37 @@ async function main() {
   const artAfter = await inject('GET', `/api/v1/offline-downloads/jobs/${cancelId}/artifact`, admin);
   check('cancel_no_artifact', artAfter.statusCode !== 200, 'status=' + artAfter.statusCode);
 
+  // ---- 服务端产物：占用统计 / 归还引用 / 手动清理 ----
+  const storage0 = (await inject('GET', '/api/v1/offline-downloads/storage', admin)).json();
+  check('storage_usage', storage0.count > 0 && storage0.bytes > 0, JSON.stringify(storage0));
+
+  // 下载完成后客户端会 release 一次，让产物能按 TTL 自然回收
+  const rel = await inject('POST', `/api/v1/offline-downloads/jobs/${json.id}/release`, admin, {});
+  check(
+    'job_release',
+    rel.statusCode === 200 && rel.json().ok === true,
+    'status=' + rel.statusCode + ' ' + rel.body.slice(0, 120),
+  );
+
+  // 做旧：清理只看 last_hit_at，以及「两分钟内刚 ready」的保护窗
+  const { sql } = require('kysely');
+  await sql`update offline_artifacts set last_hit_at = 0`.execute(k.db);
+  await sql`update offline_jobs set updated_at = 0 where state = 'ready'`.execute(k.db);
+
+  const cleaned = (
+    await inject('POST', '/api/v1/offline-downloads/storage/cleanup', admin, { olderThanDays: 0 })
+  ).json();
+  check(
+    'storage_cleanup',
+    cleaned.removed > 0 && cleaned.freedBytes > 0 && cleaned.count === 0,
+    JSON.stringify(cleaned),
+  );
+  const storage1 = (await inject('GET', '/api/v1/offline-downloads/storage', admin)).json();
+  check('storage_after_cleanup', storage1.count === 0 && storage1.bytes === 0, JSON.stringify(storage1));
+  // 产物文件是真删了：再取元信息拿不到
+  r = await inject('GET', `/api/v1/offline-downloads/jobs/${json.id}/artifact`, admin);
+  check('cleanup_artifact_gone', r.statusCode !== 200, 'status=' + r.statusCode);
+
   return finish(k, results, app);
 }
 

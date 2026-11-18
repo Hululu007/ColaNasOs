@@ -2864,6 +2864,17 @@ class I18nKeys {
   static const videoOfflineStageDownloading = 'video.offline.stageDownloading';
   static const videoOfflineStageVerifying = 'video.offline.stageVerifying';
   static const videoOfflineStageReplacing = 'video.offline.stageReplacing';
+  static const videoOfflineServerCleanup = 'video.offline.serverCleanup';
+  static const videoOfflineServerCleanupTitle = 'video.offline.serverCleanupTitle';
+  static const videoOfflineServerUsage = 'video.offline.serverUsage';
+  static const videoOfflineServerOldest = 'video.offline.serverOldest';
+  static const videoOfflineServerUsageEmpty = 'video.offline.serverUsageEmpty';
+  static const videoOfflineServerCleanupHint = 'video.offline.serverCleanupHint';
+  static const videoOfflineServerKeepRecent = 'video.offline.serverKeepRecent';
+  static const videoOfflineServerKeepAll = 'video.offline.serverKeepAll';
+  static const videoOfflineServerCleanupDone = 'video.offline.serverCleanupDone';
+  static const videoOfflineServerCleanupNone = 'video.offline.serverCleanupNone';
+  static const videoOfflineServerCleanupFailed = 'video.offline.serverCleanupFailed';
   static const videoOfflineFailed = 'video.offline.failed';
   static const videoOfflineRetry = 'video.offline.retry';
   static const videoOfflineCancel = 'video.offline.cancel';
@@ -3070,4 +3081,4 @@ class I18nKeys {
 }
 
 /// 契约键总数（生成时确定），供完整性自检使用。
-const int i18nKeyCount = 3019;
+const int i18nKeyCount = 3030;

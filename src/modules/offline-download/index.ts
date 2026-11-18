@@ -25,8 +25,12 @@ import {
   artifactDirOf,
   artifactExists,
   cacheKeyOf,
+  cleanupArtifacts,
+  markDownloading,
+  releaseArtifact,
   sha256File,
   startArtifactSweeper,
+  storageUsageOf,
   touchArtifact,
   upsertArtifact,
 } from './artifacts';
@@ -81,6 +85,10 @@ export const offlineDownload: ServerModule = {
       S.ListQuery,
       S.JobListResponse,
       S.OkResponse,
+      S.StorageUsage,
+      S.CleanupBody,
+      S.CleanupResult,
+      S.ReleaseResult,
     ]) {
       app.addSchema(schema);
     }
@@ -610,6 +618,68 @@ export const offlineDownload: ServerModule = {
       },
     );
 
+    /**
+     * 服务端转码产物的占用。
+     *
+     * 产物是「下载用的中转副本」：客户端把文件拿到本机之后，服务端这份留着只是为了
+     * 同参数再下一次时免重编，长期留着纯占盘，所以下载页要能看见 + 一键清。
+     */
+    app.get(
+      '/api/v1/offline-downloads/storage',
+      secured('video:read', {
+        schema: {
+          operationId: 'offlineStorage',
+          tags: TAG,
+          summary: '服务端转码产物占用（个数 / 体积 / 最久天数）',
+          response: { 200: ref('OfflineStorageUsage') },
+        },
+      }),
+      async () => storageUsageOf(k),
+    );
+
+    app.post(
+      '/api/v1/offline-downloads/storage/cleanup',
+      secured('video:write', {
+        schema: {
+          operationId: 'offlineStorageCleanup',
+          tags: TAG,
+          summary: '清理服务端转码产物（不动原始影片，不动已下载到本机的文件）',
+          body: ref('OfflineCleanupBody'),
+          response: { 200: ref('OfflineCleanupResult') },
+        },
+      }),
+      async (req) => {
+        const body = (req.body || {}) as { olderThanDays?: number };
+        const days = Number.isFinite(Number(body.olderThanDays))
+          ? Number(body.olderThanDays)
+          : 0;
+        return cleanupArtifacts(k, days);
+      },
+    );
+
+    /**
+     * 归还引用。客户端下载 + 校验通过后调一次，让产物能按 TTL 自然回收。
+     * 幂等：重复调用最多把 ref_count 减到 0，不会变负。
+     */
+    app.post(
+      '/api/v1/offline-downloads/jobs/:id/release',
+      secured('video:write', {
+        schema: {
+          operationId: 'offlineJobRelease',
+          tags: TAG,
+          summary: '释放任务占用的产物引用（下载完成后调用）',
+          response: { 200: ref('OfflineReleaseResult') },
+        },
+      }),
+      async (req) => {
+        const id = String((req.params as { id?: string }).id || '');
+        const job = await getJob(k, id);
+        if (!job || !job.artifact_id) return { ok: true, refCount: 0 };
+        const refCount = await releaseArtifact(k, job.artifact_id);
+        return { ok: true, refCount };
+      },
+    );
+
     app.get(
       '/api/v1/offline-downloads/jobs/:id/artifact',
       secured('video:read', {
@@ -682,13 +752,20 @@ export const offlineDownload: ServerModule = {
 
         void touchArtifact(k, row.id).catch(() => undefined);
 
+        // 流一旦建出来就登记成「正在下载」，清理时不会把这份删掉
+        const streamOf = (opts?: { start: number; end: number }): fs.ReadStream => {
+          const stream = opts ? fs.createReadStream(abs, opts) : fs.createReadStream(abs);
+          markDownloading(row.id, stream);
+          return stream;
+        };
+
         let rangeHeader = req.headers.range;
         const ifRange = req.headers['if-range'];
         if (rangeHeader && typeof ifRange === 'string' && ifRange !== etag) rangeHeader = undefined;
 
         if (!rangeHeader) {
           reply.header('Content-Length', String(st.size));
-          return reply.code(200).send(fs.createReadStream(abs));
+          return reply.code(200).send(streamOf());
         }
 
         const range = parseRange(rangeHeader, st.size);
@@ -697,13 +774,13 @@ export const offlineDownload: ServerModule = {
         }
         if (range === null) {
           reply.header('Content-Length', String(st.size));
-          return reply.code(200).send(fs.createReadStream(abs));
+          return reply.code(200).send(streamOf());
         }
         reply
           .code(206)
           .header('Content-Range', `bytes ${range.start}-${range.end}/${st.size}`)
           .header('Content-Length', String(range.end - range.start + 1));
-        return reply.send(fs.createReadStream(abs, { start: range.start, end: range.end }));
+        return reply.send(streamOf({ start: range.start, end: range.end }));
       },
     );
 

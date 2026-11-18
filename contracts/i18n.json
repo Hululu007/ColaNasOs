@@ -3733,6 +3733,27 @@
     },
     "video.offline.stageVerifying": {},
     "video.offline.stageReplacing": {},
+    "video.offline.serverCleanup": {},
+    "video.offline.serverCleanupTitle": {},
+    "video.offline.serverUsage": {
+      "count": {},
+      "size": {}
+    },
+    "video.offline.serverOldest": {
+      "days": {}
+    },
+    "video.offline.serverUsageEmpty": {},
+    "video.offline.serverCleanupHint": {},
+    "video.offline.serverKeepRecent": {},
+    "video.offline.serverKeepAll": {},
+    "video.offline.serverCleanupDone": {
+      "count": {},
+      "size": {}
+    },
+    "video.offline.serverCleanupNone": {},
+    "video.offline.serverCleanupFailed": {
+      "error": {}
+    },
     "video.offline.failed": {},
     "video.offline.retry": {},
     "video.offline.cancel": {},
@@ -3796,6 +3817,27 @@
     },
     "video.offline.stageVerifying": {},
     "video.offline.stageReplacing": {},
+    "video.offline.serverCleanup": {},
+    "video.offline.serverCleanupTitle": {},
+    "video.offline.serverUsage": {
+      "count": {},
+      "size": {}
+    },
+    "video.offline.serverOldest": {
+      "days": {}
+    },
+    "video.offline.serverUsageEmpty": {},
+    "video.offline.serverCleanupHint": {},
+    "video.offline.serverKeepRecent": {},
+    "video.offline.serverKeepAll": {},
+    "video.offline.serverCleanupDone": {
+      "count": {},
+      "size": {}
+    },
+    "video.offline.serverCleanupNone": {},
+    "video.offline.serverCleanupFailed": {
+      "error": {}
+    },
     "video.offline.failed": {},
     "video.offline.retry": {},
     "video.offline.cancel": {},

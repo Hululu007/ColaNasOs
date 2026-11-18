@@ -1,7 +1,7 @@
 # API 参考
 
 > 由 `tool/gen-api-doc.js` 从 `contracts/openapi.json` 生成，**请勿手改**；改契约后执行 `npm run api:doc`。
-> 当前：**422 个路径 / 450 个操作 / 19 个域**。鉴权统一为 `Authorization: Bearer <jwt>`，媒体直链另支持 `?token=`（5 分钟）。
+> 当前：**425 个路径 / 453 个操作 / 19 个域**。鉴权统一为 `Authorization: Bearer <jwt>`，媒体直链另支持 `?token=`（5 分钟）。
 
 ## 域索引
 
@@ -13,7 +13,7 @@
 - **文件**（`files`）· 18 个操作 · [跳转](#files)
 - **开放集成（Webhook / deliveries）**（`integration`）· 6 个操作 · [跳转](#integration)
 - **音乐**（`music`）· 35 个操作 · [跳转](#music)
-- **offline**（`offline`）· 8 个操作 · [跳转](#offline)
+- **offline**（`offline`）· 11 个操作 · [跳转](#offline)
 - **其他**（`other`）· 2 个操作 · [跳转](#other)
 - **相册**（`photo`）· 141 个操作 · [跳转](#photo)
 - **player**（`player`）· 2 个操作 · [跳转](#player)
@@ -1001,12 +1001,32 @@ Webhook 列表（不含 secret） · `webhookList`
 - 参数：`id` · 路径 · string · **必填**
 - 响应：200 `OfflineOk`
 
+#### `POST /api/v1/offline-downloads/jobs/{id}/release`
+
+释放任务占用的产物引用（下载完成后调用） · `offlineJobRelease`
+
+- 参数：`id` · 路径 · string · **必填**
+- 响应：200 `OfflineReleaseResult`
+
 #### `POST /api/v1/offline-downloads/quote`
 
 下载参数推荐与校验（编码 / 分辨率 / 码率联动、预估体积） · `offlineQuote`
 
 - 请求体：（空对象）
 - 响应：200 `OfflineQuoteResponse`
+
+#### `GET /api/v1/offline-downloads/storage`
+
+服务端转码产物占用（个数 / 体积 / 最久天数） · `offlineStorage`
+
+- 响应：200 `OfflineStorageUsage`
+
+#### `POST /api/v1/offline-downloads/storage/cleanup`
+
+清理服务端转码产物（不动原始影片，不动已下载到本机的文件） · `offlineStorageCleanup`
+
+- 请求体：（空对象）
+- 响应：200 `OfflineCleanupResult`
 
 ## other
 

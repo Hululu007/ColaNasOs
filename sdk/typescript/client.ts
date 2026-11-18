@@ -652,9 +652,24 @@ export class ColanasClient {
     return this.request('GET', '/api/v1/offline-downloads/jobs', params, 'query');
   }
 
+  /** 释放任务占用的产物引用（下载完成后调用） */
+  async offlineJobRelease(params: Record<string, any> = {}): Promise<any> {
+    return this.request('POST', '/api/v1/offline-downloads/jobs/{id}/release', params, 'body');
+  }
+
   /** 下载参数推荐与校验（编码 / 分辨率 / 码率联动、预估体积） */
   async offlineQuote(params: Record<string, any> = {}): Promise<any> {
     return this.request('POST', '/api/v1/offline-downloads/quote', params, 'body');
+  }
+
+  /** 服务端转码产物占用（个数 / 体积 / 最久天数） */
+  async offlineStorage(params: Record<string, any> = {}): Promise<any> {
+    return this.request('GET', '/api/v1/offline-downloads/storage', params, 'query');
+  }
+
+  /** 清理服务端转码产物（不动原始影片，不动已下载到本机的文件） */
+  async offlineStorageCleanup(params: Record<string, any> = {}): Promise<any> {
+    return this.request('POST', '/api/v1/offline-downloads/storage/cleanup', params, 'body');
   }
 
   /** 导出 OpenAPI 文档 */

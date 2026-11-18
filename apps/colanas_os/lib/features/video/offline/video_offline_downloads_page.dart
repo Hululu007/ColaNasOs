@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:nas_core/nas_core.dart';
 import 'package:nas_ui/nas_ui.dart';
 
 import '../player_page.dart';
@@ -28,6 +29,9 @@ class _VideoOfflineDownloadsPageState extends State<VideoOfflineDownloadsPage> {
   OfflineStore? _store;
   bool _loading = true;
   int _tab = 0;
+
+  /// 正在查占用 / 跑清理：按钮转圈并禁用，避免连点
+  bool _cleaning = false;
 
   @override
   void initState() {
@@ -79,12 +83,30 @@ class _VideoOfflineDownloadsPageState extends State<VideoOfflineDownloadsPage> {
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(NasTokens.spaceMd, 10, NasTokens.spaceMd, 6),
-          child: Wrap(
-            spacing: 8,
+          child: Row(
             children: [
-              _tabChip(0, tr('video.offline.tabActive'), active.length),
-              _tabChip(1, tr('video.offline.tabFailed'), failed.length),
-              _tabChip(2, tr('video.offline.tabDone'), done.length),
+              Expanded(
+                child: Wrap(
+                  spacing: 8,
+                  children: [
+                    _tabChip(0, tr('video.offline.tabActive'), active.length),
+                    _tabChip(1, tr('video.offline.tabFailed'), failed.length),
+                    _tabChip(2, tr('video.offline.tabDone'), done.length),
+                  ],
+                ),
+              ),
+              // 服务端产物：下载用的中转副本，留着只为免重编，不清会一直堆在服务器上
+              TextButton.icon(
+                onPressed: _cleaning ? null : _openServerCleanup,
+                icon: _cleaning
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.cleaning_services_outlined, size: 18),
+                label: Text(tr('video.offline.serverCleanup')),
+              ),
             ],
           ),
         ),
@@ -164,6 +186,62 @@ class _VideoOfflineDownloadsPageState extends State<VideoOfflineDownloadsPage> {
   Widget _empty(String text) => Center(
     child: Text(text, style: TextStyle(color: context.nasTextSecondary)),
   );
+
+  /// 「清理服务端产物」：先报占用，再让用户选保留多久，最后报释放了多少。
+  ///
+  /// 服务端那份转码产物只是「下载用的中转副本」：留着是为了同参数再下一次时
+  /// 免重编，不清就会一直堆在 NAS 盘上，所以给一个显式出口。
+  Future<void> _openServerCleanup() async {
+    if (_cleaning) return;
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() => _cleaning = true);
+    OfflineStorageUsage usage;
+    try {
+      usage = await OfflineDownloadManager.instance.serverStorage();
+    } catch (e) {
+      if (mounted) setState(() => _cleaning = false);
+      NasSnack.showOn(
+        messenger,
+        tr('video.offline.serverCleanupFailed', {'error': '$e'}),
+      );
+      return;
+    }
+    if (!mounted) return;
+    setState(() => _cleaning = false);
+    if (usage.count <= 0) {
+      NasSnack.showOn(messenger, tr('video.offline.serverUsageEmpty'));
+      return;
+    }
+
+    final days = await showDialog<int>(
+      context: context,
+      builder: (_) => _ServerCleanupDialog(usage: usage),
+    );
+    if (days == null || !mounted) return;
+
+    setState(() => _cleaning = true);
+    try {
+      final res = await OfflineDownloadManager.instance.cleanupServerArtifacts(
+        olderThanDays: days,
+      );
+      NasSnack.showOn(
+        messenger,
+        res.removed > 0
+            ? tr('video.offline.serverCleanupDone', {
+                'count': '${res.removed}',
+                'size': formatBytes(res.freedBytes),
+              })
+            : tr('video.offline.serverCleanupNone'),
+      );
+    } catch (e) {
+      NasSnack.showOn(
+        messenger,
+        tr('video.offline.serverCleanupFailed', {'error': '$e'}),
+      );
+    } finally {
+      if (mounted) setState(() => _cleaning = false);
+    }
+  }
 
   // ---------------------------------------------------------------- 进行中
 
@@ -442,5 +520,101 @@ class _VideoOfflineDownloadsPageState extends State<VideoOfflineDownloadsPage> {
     if (ok != true) return;
     await OfflineDownloadManager.instance.deleteItems([item.id]);
     if (mounted) await _load();
+  }
+}
+
+/// 清理服务端产物的确认框。返回值是「只清多少天前的」，`0` = 全清，null = 取消。
+class _ServerCleanupDialog extends StatefulWidget {
+  const _ServerCleanupDialog({required this.usage});
+
+  final OfflineStorageUsage usage;
+
+  @override
+  State<_ServerCleanupDialog> createState() => _ServerCleanupDialogState();
+}
+
+class _ServerCleanupDialogState extends State<_ServerCleanupDialog> {
+  /// 默认保守：只清三天前用过的，今天刚下过的产物留着（可能还要在别的设备上再下一次）
+  int _days = 3;
+
+  @override
+  Widget build(BuildContext context) {
+    final usage = widget.usage;
+    return AlertDialog(
+      title: Text(tr('video.offline.serverCleanupTitle')),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            tr('video.offline.serverUsage', {
+              'count': '${usage.count}',
+              'size': formatBytes(usage.bytes),
+            }),
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+          if (usage.oldestDays > 0)
+            Text(
+              tr('video.offline.serverOldest', {'days': '${usage.oldestDays}'}),
+              style: TextStyle(
+                fontSize: NasTokens.fontCaption,
+                color: context.nasTextSecondary,
+              ),
+            ),
+          const SizedBox(height: NasTokens.spaceSm),
+          Text(
+            tr('video.offline.serverCleanupHint'),
+            style: TextStyle(
+              fontSize: NasTokens.fontCaption,
+              color: context.nasTextSecondary,
+            ),
+          ),
+          const SizedBox(height: NasTokens.spaceSm),
+          _option(3, tr('video.offline.serverKeepRecent')),
+          _option(0, tr('video.offline.serverKeepAll')),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: Text(tr('common.cancel')),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(context, _days),
+          child: Text(tr('video.offline.serverCleanup')),
+        ),
+      ],
+    );
+  }
+
+  /// 自己画单选项：RadioListTile 的 groupValue/onChanged 在新 SDK 上已废弃，
+  /// 这里只是一行「图标 + 文案」，不值得为它引一套 RadioGroup。
+  Widget _option(int days, String label) {
+    final scheme = Theme.of(context).colorScheme;
+    final on = _days == days;
+    return InkWell(
+      borderRadius: BorderRadius.circular(NasTokens.radiusSm),
+      onTap: () => setState(() => _days = days),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 5),
+        child: Row(
+          children: [
+            Icon(
+              on ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+              size: 18,
+              color: on ? scheme.primary : context.nasTextSecondary,
+            ),
+            const SizedBox(width: 8),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: NasTokens.fontBody,
+                fontWeight: on ? FontWeight.w600 : FontWeight.w400,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }

@@ -466,6 +466,20 @@ class OfflineDownloadManager {
     libraryRevision.value++;
   }
 
+  /// 服务端转码产物的占用（下载管理页「清理服务端产物」用）
+  Future<OfflineStorageUsage> serverStorage() =>
+      ApiSession.instance.client.offlineStorage();
+
+  /// 清理服务端转码产物。`olderThanDays = 0` 表示全清。
+  ///
+  /// 产物只是「下载用的中转副本」：留着是为了同参数再下一次时免重编，
+  /// 但不清的话会一直堆在服务端盘上，所以给用户一个显式出口。
+  Future<OfflineCleanupResult> cleanupServerArtifacts({
+    int olderThanDays = 0,
+  }) => ApiSession.instance.client.offlineStorageCleanup(
+    body: OfflineCleanupBody(olderThanDays: olderThanDays),
+  );
+
   /// 记录播放进度（离线也写；联网后再由播放页同步给服务端）
   Future<void> savePlayback(String itemId, int positionMs) async {
     final store = _store;
@@ -908,6 +922,19 @@ class OfflineDownloadManager {
     await store.saveTasks();
     _publishTasks();
     libraryRevision.value++;
+
+    // 把服务端那条产物引用还回去：文件已经落到本机，服务端那份留着只为
+    // 「同参数再下一次」省一次转码，按 TTL 自然回收即可。不 release 的话
+    // `ref_count` 只增不减，产物会永远堆在服务端盘上。
+    if (task.jobId.isNotEmpty) {
+      unawaited(() async {
+        try {
+          await ApiSession.instance.client.offlineJobRelease(id: task.jobId);
+        } catch (_) {
+          // 释放失败不影响这次下载：产物多留一轮，服务端还有 TTL / 手动清理兜底
+        }
+      }());
+    }
   }
 
   /// 抓外挂字幕。一个都没有 / 服务端转不了（图形字幕）都返回空数组，不打断入库。

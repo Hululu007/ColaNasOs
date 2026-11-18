@@ -12794,6 +12794,94 @@ class OfflineOk {
       };
 }
 
+class OfflineStorageUsage {
+  final int count;
+  final int bytes;
+  final int oldestDays;
+
+  const OfflineStorageUsage({
+    required this.count,
+    required this.bytes,
+    required this.oldestDays,
+  });
+
+  factory OfflineStorageUsage.fromJson(Map<String, dynamic> json) => OfflineStorageUsage(
+        count: json['count'] as int,
+        bytes: json['bytes'] as int,
+        oldestDays: json['oldestDays'] as int,
+      );
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+        'count': count,
+        'bytes': bytes,
+        'oldestDays': oldestDays,
+      };
+}
+
+class OfflineCleanupBody {
+  final int? olderThanDays;
+
+  const OfflineCleanupBody({
+    this.olderThanDays,
+  });
+
+  factory OfflineCleanupBody.fromJson(Map<String, dynamic> json) => OfflineCleanupBody(
+        olderThanDays: json['olderThanDays'] == null ? null : json['olderThanDays'] as int,
+      );
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+        if (olderThanDays != null) 'olderThanDays': olderThanDays!,
+      };
+}
+
+class OfflineCleanupResult {
+  final int removed;
+  final int freedBytes;
+  final int count;
+  final int bytes;
+
+  const OfflineCleanupResult({
+    required this.removed,
+    required this.freedBytes,
+    required this.count,
+    required this.bytes,
+  });
+
+  factory OfflineCleanupResult.fromJson(Map<String, dynamic> json) => OfflineCleanupResult(
+        removed: json['removed'] as int,
+        freedBytes: json['freedBytes'] as int,
+        count: json['count'] as int,
+        bytes: json['bytes'] as int,
+      );
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+        'removed': removed,
+        'freedBytes': freedBytes,
+        'count': count,
+        'bytes': bytes,
+      };
+}
+
+class OfflineReleaseResult {
+  final bool ok;
+  final int refCount;
+
+  const OfflineReleaseResult({
+    required this.ok,
+    required this.refCount,
+  });
+
+  factory OfflineReleaseResult.fromJson(Map<String, dynamic> json) => OfflineReleaseResult(
+        ok: json['ok'] as bool,
+        refCount: json['refCount'] as int,
+      );
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+        'ok': ok,
+        'refCount': refCount,
+      };
+}
+
 class PlayerSessionCreateBody {
   final String id;
   final dynamic preset;

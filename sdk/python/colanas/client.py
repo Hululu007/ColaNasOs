@@ -531,9 +531,21 @@ class ColanasClient:
         """任务列表（详情页按钮状态 / 下载管理页轮询）"""
         return self._request("GET", "/api/v1/offline-downloads/jobs", params, "query")
 
+    def offline_job_release(self, **params):
+        """释放任务占用的产物引用（下载完成后调用）"""
+        return self._request("POST", "/api/v1/offline-downloads/jobs/{id}/release", params, "body")
+
     def offline_quote(self, **params):
         """下载参数推荐与校验（编码 / 分辨率 / 码率联动、预估体积）"""
         return self._request("POST", "/api/v1/offline-downloads/quote", params, "body")
+
+    def offline_storage(self, **params):
+        """服务端转码产物占用（个数 / 体积 / 最久天数）"""
+        return self._request("GET", "/api/v1/offline-downloads/storage", params, "query")
+
+    def offline_storage_cleanup(self, **params):
+        """清理服务端转码产物（不动原始影片，不动已下载到本机的文件）"""
+        return self._request("POST", "/api/v1/offline-downloads/storage/cleanup", params, "body")
 
     def openapi_json(self, **params):
         """导出 OpenAPI 文档"""
