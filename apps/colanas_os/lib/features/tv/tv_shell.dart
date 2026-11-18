@@ -142,17 +142,28 @@ class _TvShellState extends State<TvShell> {
       var libraries = const <VideoLibraryItem>[];
       try {
         final res = await ApiSession.instance.client.videoLibraryList();
-        libraries = [...res.items]..sort((a, b) {
-          final ao = a.sortOrder ?? 0;
-          final bo = b.sortOrder ?? 0;
-          if (ao != bo) return ao.compareTo(bo);
-          return a.name.compareTo(b.name);
-        });
+        libraries = [...res.items]..sort(_compareLibraries);
       } catch (_) {
         // 拉不到库列表时退回「影视首页」tab，至少不会让影视分区消失。
         libraries = const <VideoLibraryItem>[];
       }
+      // 有合集才出现「我的合集」tab：位置在「电视剧」之后、「日本电影库」之前
+      // （合集本身是电影 / 剧集的集合，排在图片库后面没道理）。
+      var hasCollections = false;
+      try {
+        final collections = await ApiSession.instance.client.videoCollectionList();
+        hasCollections = collections.items.isNotEmpty;
+      } catch (_) {
+        hasCollections = false;
+      }
+      var collectionsAdded = false;
       for (final lib in libraries) {
+        if (hasCollections &&
+            !collectionsAdded &&
+            _libraryRank(lib.libType) >= 3) {
+          tabs.add(_collectionsTab());
+          collectionsAdded = true;
+        }
         tabs.add(
           _TvTab(
             id: 'lib:${lib.id}',
@@ -163,6 +174,7 @@ class _TvShellState extends State<TvShell> {
           ),
         );
       }
+      if (hasCollections && !collectionsAdded) tabs.add(_collectionsTab());
       if (libraries.isEmpty) {
         tabs.add(
           _TvTab(
@@ -173,23 +185,6 @@ class _TvShellState extends State<TvShell> {
           ),
         );
       }
-    }
-
-    // 有合集才出现「我的合集」tab（和 PC 端二级菜单同一份数据）
-    try {
-      final collections = await ApiSession.instance.client.videoCollectionList();
-      if (collections.items.isNotEmpty) {
-        tabs.add(
-          _TvTab(
-            id: 'collections',
-            label: tr('video.collection.title'),
-            icon: Icons.collections_bookmark_outlined,
-            kind: _TvTabKind.collections,
-          ),
-        );
-      }
-    } catch (_) {
-      // 合集读不到：少一个 tab，不影响其它分区
     }
 
     for (final app in apps) {
@@ -281,6 +276,35 @@ class _TvShellState extends State<TvShell> {
     'image' || 'mixed' => Icons.photo_library_outlined,
     _ => Icons.movie_outlined,
   };
+
+  /// TV 顶部 tab 的库顺序（用户 2026-11-18 指定）：
+  /// 电影 → 电视剧 → 合集 → 日本电影 → 图片视频混合 → 图片。
+  ///
+  /// 合集占 rank 2：它不是库，由 [_loadTabs] 插在第一个 rank>=3 的库之前。
+  static int _libraryRank(String libType) => switch (libType) {
+    'movie' => 0,
+    'tv' || 'short_tv' => 1,
+    'jp_movie' => 3,
+    'mixed' => 4,
+    'image' => 5,
+    _ => 6,
+  };
+
+  static int _compareLibraries(VideoLibraryItem a, VideoLibraryItem b) {
+    final rank = _libraryRank(a.libType).compareTo(_libraryRank(b.libType));
+    if (rank != 0) return rank;
+    final ao = a.sortOrder ?? 0;
+    final bo = b.sortOrder ?? 0;
+    if (ao != bo) return ao.compareTo(bo);
+    return a.name.compareTo(b.name);
+  }
+
+  static _TvTab _collectionsTab() => _TvTab(
+    id: 'collections',
+    label: tr('video.collection.title'),
+    icon: Icons.collections_bookmark_outlined,
+    kind: _TvTabKind.collections,
+  );
 
   FocusNode _tabNodeFor(String id) => _tabNodes.putIfAbsent(
     id,
