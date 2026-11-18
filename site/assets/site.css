@@ -852,6 +852,123 @@ figure {
   word-break: break-all;
 }
 
+/* ---------- 更新说明（下载表格上方的折叠块） ---------- */
+.changelog {
+  margin: 0 0 18px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.changelog > summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 15px 22px;
+  font-size: 14px;
+  color: var(--ink-2);
+}
+
+.changelog > summary::-webkit-details-marker {
+  display: none;
+}
+
+.changelog__icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  color: var(--blue);
+}
+
+.changelog__title {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.changelog__hint {
+  margin-left: auto;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.changelog > summary::after {
+  content: '＋';
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 15px;
+}
+
+.changelog[open] > summary::after {
+  content: '－';
+}
+
+.changelog[open] > summary {
+  border-bottom: 1px solid var(--line);
+}
+
+.changelog__body {
+  padding: 4px 22px 20px;
+  font-size: 14px;
+  line-height: 1.78;
+  color: var(--ink-2);
+}
+
+.changelog__body h4 {
+  margin: 22px 0 6px;
+  font-size: 14.5px;
+  color: var(--ink);
+}
+
+.changelog__body h4:first-child {
+  margin-top: 16px;
+}
+
+.changelog__body ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 5px;
+}
+
+.changelog__body li {
+  font-size: 13.6px;
+}
+
+.changelog__body code {
+  background: rgba(0, 0, 0, 0.05);
+  padding: 1px 5px;
+  border-radius: 5px;
+  font-size: 12.6px;
+}
+
+.changelog__lead {
+  margin: 14px 0 0;
+}
+
+.changelog__note {
+  margin: 12px 0 0;
+  padding: 10px 14px;
+  background: rgba(0, 113, 227, 0.06);
+  border-left: 3px solid var(--blue);
+  border-radius: 10px;
+  font-size: 13.4px;
+}
+
+@media (max-width: 560px) {
+  .changelog__hint {
+    display: none;
+  }
+  .changelog > summary {
+    padding: 14px 18px;
+  }
+  .changelog__body {
+    padding: 2px 18px 18px;
+  }
+}
+
 /* ---------- 常见问题 ---------- */
 .faq {
   margin-top: 36px;
