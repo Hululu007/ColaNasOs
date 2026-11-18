@@ -3724,6 +3724,15 @@
     "video.offline.downloading": {},
     "video.offline.downloaded": {},
     "video.offline.preparing": {},
+    "video.offline.stageQueued": {},
+    "video.offline.stageTranscoding": {
+      "percent": {}
+    },
+    "video.offline.stageDownloading": {
+      "percent": {}
+    },
+    "video.offline.stageVerifying": {},
+    "video.offline.stageReplacing": {},
     "video.offline.failed": {},
     "video.offline.retry": {},
     "video.offline.cancel": {},
@@ -3778,6 +3787,15 @@
     "video.offline.downloading": {},
     "video.offline.downloaded": {},
     "video.offline.preparing": {},
+    "video.offline.stageQueued": {},
+    "video.offline.stageTranscoding": {
+      "percent": {}
+    },
+    "video.offline.stageDownloading": {
+      "percent": {}
+    },
+    "video.offline.stageVerifying": {},
+    "video.offline.stageReplacing": {},
     "video.offline.failed": {},
     "video.offline.retry": {},
     "video.offline.cancel": {},

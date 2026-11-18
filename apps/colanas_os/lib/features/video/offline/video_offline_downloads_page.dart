@@ -100,13 +100,64 @@ class _VideoOfflineDownloadsPageState extends State<VideoOfflineDownloadsPage> {
     );
   }
 
+  /// 页签用同一套胶囊样式：未选中是面板色底 + 次要文字色，选中换成主色淡底 +
+  /// 主色文字 + 加粗。统一自己画形状，不再让 ChoiceChip 给未选中项描一圈边框、
+  /// 给选中项去掉边框还塞一个对勾（两套形状叠在一起看着像两种控件）。
   Widget _tabChip(int index, String label, int count) {
+    final scheme = Theme.of(context).colorScheme;
     final selected = _tab == index;
-    return ChoiceChip(
-      label: Text(count > 0 ? '$label $count' : label),
-      selected: selected,
-      onSelected: (_) => setState(() => _tab = index),
-      selectedColor: Theme.of(context).colorScheme.primary.withValues(alpha: 0.16),
+    final radius = BorderRadius.circular(999);
+    return Material(
+      color: selected
+          ? scheme.primary.withValues(alpha: 0.14)
+          : context.nasStyle.panelColor,
+      borderRadius: radius,
+      child: InkWell(
+        borderRadius: radius,
+        onTap: () => setState(() => _tab = index),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: NasTokens.fontBody,
+                  fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                  color: selected ? scheme.primary : context.nasTextSecondary,
+                ),
+              ),
+              if (count > 0) ...[
+                const SizedBox(width: 6),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 1,
+                  ),
+                  decoration: BoxDecoration(
+                    color: selected
+                        ? scheme.primary.withValues(alpha: 0.20)
+                        : context.nasStyle.panelBorderColor,
+                    borderRadius: radius,
+                  ),
+                  child: Text(
+                    '$count',
+                    style: TextStyle(
+                      fontSize: NasTokens.fontMicro,
+                      height: 1.3,
+                      fontWeight: FontWeight.w600,
+                      color: selected
+                          ? scheme.primary
+                          : context.nasTextSecondary,
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -115,6 +166,40 @@ class _VideoOfflineDownloadsPageState extends State<VideoOfflineDownloadsPage> {
   );
 
   // ---------------------------------------------------------------- 进行中
+
+  /// 阶段文案 + 该阶段的百分比（排队、校验这类阶段没有百分比就返回 null）。
+  ///
+  /// 百分比按**当前阶段**算，不用 `task.overall`：整体进度里转码只占前 30%，
+  /// 直接显示会让转码到一半的片子看着像刚起步。
+  (String, int?) _stageOf(OfflineTaskRecord task) {
+    switch (task.state) {
+      case OfflineTaskState.waitingWifi:
+        return (tr('video.offline.waitingWifi'), null);
+      case OfflineTaskState.paused:
+        return (tr('video.offline.pausedState'), null);
+      case OfflineTaskState.queued:
+        return (tr('video.offline.stageQueued'), null);
+      case OfflineTaskState.transcoding:
+        final pct = (task.progress * 100).clamp(0, 100).round();
+        return (tr('video.offline.stageTranscoding', {'percent': '$pct'}), pct);
+      case OfflineTaskState.downloading:
+        if (task.totalBytes <= 0) return (tr('video.offline.downloading'), null);
+        final pct = (task.downloadedBytes * 100 / task.totalBytes)
+            .clamp(0, 100)
+            .round();
+        return (
+          '${tr('video.offline.stageDownloading', {'percent': '$pct'})} · '
+              '${formatBytes(task.downloadedBytes)} / ${formatBytes(task.totalBytes)}',
+          pct,
+        );
+      case OfflineTaskState.verifying:
+        return (tr('video.offline.stageVerifying'), null);
+      case OfflineTaskState.replacing:
+        return (tr('video.offline.stageReplacing'), null);
+      default:
+        return (tr('video.offline.downloading'), null);
+    }
+  }
 
   Widget _activeList(List<OfflineTaskRecord> tasks) {
     if (tasks.isEmpty) return _empty(tr('video.offline.empty'));
@@ -126,17 +211,12 @@ class _VideoOfflineDownloadsPageState extends State<VideoOfflineDownloadsPage> {
         final task = tasks[i];
         final paused =
             task.state == OfflineTaskState.paused || task.state == OfflineTaskState.waitingWifi;
-        final label = switch (task.state) {
-          OfflineTaskState.waitingWifi => tr('video.offline.waitingWifi'),
-          OfflineTaskState.paused => tr('video.offline.pausedState'),
-          OfflineTaskState.transcoding || OfflineTaskState.queued =>
-            tr('video.offline.preparing'),
-          _ => tr('video.offline.downloading'),
-        };
+        final (label, percent) = _stageOf(task);
         return _card(
           title: task.title,
           subtitle: label,
           progress: task.overall,
+          percent: percent,
           showProgress: true,
           actions: [
             if (paused)
@@ -240,6 +320,7 @@ class _VideoOfflineDownloadsPageState extends State<VideoOfflineDownloadsPage> {
     required String subtitle,
     required List<Widget> actions,
     double? progress,
+    int? percent,
     bool showProgress = false,
     bool danger = false,
   }) {
@@ -273,9 +354,30 @@ class _VideoOfflineDownloadsPageState extends State<VideoOfflineDownloadsPage> {
           ),
           if (showProgress) ...[
             const SizedBox(height: 8),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(4),
-              child: LinearProgressIndicator(value: progress, minHeight: 6),
+            Row(
+              children: [
+                Expanded(
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(4),
+                    child: LinearProgressIndicator(
+                      value: progress,
+                      minHeight: 6,
+                    ),
+                  ),
+                ),
+                // 百分比跟着条一起出现：光看条分不出「刚起步」还是「卡住了」
+                if (percent != null) ...[
+                  const SizedBox(width: 8),
+                  Text(
+                    '$percent%',
+                    style: TextStyle(
+                      fontSize: NasTokens.fontMicro,
+                      fontWeight: FontWeight.w600,
+                      color: context.nasTextSecondary,
+                    ),
+                  ),
+                ],
+              ],
             ),
           ],
           Align(

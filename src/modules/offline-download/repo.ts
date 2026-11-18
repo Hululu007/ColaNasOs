@@ -181,6 +181,37 @@ export async function updateJob(
 }
 
 /**
+ * 把「编码任务已经收场、job 还挂在 queued / transcoding」的任务判死。
+ *
+ * 正常路径上 handler 自己会写 failed / ready；但 handler 万一在写库前就挂了
+ * （进程被杀、任务被批量取消、任务行被清理），job 会永远停在 queued，
+ * 客户端就一直是「准备中」。读任务行是一次主键查询，成本可以忽略。
+ */
+export async function failOrphanJob(k: KernelApi, job: JobRow): Promise<JobRow> {
+  if (job.state !== 'queued' && job.state !== 'transcoding') return job;
+  if (!job.task_id) return job;
+  const row = (
+    await sql<{ state: string; error: string | null }>`
+      select state, error from tasks where id = ${job.task_id}
+    `.execute(k.db)
+  ).rows[0];
+  const state = row?.state ?? '';
+  if (state === 'failed' || state === 'canceled') {
+    await updateJob(k, job.id, {
+      state,
+      error: row?.error || (state === 'canceled' ? 'canceled' : 'encode_task_failed'),
+    });
+    return (await getJob(k, job.id)) ?? job;
+  }
+  // 任务行没了（被清理）但 job 还在跑：任务不可能再回来
+  if (!row) {
+    await updateJob(k, job.id, { state: 'failed', error: 'encode_task_lost' });
+    return (await getJob(k, job.id)) ?? job;
+  }
+  return job;
+}
+
+/**
  * 把行转成接口 DTO。
  *
  * `artifact` 只在这里拼：任务行里那个 artifact_id 可能指向一条已经被回收的产物

@@ -516,9 +516,12 @@ class OfflineDownloadManager {
     if (active.isNotEmpty) _pushNotification(active.first);
   }
 
+  /// 叫醒调度器。重复调用是安全的：`_pump` 自己在跑时会直接返回。
+  ///
+  /// ⚠️ 这里**不能**再自己置 `_pumping`：async 函数会同步执行到第一个 await，
+  /// 先置位再调用 `_pump()` 会让它撞上自己那句「正在跑就返回」而立刻退出，
+  /// 于是 `_pumping` 永远停在 true —— 任务全部卡在「准备中」，一条都不会开工。
   void _schedulePump() {
-    if (_pumping) return;
-    _pumping = true;
     unawaited(_pump());
   }
 
@@ -537,10 +540,12 @@ class OfflineDownloadManager {
           ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
 
         if (pending.isEmpty) {
-          // 还有在跑的 / 在退避等待的就等一等；都没有了就收工
+          // 还有在跑的 / 在退避等待的就等一等；都没有了就收工。
+          // 800ms 一次：一次转码要跑几十分钟，几秒的发现延迟完全无感，
+          // 但能把空转的唤醒次数压到最低。
           final waiting = store.tasks.values.any((t) => t.canRun);
           if (_inflight == 0 && !waiting) break;
-          await Future<void>.delayed(const Duration(milliseconds: 300));
+          await Future<void>.delayed(const Duration(milliseconds: 800));
           continue;
         }
 
@@ -564,7 +569,7 @@ class OfflineDownloadManager {
             }),
           );
         }
-        await Future<void>.delayed(const Duration(milliseconds: 200));
+        await Future<void>.delayed(const Duration(milliseconds: 800));
       }
     } finally {
       _pumping = false;
@@ -585,6 +590,26 @@ class OfflineDownloadManager {
 
   /// 退避：5s / 15s / 45s
   static int _backoffMs(int attempt) => 5000 * (attempt <= 1 ? 1 : (attempt == 2 ? 3 : 9));
+
+  /// 服务端错误码 → 用户能看懂的一句话。认不出来的码原样透出，
+  /// 那通常是 ffmpeg 的原始报错，直接看到比吞掉更有用。
+  static String _encodeErrorText(String? raw) {
+    switch ((raw ?? '').trim()) {
+      case 'source_missing':
+        return '片源不在了（可能被移动或删除），重新扫描媒体库后再试';
+      case 'source offline':
+        return '片源所在存储离线，等它挂载上来再试';
+      case 'encode_task_lost':
+        return '转码任务丢了（服务端可能重启过），点重试会重新排一次';
+      case 'encode_task_failed':
+        return '转码任务异常退出，点重试再排一次';
+      case 'bad_spec':
+        return '下载参数不合法，重新选一次分辨率再试';
+      case '':
+        return '服务端编码失败';
+    }
+    return (raw ?? '').trim();
+  }
 
   /// 把当前任务的进度推到通知栏（2 秒节流；状态一变立刻推）。
   void _pushNotification(OfflineTaskRecord task) {
@@ -661,7 +686,7 @@ class OfflineDownloadManager {
         }
         final job = await client.offlineJobGet(id: task.jobId);
         final state = '${job.state}';
-        if (state == 'failed') throw TransferFailed(job.error ?? '服务端编码失败');
+        if (state == 'failed') throw TransferFailed(_encodeErrorText(job.error));
         if (state == 'canceled') throw const TransferCanceled();
         if (state == 'ready') {
           task.progress = 1;
@@ -672,7 +697,11 @@ class OfflineDownloadManager {
             : OfflineTaskState.transcoding;
         task.progress = (job.progress / 100).clamp(0.0, 1.0).toDouble();
         _publishTasks();
-        await Future<void>.delayed(const Duration(seconds: 1));
+        // 排队阶段 1 秒一次（要尽快发现「开始转码了」），
+        // 真跑起来后 2 秒一次就够 —— 一次整片转码几十分钟，少发一半请求
+        await Future<void>.delayed(
+          Duration(milliseconds: state == 'queued' ? 1000 : 2000),
+        );
       }
 
       // 3) 产物元信息

@@ -38,6 +38,7 @@ import {
   getJobByIdempotency,
   insertJob,
   jobToDto,
+  failOrphanJob,
   libraryAudioNormalize,
   loadDownloadItem,
   updateJob,
@@ -574,8 +575,10 @@ export const offlineDownload: ServerModule = {
       }),
       async (req) => {
         const id = String((req.params as { id?: string }).id || '');
-        const job = await getJob(k, id);
-        if (!job) throw Object.assign(new Error('job not found'), { statusCode: 404 });
+        const found = await getJob(k, id);
+        if (!found) throw Object.assign(new Error('job not found'), { statusCode: 404 });
+        // 编码任务已经收场的任务不再一直挂在「准备中」
+        const job = await failOrphanJob(k, found);
         const art = job.artifact_id ? await artifactById(k, job.artifact_id) : null;
         return jobToDto(job, art && (await artifactExists(k, art)) ? art : null);
       },
