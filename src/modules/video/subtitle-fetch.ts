@@ -215,7 +215,8 @@ export async function loginSubtitleSite(
       });
       const text = await home.text().catch(() => '');
       if (WRONG_PWD_RE.test(text)) return { ok: false, reason: 'wrong_password', cookie: '' };
-      const stillAnonymous = /inputLogin/i.test(text) || /href=["\'][^"']*login\.php/i.test(text);
+      const stillAnonymous =
+        /inputLogin/i.test(text) || /href=["'][^"']*login\.php/i.test(text);
       if (stillAnonymous && !/logout/i.test(text)) {
         // 首页还是匿名态 → 没登上
         return { ok: false, reason: 'wrong_password', cookie: '' };
