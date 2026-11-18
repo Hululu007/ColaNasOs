@@ -97,14 +97,139 @@ export function decodeSubtitle(buffer: Buffer): string {
 
 const LIMIT_RE = /cannot download more than \d+ subtitles a day/i;
 
+/** 登录页/登录失败的判定文案（站点会把这句塞进 error_block） */
+const WRONG_PWD_RE = /wrong username or password/i;
+
 export interface FetchSubtitleOptions {
   base?: string;
   /** 已登录的 PHPSESSID（未登录也能下，但每天 5 个） */
   cookie?: string;
+  /**
+   * 登录会话 cookie：带上它就不再受「每天 5 个/天」限制。
+   * 与 `cookie` 的区别是——链路里后续步骤种出来的 PHPSESSID **不覆盖**它
+   * （覆盖等于把登录态换回匿名会话，限制又回来了）。
+   */
+  authCookie?: string;
   timeoutMs?: number;
   /** 倒计时等待上限；测试传 0 */
   waitMs?: number;
   fetchImpl?: typeof fetch;
+}
+
+export interface LoginResult {
+  ok: boolean;
+  /** 失败原因（可读，直接给用户看）：wrong_password / network / unexpected */
+  reason: string;
+  /** 登录后的 PHPSESSID；带上它就不再受「每天 5 条」限制 */
+  cookie: string;
+}
+
+/**
+ * 登录 avsubtitles.com。
+ *
+ * 实测要点：
+ * 1. 表单是 `POST login_do.php`，字段 `inputLogin`（用户名或邮箱）+ `inputPassword`；
+ * 2. **必须先 GET 一次 login.php** 拿到 PHPSESSID，否则 POST 会被当成新会话拒掉；
+ * 3. 成功 = 302 跳到 `login.php` 之外的地址（通常回首页）；
+ *    失败 = 302 回 `login.php`，且页面里有 `wrong username or password`；
+ * 4. 站点会把 `avsubtitles.com` 301 到 `www.*`，POST 也要跟这次 301。
+ */
+export async function loginSubtitleSite(
+  user: string,
+  pass: string,
+  opts: FetchSubtitleOptions = {},
+): Promise<LoginResult> {
+  const login = String(user || '').trim();
+  const pwd = String(pass || '');
+  if (!login || !pwd) return { ok: false, reason: 'no_credentials', cookie: '' };
+
+  const doFetch = opts.fetchImpl ?? (proxyFetch as unknown as typeof fetch);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), Math.max(2000, opts.timeoutMs ?? 12_000));
+  try {
+    let base = (opts.base || 'https://avsubtitles.com').replace(/\/$/, '');
+    const ua = { 'user-agent': 'Mozilla/5.0 (compatible; ColaNasOs/1.0)' };
+
+    // ① 先取登录页：既拿到 PHPSESSID，也把 301 后的真实域名定下来
+    const page = await doFetch(`${base}/login.php`, {
+      signal: controller.signal,
+      redirect: 'manual',
+      headers: ua,
+    });
+    if (page.status === 301 || page.status === 308) {
+      const loc = page.headers.get('location');
+      if (!loc) return { ok: false, reason: 'network', cookie: '' };
+      base = new URL(loc, base).origin;
+    } else if (!page.ok) {
+      return { ok: false, reason: 'network', cookie: '' };
+    }
+    const seed = pickSessionCookie(page.headers);
+
+    // ② POST 登录。302 的落点决定成败：跳回 login.php = 没登进去。
+    const res = await doFetch(`${base}/login_do.php`, {
+      method: 'POST',
+      signal: controller.signal,
+      redirect: 'manual',
+      headers: {
+        ...ua,
+        'content-type': 'application/x-www-form-urlencoded',
+        referer: `${base}/login.php`,
+        ...(seed ? { cookie: seed } : {}),
+      },
+      body: new URLSearchParams({
+        inputLogin: login,
+        inputPassword: pwd,
+        redirect: '',
+      }).toString(),
+    });
+
+    const session = pickSessionCookie(res.headers) || seed;
+    const location = res.headers.get('location') || '';
+
+    // 跳回 login.php（含 query）= 登录被拒
+    if (res.status >= 300 && res.status < 400 && /login\.php/i.test(location)) {
+      // 拿到错误文案更友好，但页面要再请求一次才知道；这里直接判失败
+      let detail = 'wrong_password';
+      try {
+        const back = await doFetch(`${base}/login.php`, {
+          signal: controller.signal,
+          redirect: 'manual',
+          headers: { ...ua, ...(session ? { cookie: session } : {}) },
+        });
+        const text = await back.text().catch(() => '');
+        if (WRONG_PWD_RE.test(text)) detail = 'wrong_password';
+        else if (!text) detail = 'network';
+      } catch {
+        // 拿不到错误页也按密码错处理：302 回到登录页本身就是被拒
+      }
+      return { ok: false, reason: detail, cookie: '' };
+    }
+
+    // ③ 校验：拿首页看是不是还停在匿名态。
+    // 匿名首页带「登录」入口（login.php）；登录成功后首页会带 logout / 账户区。
+    try {
+      const home = await doFetch(`${base}/`, {
+        signal: controller.signal,
+        redirect: 'manual',
+        headers: { ...ua, ...(session ? { cookie: session } : {}) },
+      });
+      const text = await home.text().catch(() => '');
+      if (WRONG_PWD_RE.test(text)) return { ok: false, reason: 'wrong_password', cookie: '' };
+      const stillAnonymous = /inputLogin/i.test(text) || /href=["\'][^"']*login\.php/i.test(text);
+      if (stillAnonymous && !/logout/i.test(text)) {
+        // 首页还是匿名态 → 没登上
+        return { ok: false, reason: 'wrong_password', cookie: '' };
+      }
+    } catch {
+      // 首页探测失败不影响登录结论（302 落点已经说明问题）
+    }
+
+    return { ok: true, reason: 'ok', cookie: session };
+  } catch {
+    return { ok: false, reason: 'network', cookie: '' };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function get(
@@ -219,12 +344,19 @@ export async function fetchSubtitle(
 
   // 会话 cookie 跟着链路走：任何一步种下的 PHPSESSID 都要带给下一步。
   let session: FetchSubtitleOptions = { ...opts };
-  const track = (res: { headers: Headers } | null) => {
+  let track = (res: { headers: Headers } | null) => {
     const cookie = res ? pickSessionCookie(res.headers) : '';
     if (cookie && cookie !== session.cookie) {
       session = { ...session, cookie };
     }
   };
+  // 登录态：authCookie 优先，绝不被后续步骤种出来的 PHPSESSID 顶掉。
+  // 顶掉就等于把会话换回匿名，「每天 5 个」的限制立刻回来。
+  const authCookie = String(opts.authCookie || '').trim();
+  if (authCookie) {
+    session = { ...session, cookie: authCookie };
+    track = () => {};
+  }
 
   const search = await get(
     `${base}/search_results.php?search=${encodeURIComponent(clean)}`,

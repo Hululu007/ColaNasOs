@@ -3292,7 +3292,7 @@ class ApiClient {
     return _asMap(_decode(res));
   }
 
-  /// 测试各字幕源链接（连通性，不下载）
+  /// 测试各字幕源凭据是否可用（真登录 / 真查询）
   Future<Map<String, dynamic>> videoSubtitleSourcesTest({required Map<String, dynamic> body}) async {
     final res = await transport.send('POST', _uri('/api/v1/video/subtitle/test-sources'), headers: await _headers(jsonBody: true), body: utf8.encode(jsonEncode(body)));
     return _asMap(_decode(res));

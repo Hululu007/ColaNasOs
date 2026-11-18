@@ -5,6 +5,7 @@ import { secured } from '../../../../kernel/route';
 import { proxyFetch } from '../../../../kernel/proxy-fetch';
 import { TAG } from '../util';
 import { xunleiSubtitleUrl } from '../subtitle-normal';
+import { fetchSubtitle, loginSubtitleSite, SUB_STATE } from '../subtitle-fetch';
 import type { FastifyInstance } from 'fastify';
 import type { KernelApi } from '../../../../kernel/types';
 
@@ -122,6 +123,8 @@ async function probeSource(
 }
 
 const TestSourcesBody = Type.Object({
+  javUser: Type.Optional(Type.String({ maxLength: 100 })),
+  javPass: Type.Optional(Type.String({ maxLength: 200 })),
   assrtToken: Type.Optional(Type.String({ maxLength: 200 })),
   openSubtitlesKey: Type.Optional(Type.String({ maxLength: 200 })),
 });
@@ -270,15 +273,21 @@ export async function registerVideoSettings(
     },
   );
 
-  // 字幕源连通性自检：把 JAV / Assrt / OpenSubtitles / 迅雷 都打一遍，结果逐条返回。
-  // 只探测「链接是否通」，不做真实搜索下载；凭据从输入框传进来（没保存也能测）。
+  // 字幕源自检：把 JAV / Assrt / OpenSubtitles / 迅雷 都打一遍，结果逐条返回。
+  //
+  // 这里验的是「**凭据能不能用**」，不是「网站能不能打开」：
+  //   * JAV：真的去登录一次 → 明确报「登录成功 / 登录失败（账号或密码不对）」，
+  //     登录成功再跑一次真实搜索，确认登录会话确实能抓到片（而不只是登录页能访问）。
+  //   * Assrt / OpenSubtitles：带上 Token / Key 真查一次接口，能返回数据才算可用。
+  //   * 迅雷：免配置源，没有凭据可验，只探接口是否通。
+  // 凭据从输入框传进来（没保存也能测）。
   app.post(
     '/api/v1/video/subtitle/test-sources',
     secured('video:write', {
       schema: {
         operationId: 'videoSubtitleSourcesTest',
         tags: TAG,
-        summary: '测试各字幕源链接（连通性，不下载）',
+        summary: '测试各字幕源凭据是否可用（真登录 / 真查询）',
         body: TestSourcesBody,
         response: {
           200: Type.Object({ sources: Type.Array(TestSourceItem) }),
@@ -286,8 +295,15 @@ export async function registerVideoSettings(
       },
     }),
     async (req) => {
-      const body = (req.body || {}) as { assrtToken?: string; openSubtitlesKey?: string };
+      const body = (req.body || {}) as {
+        javUser?: string;
+        javPass?: string;
+        assrtToken?: string;
+        openSubtitlesKey?: string;
+      };
       const saved = subtitleConf(k);
+      const javUser = String(body.javUser ?? saved.javUser ?? '').trim();
+      const javPass = String(body.javPass ?? saved.javPass ?? '').trim();
       const assrtToken = String(body.assrtToken ?? saved.assrtToken ?? '').trim();
       const openSubKey = String(body.openSubtitlesKey ?? saved.openSubtitlesKey ?? '').trim();
 
@@ -299,71 +315,125 @@ export async function registerVideoSettings(
         message: string;
       }> = [];
 
-      // ① JAV 字幕站（avsubtitles，免登录）
+      // ① JAV 字幕站（avsubtitles）：真登录 → 登录成功再真搜一次
       {
-        const r = await probeSource('https://avsubtitles.com/');
-        sources.push({
-          id: 'jav',
-          ok: r.status > 0 && r.status < 400,
-          status: r.status,
-          latencyMs: r.ms,
-          message: r.error ? r.error : r.status > 0 && r.status < 400 ? '站点可访问' : `HTTP ${r.status}`,
-        });
-      }
-
-      // ② Assrt（伪射手）：接口要 Token；没有 Token 时只测域名连通性
-      {
-        const q = 'test';
-        const url =
-          `https://api.assrt.net/v1/sub/search?q=${encodeURIComponent(q)}&cnt=1` +
-          (assrtToken ? `&token=${encodeURIComponent(assrtToken)}` : '');
-        const r = await probeSource(url, { headers: { accept: 'application/json' } });
-        let ok = r.status > 0 && r.status < 500;
-        let message = r.error ? r.error : assrtToken ? `HTTP ${r.status}` : '站点可访问（未配置 Token）';
-        if (ok && assrtToken && r.status === 200) {
-          try {
-            const json = JSON.parse(r.body) as { sub?: { subs?: unknown } };
-            if (Array.isArray(json?.sub?.subs)) message = 'API 正常';
-            else ok = false;
-            message = ok ? message : 'API 返回异常';
-          } catch {
-            ok = false;
-            message = 'API 返回非 JSON';
+        const t0 = Date.now();
+        if (!javUser || !javPass) {
+          sources.push({
+            id: 'jav',
+            ok: true,
+            status: 0,
+            latencyMs: 0,
+            message: '未填写账号密码（未登录也能下载，但每天限 5 条）',
+          });
+        } else {
+          const login = await loginSubtitleSite(javUser, javPass);
+          if (!login.ok) {
+            sources.push({
+              id: 'jav',
+              ok: false,
+              status: 0,
+              latencyMs: Date.now() - t0,
+              message:
+                login.reason === 'wrong_password'
+                  ? '登录失败：账号或密码不对'
+                  : login.reason === 'network'
+                    ? '登录失败：连不上 avsubtitles.com'
+                    : '登录失败',
+            });
+          } else {
+            // 登录成功 ≠ 能用：再搜一个真实番号，确认会话确实有效
+            const probe = await fetchSubtitle('ABF-017', {
+              authCookie: login.cookie,
+              waitMs: 0,
+            });
+            const usable = probe.state === SUB_STATE.OK || probe.reason === 'movie_not_found';
+            sources.push({
+              id: 'jav',
+              ok: usable,
+              status: 0,
+              latencyMs: Date.now() - t0,
+              message: usable
+                ? '登录成功，可用（已解除每天 5 条限制）'
+                : `登录成功，但搜索不可用（${probe.reason}）`,
+            });
           }
         }
-        sources.push({ id: 'assrt', ok, status: r.status, latencyMs: r.ms, message });
       }
 
-      // ③ OpenSubtitles：没有 API Key 会返回 401/403，仍算「站点可达」
+      // ② Assrt（伪射手）：接口要 Token。带了 Token 就真查一次，能出数据才算可用。
       {
-        const url =
-          'https://api.opensubtitles.com/api/v1/subtitles?query=test&languages=zh-cn&order_by=download_count&order_direction=desc';
-        const r = await probeSource(url, {
-          headers: {
-            accept: 'application/json',
-            ...(openSubKey ? { 'api-key': openSubKey } : {}),
-          },
-        });
-        let ok = r.status > 0 && r.status < 500;
-        let message = r.error
-          ? r.error
-          : openSubKey
-            ? `HTTP ${r.status}`
-            : '站点可访问（未配置 API Key）';
-        if (ok && openSubKey && r.status === 200) {
-          try {
-            const json = JSON.parse(r.body) as { data?: unknown };
-            if (Array.isArray(json?.data)) message = 'API 正常';
-            else {
+        if (!assrtToken) {
+          sources.push({
+            id: 'assrt',
+            ok: true,
+            status: 0,
+            latencyMs: 0,
+            message: '未填写 Token（不启用该源）',
+          });
+        } else {
+          const q = 'test';
+          const url = `https://api.assrt.net/v1/sub/search?q=${encodeURIComponent(q)}&cnt=1&token=${encodeURIComponent(assrtToken)}`;
+          const r = await probeSource(url, { headers: { accept: 'application/json' } });
+          let ok = r.status > 0 && r.status < 500;
+          let message = r.error ? r.error : `HTTP ${r.status}`;
+          if (ok && r.status === 200) {
+            try {
+              const json = JSON.parse(r.body) as { sub?: { subs?: unknown } };
+              if (Array.isArray(json?.sub?.subs)) message = 'Token 有效，可查询';
+              else {
+                ok = false;
+                message = 'Token 无效或接口返回异常';
+              }
+            } catch {
               ok = false;
-              message = 'API 返回异常';
+              message = 'Token 无效或接口返回非 JSON';
             }
-          } catch {
+          } else if (r.status === 401 || r.status === 403) {
             ok = false;
-            message = 'API 返回非 JSON';
+            message = 'Token 无效或已过期';
           }
+          sources.push({ id: 'assrt', ok, status: r.status, latencyMs: r.ms, message });
         }
-        sources.push({ id: 'openSub', ok, status: r.status, latencyMs: r.ms, message });
+      }
+
+      // ③ OpenSubtitles：没配 Key 会返回 401/403，那不算「站点坏了」，
+      //    而是「没配凭据」；配了 Key 就真查一次。
+      {
+        if (!openSubKey) {
+          sources.push({
+            id: 'openSub',
+            ok: true,
+            status: 0,
+            latencyMs: 0,
+            message: '未填写 API Key（不启用该源）',
+          });
+        } else {
+          const url =
+            'https://api.opensubtitles.com/api/v1/subtitles?query=test&languages=zh-cn&order_by=download_count&order_direction=desc';
+          const r = await probeSource(url, {
+            headers: { accept: 'application/json', 'api-key': openSubKey },
+          });
+          let ok = r.status > 0 && r.status < 500;
+          let message = r.error ? r.error : `HTTP ${r.status}`;
+          if (r.status === 401 || r.status === 403) {
+            ok = false;
+            message = 'API Key 无效或已过期';
+          } else if (ok && r.status === 200) {
+            try {
+              const json = JSON.parse(r.body) as { data?: unknown };
+              if (Array.isArray(json?.data)) message = 'API Key 有效，可查询';
+              else {
+                ok = false;
+                message = 'API Key 无效或接口返回异常';
+              }
+            } catch {
+              ok = false;
+              message = 'API Key 无效或接口返回非 JSON';
+            }
+          }
+          sources.push({ id: 'openSub', ok, status: r.status, latencyMs: r.ms, message });
+        }
       }
 
       // ④ 迅雷字幕（免配置兜底）

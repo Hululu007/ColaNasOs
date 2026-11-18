@@ -3102,9 +3102,9 @@ HTTPS 证书状态（用户上传证书方案） · `systemTlsInfo`
 
 #### `POST /api/v1/video/subtitle/test-sources`
 
-测试各字幕源链接（连通性，不下载） · `videoSubtitleSourcesTest`
+测试各字幕源凭据是否可用（真登录 / 真查询） · `videoSubtitleSourcesTest`
 
-- 请求体：`assrtToken` string · 可选<br>`openSubtitlesKey` string · 可选
+- 请求体：`javUser` string · 可选<br>`javPass` string · 可选<br>`assrtToken` string · 可选<br>`openSubtitlesKey` string · 可选
 - 响应：200 object
 
 #### `GET /api/v1/video/subtitles`

@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:nas_core/nas_core.dart';
 import 'package:nas_ui/nas_ui.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/display_labels.dart';
 import '../../core/session.dart';
@@ -238,7 +239,8 @@ class _VideoAppSettingsPageState extends State<VideoAppSettingsPage> {
     }
   }
 
-  /// 逐个字幕站测连通性：用**输入框里**的凭据（没保存也能测）。
+  /// 逐个字幕源测凭据：服务端会**真登录** / 真查一次接口。
+  /// 用**输入框里**的凭据（没保存也能测）。
   Future<void> _testSubtitleSources() async {
     if (_testingSub) return;
     setState(() {
@@ -249,6 +251,9 @@ class _VideoAppSettingsPageState extends State<VideoAppSettingsPage> {
     try {
       final res = await ApiSession.instance.client.videoSubtitleSourcesTest(
         body: {
+          'javUser': _javUserCtrl.text.trim(),
+          // 密码留空 = 用已保存的（服务端已存就沿用）
+          if (_javPassCtrl.text.isNotEmpty) 'javPass': _javPassCtrl.text,
           'assrtToken': _assrtCtrl.text.trim(),
           'openSubtitlesKey': _openSubCtrl.text.trim(),
         },
@@ -279,6 +284,84 @@ class _VideoAppSettingsPageState extends State<VideoAppSettingsPage> {
       default:
         return tr('video.sub.src.xunlei');
     }
+  }
+
+  /// 凭据来源说明 + 跳转链接。
+  ///
+  /// 用户分不清「密码」是哪个网站的，填错了服务端只会说登录失败。
+  /// 所以每个凭据都写明是哪个站的，并给一个直达链接（注册 / 拿 Token 都在那页）。
+  Widget _sourceLinkRow(String url) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 2, bottom: NasTokens.spaceSm),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: TextButton.icon(
+          onPressed: () async {
+            final messenger = ScaffoldMessenger.of(context);
+            final ok = await launchUrl(
+              Uri.parse(url),
+              mode: LaunchMode.externalApplication,
+            );
+            if (!ok) {
+              NasSnack.showOn(messenger, tr('video.sub.openSiteFailed'));
+            }
+          },
+          icon: const Icon(Icons.open_in_new, size: 14),
+          label: Text(tr('video.sub.openSite')),
+          style: TextButton.styleFrom(
+            visualDensity: VisualDensity.compact,
+            padding: EdgeInsets.zero,
+            textStyle: const TextStyle(fontSize: 12),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 带说明文字的凭据输入框：label 说清是哪个网站，helper 说明去哪儿拿。
+  Widget _credentialField({
+    required TextEditingController controller,
+    required String label,
+    required String helper,
+    required String linkUrl,
+    bool configured = false,
+    String? suffixHint,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        TextField(
+          controller: controller,
+          obscureText: false,
+          decoration: InputDecoration(
+            labelText: label,
+            // 已配置时给「已配置」提示（明文回显是本机自用，用户要能一眼看出配了什么）
+            hintText:
+                suffixHint ??
+                (configured ? tr('video.sub.javConfigured') : tr('video.sub.notConfigured')),
+            isDense: true,
+            suffixIcon: configured
+                ? Icon(
+                    Icons.check_circle_outline,
+                    size: 18,
+                    color: Theme.of(context).colorScheme.primary,
+                  )
+                : null,
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.only(top: 2),
+          child: Text(
+            helper,
+            style: TextStyle(
+              fontSize: NasTokens.fontCaption,
+              color: context.nasTextSecondary,
+            ),
+          ),
+        ),
+        _sourceLinkRow(linkUrl),
+      ],
+    );
   }
 
   Widget _subSourceResult(Map<String, dynamic> r) {
@@ -887,56 +970,36 @@ class _VideoAppSettingsPageState extends State<VideoAppSettingsPage> {
         ),
       ),
       const SizedBox(height: NasTokens.spaceSm),
-      TextField(
+      // avsubtitles.com 账号（登录后解除每天 5 条限制）
+      _credentialField(
         controller: _javUserCtrl,
-        decoration: InputDecoration(
-          labelText: tr('video.sub.javUser'),
-          isDense: true,
-        ),
+        label: tr('video.sub.javUser'),
+        helper: tr('video.sub.javUserHint'),
+        linkUrl: 'https://www.avsubtitles.com/register.php',
       ),
       const SizedBox(height: NasTokens.spaceSm),
-      TextField(
+      _credentialField(
         controller: _javPassCtrl,
-        // 明文显示：本地自用，配没配、配的是什么必须一眼看到
-        obscureText: false,
-        decoration: InputDecoration(
-          labelText: tr('video.sub.javPass'),
-          hintText: _javConfigured
-              ? tr('video.sub.javPassHint')
-              : tr('video.sub.notConfigured'),
-          suffixIcon: _javConfigured
-              ? Icon(
-                  Icons.check_circle_outline,
-                  size: 18,
-                  color: Theme.of(context).colorScheme.primary,
-                )
-              : null,
-          isDense: true,
-        ),
+        label: tr('video.sub.javPass'),
+        helper: tr('video.sub.javPassHint'),
+        linkUrl: 'https://www.avsubtitles.com/register.php',
+        configured: _javConfigured,
       ),
       const SizedBox(height: NasTokens.spaceSm),
-      TextField(
+      _credentialField(
         controller: _assrtCtrl,
-        obscureText: false,
-        decoration: InputDecoration(
-          labelText: tr('video.sub.assrt'),
-          hintText: _assrtConfigured
-              ? tr('video.sub.javConfigured')
-              : tr('video.sub.notConfigured'),
-          isDense: true,
-        ),
+        label: tr('video.sub.assrt'),
+        helper: tr('video.sub.assrtHint'),
+        linkUrl: 'https://assrt.net/',
+        configured: _assrtConfigured,
       ),
       const SizedBox(height: NasTokens.spaceSm),
-      TextField(
+      _credentialField(
         controller: _openSubCtrl,
-        obscureText: false,
-        decoration: InputDecoration(
-          labelText: tr('video.sub.openSub'),
-          hintText: _openSubConfigured
-              ? tr('video.sub.javConfigured')
-              : tr('video.sub.notConfigured'),
-          isDense: true,
-        ),
+        label: tr('video.sub.openSub'),
+        helper: tr('video.sub.openSubHint'),
+        linkUrl: 'https://www.opensubtitles.com/',
+        configured: _openSubConfigured,
       ),
       SwitchListTile(
         contentPadding: EdgeInsets.zero,

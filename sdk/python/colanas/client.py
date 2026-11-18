@@ -1800,7 +1800,7 @@ class ColanasClient:
         return self._request("GET", "/api/v1/video/subtitles", params, "query")
 
     def video_subtitle_sources_test(self, **params):
-        """测试各字幕源链接（连通性，不下载）"""
+        """测试各字幕源凭据是否可用（真登录 / 真查询）"""
         return self._request("POST", "/api/v1/video/subtitle/test-sources", params, "body")
 
     def video_tmdb_search(self, **params):

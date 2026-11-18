@@ -2237,7 +2237,7 @@ export class ColanasClient {
     return this.request('GET', '/api/v1/video/subtitles', params, 'query');
   }
 
-  /** 测试各字幕源链接（连通性，不下载） */
+  /** 测试各字幕源凭据是否可用（真登录 / 真查询） */
   async videoSubtitleSourcesTest(params: Record<string, any> = {}): Promise<any> {
     return this.request('POST', '/api/v1/video/subtitle/test-sources', params, 'body');
   }

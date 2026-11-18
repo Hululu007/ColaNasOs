@@ -17,7 +17,7 @@ import { toItem, type MediaRow } from './util';
 import { offlineCond, offlineSmbPrefixes, sourceRootCond } from './sources';
 import { jpTagCond, resolutionCond } from './jp-filter';
 import { clearRankSnapshots, fetchJpRank, type JpRankKind, type JpRankPeriod } from './jp-rank';
-import { fetchSubtitle, SUB_STATE, writeSubtitleBeside } from './subtitle-fetch';
+import { fetchSubtitle, loginSubtitleSite, SUB_STATE, writeSubtitleBeside } from './subtitle-fetch';
 import { fetchNormalSubtitle, findSubtitleBeside } from './subtitle-normal';
 import { Err } from '../../../kernel/errors';
 import type { FastifyRequest, FastifyReply } from 'fastify';
@@ -926,6 +926,19 @@ export async function fetchSubtitlesForLibrary(
     xunlei: subCfg.xunlei,
   };
 
+  // 登录 avsubtitles：登录后不再受「每天 5 个字幕」限制（未登录一天只能下 5 个）。
+  // 一轮只登录一次，cookie 复用于本轮所有条目；登录失败就退回未登录（还能下，只是有上限）。
+  let authCookie = '';
+  if (isJp && subCfg.javUser && subCfg.javPass) {
+    const login = await loginSubtitleSite(subCfg.javUser, subCfg.javPass);
+    if (login.ok) {
+      authCookie = login.cookie;
+      k.log.info('avsubtitles 登录成功，本轮解除每日 5 条限制');
+    } else {
+      k.log.warn({ reason: login.reason }, 'avsubtitles 登录失败，本轮按未登录处理（每天限 5 条）');
+    }
+  }
+
   let done = 0;
   for (let i = 0; i < items.length; i += 1) {
     // 条数一起报：一轮只处理 12~30 条，光看百分号会误以为没动
@@ -951,7 +964,7 @@ export async function fetchSubtitlesForLibrary(
       if (code) {
         // ⛔ 不能传 `waitMs: 0`：站点下载页有 6 秒倒计时，没等过就请求
       // `download_sub.php` 会拿到 302 → error_403，表现为 download_failed。
-      const result = await fetchSubtitle(code);
+        const result = await fetchSubtitle(code, authCookie ? { authCookie } : {});
         if (result.limitReached) {
           k.log.warn('avsubtitles daily limit reached, stop this round');
           break;

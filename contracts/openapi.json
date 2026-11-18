@@ -43031,7 +43031,7 @@
     "/api/v1/video/subtitle/test-sources": {
       "post": {
         "operationId": "videoSubtitleSourcesTest",
-        "summary": "测试各字幕源链接（连通性，不下载）",
+        "summary": "测试各字幕源凭据是否可用（真登录 / 真查询）",
         "tags": [
           "video"
         ],
@@ -43042,6 +43042,14 @@
               "schema": {
                 "type": "object",
                 "properties": {
+                  "javUser": {
+                    "maxLength": 100,
+                    "type": "string"
+                  },
+                  "javPass": {
+                    "maxLength": 200,
+                    "type": "string"
+                  },
                   "assrtToken": {
                     "maxLength": 200,
                     "type": "string"

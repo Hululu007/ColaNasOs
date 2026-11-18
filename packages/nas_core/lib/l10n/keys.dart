@@ -2990,6 +2990,7 @@ class I18nKeys {
   static const videoStatsTitle = 'video.stats.title';
   static const videoStatsUnscraped = 'video.stats.unscraped';
   static const videoSubAssrt = 'video.sub.assrt';
+  static const videoSubAssrtHint = 'video.sub.assrtHint';
   static const videoSubAuto = 'video.sub.auto';
   static const videoSubAutoHint = 'video.sub.autoHint';
   static const videoSubDaily = 'video.sub.daily';
@@ -3004,9 +3005,13 @@ class I18nKeys {
   static const videoSubJavPass = 'video.sub.javPass';
   static const videoSubJavPassHint = 'video.sub.javPassHint';
   static const videoSubJavUser = 'video.sub.javUser';
+  static const videoSubJavUserHint = 'video.sub.javUserHint';
   static const videoSubLangAuto = 'video.sub.langAuto';
   static const videoSubNotConfigured = 'video.sub.notConfigured';
   static const videoSubOpenSub = 'video.sub.openSub';
+  static const videoSubOpenSubHint = 'video.sub.openSubHint';
+  static const videoSubOpenSite = 'video.sub.openSite';
+  static const videoSubOpenSiteFailed = 'video.sub.openSiteFailed';
   static const videoSubPreExtract = 'video.sub.preExtract';
   static const videoSubPreExtractHint = 'video.sub.preExtractHint';
   static const videoSubSources = 'video.sub.sources';
@@ -3060,4 +3065,4 @@ class I18nKeys {
 }
 
 /// 契约键总数（生成时确定），供完整性自检使用。
-const int i18nKeyCount = 3009;
+const int i18nKeyCount = 3014;
