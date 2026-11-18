@@ -132,8 +132,15 @@ export const CreateJobBody = Type.Object(
         description: 'create / replace',
       }),
     ),
-    /** 幂等键：同键重复提交只落一条任务（客户端重连 / 双击） */
-    idempotencyKey: Type.Optional(Type.String({ maxLength: 128 })),
+    /**
+     * 幂等键：同键重复提交只落一条任务（客户端重连 / 双击）。
+     *
+     * 上限给到 1024 而不是 128：这是个客户端自定义的 opaque 字符串，有些客户端
+     * 直接把条目 id 拼进来，而条目 id 是「库 id + 相对路径的 base64url」
+     * （8553 条里最长 776 字符）。按 128 卡会在建任务时直接 400，
+     * 表现为「点下载就报错」，没有任何可自查的余地。
+     */
+    idempotencyKey: Type.Optional(Type.String({ maxLength: 1024 })),
   },
   { $id: 'OfflineCreateJobBody' },
 );

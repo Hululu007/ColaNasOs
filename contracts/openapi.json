@@ -14877,7 +14877,7 @@
             ]
           },
           "idempotencyKey": {
-            "maxLength": 128,
+            "maxLength": 1024,
             "type": "string"
           }
         }

@@ -685,7 +685,7 @@ class OfflineDownloadManager {
             audioBitrateKbps: req.spec.audioKbps,
             subtitleMode: req.spec.subtitleMode,
             operation: task.meta['replace'] == true ? 'replace' : 'create',
-            idempotencyKey: 'offline:${req.itemId}:${task.createdAt}',
+            idempotencyKey: 'offline:${_digestOf(req.itemId)}:${task.createdAt}',
           ),
         );
         task.jobId = job.id;
@@ -1037,3 +1037,11 @@ class OfflineDownloadManager {
     }
   }
 }
+
+/// 幂等键里只放条目 id 的摘要（固定 40 字符）。
+///
+/// 条目 id 是「库 id + 相对路径的 base64url」（服务端 `video/scan.ts` 生成），
+/// 长路径尤其中文目录很容易过百字符；原样拼进幂等键就会撞上服务端 128 的
+/// 长度上限，建任务当场 400 —— 表现就是「点下载、转码阶段直接报错」。
+/// 同一次下载（同一 `createdAt`）重试仍得到同一个键，幂等语义不变。
+String _digestOf(String itemId) => sha1.convert(utf8.encode(itemId)).toString();
