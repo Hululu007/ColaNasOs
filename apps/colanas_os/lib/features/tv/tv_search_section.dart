@@ -112,6 +112,9 @@ class _TvSearchSectionState extends State<TvSearchSection> {
   Map<String, String> _libTypes = const <String, String>{};
   List<VideoLibraryItem> _libs = const <VideoLibraryItem>[];
 
+  /// 库列表加载完成（`_search` 会先等它，避免「库类型还没到 → 退回全局搜索」）。
+  late final Future<void> _libsReady;
+
   /// 电视剧库的来源根，给「按文件夹聚合成剧」用。
   List<String> _libRoots = const <String>[];
 
@@ -154,7 +157,8 @@ class _TvSearchSectionState extends State<TvSearchSection> {
     widget.back.overlay = _hasOverlay;
     _query.addListener(_onQueryChanged);
     _loadHistory();
-    _loadLibraries();
+    // 库类型是搜索的前置条件：搜索只查电影 / 电视剧库，没它就不知道哪些库能搜。
+    _libsReady = _loadLibraries();
     // 中文剧名：服务端 `series` 列是英文发布名，展示要换成 TMDB / 路径里的中文名。
     unawaited(
       SeriesDisplayStore.ensure().then((_) {
@@ -315,13 +319,9 @@ class _TvSearchSectionState extends State<TvSearchSection> {
     return type == 'tv' || type == 'short_tv';
   }
 
-  bool _isMovieLibrary(String id) {
-    final type = _libTypes[id];
-    return type == 'movie' || type == 'jp_movie';
-  }
-
   /// 参与搜索的库：只要电影 / 电视剧（含短剧）。
-  /// 日本库、图片库、混合库在 TV 上有各自的浏览入口，搜索结果不掺它们。
+  /// 日本库、图片库、混合库（other / down）在 TV 上有各自的浏览入口，
+  /// 搜索与「最近添加」都不掺它们。
   bool _isSearchableLibrary(String id) {
     final type = _libTypes[id];
     return type == 'movie' || type == 'tv' || type == 'short_tv';
@@ -336,47 +336,39 @@ class _TvSearchSectionState extends State<TvSearchSection> {
     final client = ApiSession.instance.client;
     try {
       final libs = _libs
-          .where((lib) => _isTvLibrary(lib.id) || _isMovieLibrary(lib.id))
+          .where((lib) => _isSearchableLibrary(lib.id))
           .toList();
       final movies = <VideoItem>[];
       final tvItems = <VideoItem>[];
       if (libs.isEmpty) {
-        // 库列表没拿到：退回整库最近 200 条，按剧集信息分流。
-        final res = await client.videoList(
-          sortBy: 'createTime',
-          sortOrder: 'desc',
-          limit: 200,
-        );
-        for (final item in res.items) {
-          if (item.mediaType == 'image') continue;
-          if ((item.series ?? '').trim().isNotEmpty ||
-              item.season != null ||
-              item.episode != null) {
-            tvItems.add(item);
-          } else {
-            movies.add(item);
-          }
-        }
-      } else {
-        final responses = await Future.wait(
-          libs.map(
-            (lib) => _safe(
-              client.videoList(
-                libraryId: lib.id,
-                sortBy: 'createTime',
-                sortOrder: 'desc',
-                limit: 12,
-              ),
+        // 库列表没拿到：宁可空着，也不猜 —— 整库「最近 200 条」全是 down / other
+        // 的下载杂项，摆到「最近添加 · 电影」里等于又在骗人。
+        if (!_canSetState) return;
+        setState(() {
+          _recentMovies = const <VideoItem>[];
+          _recentSeries = const <TvSeriesCard>[];
+        });
+        _rebuildCards();
+        return;
+      }
+      final responses = await Future.wait(
+        libs.map(
+          (lib) => _safe(
+            client.videoList(
+              libraryId: lib.id,
+              sortBy: 'createTime',
+              sortOrder: 'desc',
+              limit: 12,
             ),
           ),
-        );
-        for (var i = 0; i < libs.length; i += 1) {
-          final items = responses[i]?.items ?? const <VideoItem>[];
-          if (_isTvLibrary(libs[i].id)) {
-            tvItems.addAll(items);
-          } else {
-            movies.addAll(items.where((item) => item.mediaType != 'image'));
-          }
+        ),
+      );
+      for (var i = 0; i < libs.length; i += 1) {
+        final items = responses[i]?.items ?? const <VideoItem>[];
+        if (_isTvLibrary(libs[i].id)) {
+          tvItems.addAll(items);
+        } else {
+          movies.addAll(items.where((item) => item.mediaType != 'image'));
         }
       }
       if (!_canSetState) return;
@@ -479,22 +471,24 @@ class _TvSearchSectionState extends State<TvSearchSection> {
     });
 
     final client = ApiSession.instance.client;
+    // 库类型是「哪些库能搜」的依据：没就绪就先等它（正常情况下首页那次早就拉完了）。
+    await _libsReady;
+    if (!_canSetState || seq != _searchSeq) return;
+
     // 一两个字（ad / 周）命中面太大，专辑 / 歌手的分组聚合又最慢 —— 先不给。
     // 等用户多打两个字（≥3）再补上这两个栏目。
     final rich = q.length >= 3;
     // 影视**按库**查，而不是全局查一遍再过滤：全局只取前 60 条，命中面大时
     // 整屏都是混合库 / 日本库的杂项，电影库里的目标片根本进不了结果集
-    //（搜 `gf` 看不到「功夫女足」就是这个原因）。可搜库通常只有 1~2 个。
+    //（搜 `gf` 看不到「功夫女足」就是这个原因）。
+    // **没有可搜库就不查视频**，绝不退回全局搜索把 other / down 的内容带出来。
     final searchableLibs = <String>[
       for (final entry in _libTypes.entries)
         if (_isSearchableLibrary(entry.key)) entry.key,
     ];
     final videoFutures = <Future<VideoListResponse?>>[
-      if (searchableLibs.isEmpty)
-        _safe(client.videoList(q: q, limit: 60))
-      else
-        for (final libId in searchableLibs)
-          _safe(client.videoList(libraryId: libId, q: q, limit: 40)),
+      for (final libId in searchableLibs)
+        _safe(client.videoList(libraryId: libId, q: q, limit: 40)),
     ];
     final futures = <Future<Object?>>[
       ...videoFutures,
@@ -526,11 +520,9 @@ class _TvSearchSectionState extends State<TvSearchSection> {
     final bySeries = <String, List<VideoItem>>{};
     for (final item in videoRes) {
       if (item.mediaType == 'image') continue;
-      // TV 端只搜电影 / 电视剧类型的库：日本库、图片库、混合库都不参与
-      // （它们的入口是演员 / 文件夹视图，搜索结果里混进来只会一堆无意义的单片）。
-      if (_libTypes.isNotEmpty && !_isSearchableLibrary(item.libraryId)) {
-        continue;
-      }
+      // TV 端只搜电影 / 电视剧类型的库：日本库、图片库、混合库一律不出
+      //（other / down 是混合库，不是电影 / 电视剧 / 音乐库）。
+      if (!_isSearchableLibrary(item.libraryId)) continue;
       // 电视剧库的条目全部按「剧」聚合：里面的散文件（健身课、单集视频）
       // 也属于电视剧库，不能落到「电影」栏目里。
       if (_isTvLibrary(item.libraryId)) {
