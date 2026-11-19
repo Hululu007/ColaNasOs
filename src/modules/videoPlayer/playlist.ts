@@ -40,10 +40,19 @@ const basename = (uri: string): string => uri.split(/[\\/]/).pop() || uri;
  * 后续分段还会追加，hls.js 需要保持 live 语义持续刷新。
  */
 export function mergePlaylists(parts: PlaylistPart[]): string {
+  // 原画直通的分片切在片源关键帧上，时长不固定；TARGETDURATION 必须覆盖
+  // 实际最长的一片，否则播放器会按 6s 去算缓冲、在第 7 秒就等不到下一片。
+  // 普通转码产物固定 2s，这里仍是 6（历史值，测试也钉着）。
+  let target = 6;
+  for (const part of parts) {
+    for (const m of part.text.matchAll(/^#EXTINF:\s*([\d.]+)/gm)) {
+      target = Math.max(target, Math.ceil(Number(m[1]) || 0));
+    }
+  }
   const head = [
     '#EXTM3U',
     '#EXT-X-VERSION:7',
-    '#EXT-X-TARGETDURATION:6',
+    `#EXT-X-TARGETDURATION:${target}`,
     '#EXT-X-MEDIA-SEQUENCE:0',
     '#EXT-X-PLAYLIST-TYPE:EVENT',
     // 转码产物是「从头播的整片」，但 EVENT 列表没有 ENDLIST，播放器会按直播语义

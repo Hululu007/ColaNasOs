@@ -712,6 +712,35 @@ process.chdir(root);
         hasHvc1,
         `init=${fs.existsSync(initCopy)}`,
       );
+
+      // 原画直通：ffmpeg 参数里必须是 copy、不带强制关键帧（关键帧由片源决定），
+      // 播放列表也要改读 ffmpeg 直出的那份，而不是按 2s 预列的静态 VOD 列表。
+      let argsJson = null;
+      try {
+        argsJson = JSON.parse(
+          fs.readFileSync(path.join(dataDir, 'hls', idCopy, 'p0', '.ffmpeg-args.json'), 'utf8'),
+        );
+      } catch {
+        /* 首片还没写参数 */
+      }
+      check(
+        'session_original_passthrough_args',
+        Boolean(argsJson) &&
+          argsJson.passthrough === true &&
+          argsJson.copyVideo === true &&
+          !argsJson.args.includes('-force_key_frames'),
+        `passthrough=${argsJson && argsJson.passthrough} copy=${argsJson && argsJson.copyVideo}`,
+      );
+      const liveUrl = rCopy.json().url;
+      const live = await inject('GET', liveUrl);
+      check(
+        'session_original_passthrough_playlist',
+        live.statusCode === 200 &&
+          live.body.includes('#EXTINF') &&
+          /[?&]t=/.test(live.body) &&
+          live.body.includes('?part=p0'),
+        `status=${live.statusCode} body=${String(live.body).slice(0, 160)}`,
+      );
     }
 
     // ---- 起转偏移（startMs）：进度条跳到「还没转出来」的位置时建的中途会话 ----

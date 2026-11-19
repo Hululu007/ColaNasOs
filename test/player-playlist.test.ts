@@ -76,3 +76,25 @@ test('空分段：给出合法的空 EVENT 头', () => {
   assert.ok(!text.includes('#EXTINF'));
   assert.ok(!text.includes('ENDLIST'));
 });
+
+test('原画直通：分片切在片源关键帧、时长不固定时 TARGETDURATION 取最长一片', () => {
+  const text = mergePlaylists([
+    {
+      name: 'p0',
+      text: [
+        '#EXTM3U',
+        '#EXT-X-TARGETDURATION:10',
+        '#EXT-X-MAP:URI="init.mp4"',
+        '#EXTINF:9.500000,',
+        'seg00000.m4s',
+        '#EXTINF:3.250000,',
+        'seg00001.m4s',
+        '#EXT-X-ENDLIST',
+        '',
+      ].join('\n'),
+    },
+  ]);
+  assert.ok(text.includes('#EXT-X-TARGETDURATION:10'), text);
+  assert.equal(playlistDurationMs(text), 12750);
+  assert.ok(text.includes('seg00000.m4s?part=p0'));
+});

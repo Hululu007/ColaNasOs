@@ -1746,6 +1746,7 @@ class I18nKeys {
   static const playerTranscoding = 'player.transcoding';
   static const playerToneMap = 'player.toneMap';
   static const playerTvClose = 'player.tv.close';
+  static const playerTvDirectOriginal = 'player.tvDirectOriginal';
   static const playerTvHdrCapability = 'player.tv.hdrCapability';
   static const playerTvHdrNone = 'player.tv.hdrNone';
   static const playerTvHdrUnknown = 'player.tv.hdrUnknown';
@@ -2062,6 +2063,7 @@ class I18nKeys {
   static const trayQuit = 'tray.quit';
   static const trayShow = 'tray.show';
   // ---- tv ----
+  static const tvExitHint = 'tv.exit.hint';
   static const tvFieldOpenHint = 'tv.field.openHint';
   static const tvFieldSystemHint = 'tv.field.systemHint';
   static const tvHintKeys = 'tv.hint.keys';
@@ -3098,4 +3100,4 @@ class I18nKeys {
 }
 
 /// 契约键总数（生成时确定），供完整性自检使用。
-const int i18nKeyCount = 3047;
+const int i18nKeyCount = 3049;

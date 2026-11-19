@@ -496,6 +496,8 @@ export const StreamUrlResponse = Type.Object(
           width: NullableInteger,
           height: NullableInteger,
           is4k: Type.Boolean(),
+          /** 所属影视库的「响度归一」开关：原片直连时客户端据此开 dynaudnorm */
+          audioNormalize: Type.Boolean(),
         },
         { description: '片源兼容性信息；查不到列时 needTranscode=false' },
       ),

@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { sql } from 'kysely';
 import { secured } from '../../../../kernel/route';
 import { filesRoot, resolveAnyPath } from '../../files/fs-root';
 import { probeAudioTracks, writePoster } from '../ffmpeg';
@@ -25,6 +26,7 @@ function compatOf(row: unknown): {
   width: number | null;
   height: number | null;
   is4k: boolean;
+  audioNormalize: boolean;
 } {
   const r = (row || {}) as Record<string, unknown>;
   const on = (v: unknown) => Number(v) === 1;
@@ -77,6 +79,8 @@ function compatOf(row: unknown): {
     width,
     height,
     is4k,
+    // 库级开关不在这张表上，stream-url 处理器查完 video_libraries 再覆盖。
+    audioNormalize: false,
   };
 }
 
@@ -215,6 +219,14 @@ export async function registerVideoPlayback(app: FastifyInstance, k: KernelApi, 
         const q = (req.query || {}) as { id?: string };
         const row = q.id ? await h.loadItem(q.id) : null;
         if (!row) return reply.code(404).send({ error: Err.notFound, message: 'video not found' });
+        // 库级「响度归一」开关：转码链由服务端读，原片直连时由播放器自己套
+        // dynaudnorm，所以也要随 stream-url 一起告诉客户端。
+        const lib = (
+          await sql<{ audio_normalize: number | null }>`
+            select audio_normalize from video_libraries where id = ${row.library_id}
+          `.execute(k.db)
+        ).rows[0];
+        const audioNormalize = Number(lib?.audio_normalize) === 1;
 
         // 外部播放器无法带 Authorization 头：签一个只含 video:read 的令牌。
         //
@@ -227,7 +239,7 @@ export async function registerVideoPlayback(app: FastifyInstance, k: KernelApi, 
         return {
           url: `/api/v1/video/stream?id=${encodeURIComponent(row.id)}&token=${encodeURIComponent(token)}`,
           expiresInSec,
-          compat: compatOf(row),
+          compat: { ...compatOf(row), audioNormalize },
         };
       },
     );

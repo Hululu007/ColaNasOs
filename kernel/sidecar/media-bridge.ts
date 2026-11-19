@@ -200,8 +200,12 @@ export class MediaBridge {
       audioIndex?: number;
       /** 强制/自动 HDR→SDR 色彩转换 */
       hdrToSdr?: boolean;
+      /** 原画直通：不 tonemap、视频 copy、DV/HDR 原样交给显示端 */
+      passthrough?: boolean;
       /** 片源视频编码（h264 / hevc / av1）：决定「原画」能否直接 copy */
       srcVideoCodec?: string;
+      /** 片源音频编码：可安全 copy 进 fMP4 时连音轨一起直通 */
+      srcAudioCodec?: string;
       /** 分段续转：从片源第 seekMs 毫秒起转，只转 limitMs 毫秒（0 = 整片） */
       seekMs?: number;
       limitMs?: number;

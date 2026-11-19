@@ -3384,6 +3384,7 @@ export type VideoStreamUrlResponse = {
     "width": number;
     "height": number;
     "is4k": boolean;
+    "audioNormalize": boolean;
   };
 };
 

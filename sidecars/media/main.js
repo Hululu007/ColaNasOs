@@ -942,21 +942,10 @@ async function resolveEncodePlan(params, tag) {
   // 所以每次起转码都自己 `ffmpeg -i` 读一遍（带 mtime/size 缓存），片源说了算。
   const source = await probeSourceInfo(src);
   const sourceNeedsTonemap = Number(source.dvProfile) > 0 || Boolean(source.hasHdrMeta);
-  const hdrToSdr = params.hdrToSdr === true || sourceNeedsTonemap;
-  if (sourceNeedsTonemap && params.hdrToSdr !== true) {
-    console.error(
-      `[media] ${tag} 片源是 ${source.hdrKind}${source.dvProfile ? ` P${source.dvProfile}` : ''}，` +
-        '库标记缺失，按片源自动启用 HDR→SDR',
-    );
-  }
   // 「原画（copy）」= 不转码，所以输出编码必须**等于片源编码**，不能一律当 h264。
   // 只允许 H.264 直通，理由是「AV1 / HEVC 复制进 MPEG-TS 解不出来」——
   // 容器统一 fMP4（带 EXT-X-MAP）之后这条不再成立：实测 hls.js 1.4.10 + Chrome 157
   // 播 HEVC/AV1 的 fMP4 正常（buffered 连续、seek 正常、powerEfficient=true 硬解）。
-  //
-  // 但必须要求「用户请求的编码 == 片源编码」：客户端请求 h265 前会用
-  // `MediaSource.isTypeSupported('hvc1…')` 探过，请求什么就说明它能解什么；
-  // 不看请求直接吐 HEVC 会让 Firefox 黑屏（它不支持 HEVC），也违反用户选择。
   //
   // 编码取 ffprobe 实测（`probeSourceInfo` 刚跑过）：库里的 video_codec 对老库
   // 整批不可信，实测拿不到才退回上层传来的标记。
@@ -971,12 +960,30 @@ async function resolveEncodePlan(params, tag) {
   const wantCodec = PLAY_QUALITY.codecs.some((c) => c.key === params.codec)
     ? params.codec
     : PLAY_QUALITY.defaultCodec;
+  // 原画直通：会话是 `preset=original` 时由内核置位。此时片源自带 DV / HDR10+
+  // 元数据是要交给电视的资产，不能因为「自动检测到 HDR」就 tone-map 掉；
+  // 输出编码也不看请求的档位，就是片源编码本身。
+  const passthrough =
+    params.passthrough === true &&
+    presetRow.copy === true &&
+    !params.subtitle &&
+    !!srcMapped;
+  const hdrToSdr = !passthrough && (params.hdrToSdr === true || sourceNeedsTonemap);
+  if (sourceNeedsTonemap && !passthrough && params.hdrToSdr !== true) {
+    console.error(
+      `[media] ${tag} 片源是 ${source.hdrKind}${source.dvProfile ? ` P${source.dvProfile}` : ''}，` +
+        '库标记缺失，按片源自动启用 HDR→SDR',
+    );
+  }
+  // 普通「原画」仍要求「请求编码 == 片源编码」：客户端请求 h265 前会用
+  // `MediaSource.isTypeSupported('hvc1…')` 探过，请求什么就说明它能解什么；
+  // 不看请求直接吐 HEVC 会让 Firefox 黑屏。直通会话例外，见上。
   const copyVideo =
     presetRow.copy === true &&
     !params.subtitle &&
     !hdrToSdr &&
     !!srcMapped &&
-    srcMapped === wantCodec;
+    (passthrough || srcMapped === wantCodec);
   // 目标码率：离线下载允许手填（`videoKbps`），播放只能吃档位表。
   // 手填值原样采信 —— 合法区间在服务端 quote 里已经夹过，这里再夹一次只会让
   // 两端显示的数字对不上（用户填 2500，界面显示 2500，实际编码 1800）。
@@ -1009,6 +1016,14 @@ async function resolveEncodePlan(params, tag) {
   // 音轨序号：默认 0；负数 / 非整数回落 0
   const an = Number(params.audioIndex);
   const audioIndex = Number.isInteger(an) && an >= 0 ? an : 0;
+  // 直通时音轨也尽量不重编码：fMP4 能安全容纳的常见编码直接 copy。
+  // 响度归一 / 降混要改音频，只能走 AAC 重编码；TrueHD / DTS 进 MP4 不稳，
+  // 也交给 AAC，避免出一条解不出来的音轨。
+  const srcAudio = String(params.srcAudioCodec || '').toLowerCase();
+  const audioCopy =
+    copyVideo &&
+    !audioFilter &&
+    /^(aac|ac3|eac3|mp3|flac|opus|alac)$/.test(srcAudio);
   // 硬件编码器探测（异步 + 缓存）：不阻塞心跳，结果供所有 attempt 复用
   const hw = await detectHwAll();
   // 原画直通只可能是「片源编码未变」：容器 / 编码标签必须跟着实际输出走，
@@ -1054,6 +1069,8 @@ async function resolveEncodePlan(params, tag) {
     prefer,
     audioIndex,
     audioFilter,
+    audioCopy,
+    passthrough,
     hw,
     outputCodec,
     plans,
@@ -1093,6 +1110,8 @@ async function hls(params) {
     prefer,
     audioIndex,
     audioFilter,
+    audioCopy,
+    passthrough,
     hw,
     outputCodec,
     plans,
@@ -1163,22 +1182,25 @@ async function hls(params) {
         ? ['-maxrate', `${targetKbps}k`, '-bufsize', `${targetKbps * 2}k`]
         : []),
       ...(audioFilter ? ['-af', audioFilter] : []),
-      '-g',
-      '48',
-      '-keyint_min',
-      '48',
-      '-sc_threshold',
-      '0',
-      // 强制每 2s 一个 IDR：-hls_time 2 才能真正切在 2s，而不是按帧率漂移。
-      // 24fps 下 -g 48 恰好 2s，但 30/60fps 片源会变成 1.6/0.8s，播放列表就错位。
-      '-force_key_frames',
-      'expr:gte(t,n_forced*2)',
-      '-c:a',
-      'aac',
-      '-b:a',
-      String(PLAY_QUALITY.audioBitrateKbps) + 'k',
-      '-ac',
-      '2',
+      // GOP / 强制关键帧只对**编码器**有意义。视频 copy 时下这些参数不会生效，
+      // 还会让部分 ffmpeg 构建报「Codec AVOption g specified, but ... not used」；
+      // 直通的分片切在片源自己的关键帧上，播放列表也因此改读 ffmpeg 直出的那份。
+      ...(!copyVideo
+        ? [
+            '-g', '48', '-keyint_min', '48', '-sc_threshold', '0',
+            // 强制每 2s 一个 IDR：-hls_time 2 才能真正切在 2s，而不是按帧率漂移。
+            '-force_key_frames', 'expr:gte(t,n_forced*2)',
+          ]
+        : []),
+      // 直通且音轨能安全塞进 fMP4 时连音频一起 copy，TrueHD / DTS / Atmos
+      // 原样保留；否则（或开了响度归一 / 降混）转 AAC 双声道。
+      ...(audioCopy
+        ? ['-c:a', 'copy']
+        : [
+            '-c:a', 'aac',
+            '-b:a', String(PLAY_QUALITY.audioBitrateKbps) + 'k',
+            '-ac', '2',
+          ]),
       // 响度归一（dynaudnorm）会先扣住音频再吐：整片模式没有 `-t` 时 ffmpeg
       // 不知道终点，视频已经写出两片、音频才带着原始 PTS 追上来，muxer 不能
       // 往回写 → **前两片只剩视频**，音频从 0 重新开始。
@@ -1229,7 +1251,12 @@ async function hls(params) {
     try {
       fs.writeFileSync(
         nodePath.join(dir, '.ffmpeg-args.json'),
-        JSON.stringify({ container: fmp4 ? 'fmp4' : 'mpegts', codec, plan: plan.pipeline, args }, null, 1),
+        JSON.stringify(
+          { container: fmp4 ? 'fmp4' : 'mpegts', codec, plan: plan.pipeline,
+            passthrough, copyVideo, audioCopy, args },
+          null,
+          1,
+        ),
       );
     } catch {
       /* 目录被清理 / 无权限都无所谓 */

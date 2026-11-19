@@ -488,10 +488,14 @@ async function runJob(k: KernelApi, job: SessionRow): Promise<void> {
       `.execute(k.db)
     ).rows[0];
     const on = (v: unknown) => Number(v) === 1;
+    // 「原画」档 = 原片原码：不做 HDR→SDR、不重编码视频，DV / HDR10+ 的元数据
+    // 原样交给电视。色调映射只属于「降档播放」，用户选原画就是不要它。
+    const passthrough = String(job.preset) === 'original';
     const hdrToSdr =
-      Number(job.force_sdr) === 1 ||
-      on(media?.dolby_vision) || on(media?.hdr10) ||
-      on(media?.hdr10plus) || on(media?.hlg);
+      !passthrough &&
+      (Number(job.force_sdr) === 1 ||
+        on(media?.dolby_vision) || on(media?.hdr10) ||
+        on(media?.hdr10plus) || on(media?.hlg));
     const requestedCodec = job.codec ?? 'h264';
     const effectiveCodec = requestedCodec;
     const audioIndex = Number(job.audio_index ?? 0);
@@ -524,8 +528,10 @@ async function runJob(k: KernelApi, job: SessionRow): Promise<void> {
       hwaccel: String(tconf.hwaccel || 'auto'),
       audioIndex,
       hdrToSdr,
+      passthrough,
       // 「原画」能否直接 copy 取决于片源：AV1/HEVC 复制进 TS 解不出来
       srcVideoCodec: media?.video_codec ?? undefined,
+      srcAudioCodec: media?.audio_codec ?? undefined,
       seekMs: leadMs > 0 || startMs > 0 ? transcodedMs : undefined,
       limitMs: leadMs > 0 ? leadMs : undefined,
       // 片源高度：sidecar 会取 min(片源, 档位)，矮片源不放大
@@ -1289,6 +1295,9 @@ export const videoPlayer: ServerModule = {
         }
 
         const isPlaylist = file === 'index.m3u8';
+        // 原画直通的播放列表：交给下面统一的 m3u8 出口，它负责给每条 URI
+        // 补访问令牌；这里提前 reply.send 会让分片全部 401。
+        let passthroughList: Buffer | null = null;
         // 点播列表：立刻返回一份按片长预列全部分片的 VOD 列表，不等任何分片落盘。
         // 播放器从 seg00000 起播，某个分片还没转出来时由下面的分片路由等待。
         if (isPlaylist) {
@@ -1296,8 +1305,22 @@ export const videoPlayer: ServerModule = {
             await sql<SessionRow>`select * from player_sessions where id = ${session}`.execute(k.db)
           ).rows[0];
           if (full) {
-            const vod = await buildStaticVodPlaylist(k, session, full, hlsToken(k, session));
-            if (vod) {
+            // 「原画直通」的分片只切在片源自己的关键帧上，时长不固定，
+            // 静态 VOD 列表（按 2s 预列）会和实际产物错位。这类会话直接把
+            // ffmpeg 写出来的真实播放列表按段拼好返回。
+            if (String(full.preset) === 'original') {
+              const parts = producedPartsOf(
+                k,
+                session,
+                Math.max(0, Number(full.lead_ms) || 0),
+              );
+              if (parts.length > 0) {
+                passthroughList = Buffer.from(mergePlaylists(parts), 'utf8');
+              }
+              // 一片都还没落盘：走下面的空 EVENT 兜底，播放器会自己再拉。
+            } else {
+              const vod = await buildStaticVodPlaylist(k, session, full, hlsToken(k, session));
+              if (vod) {
               // 装机版排障线索：列表是静态生成的，光看请求日志看不出
               // 到底给了多少片、用哪个容器、是不是分段的。
               k.log.info(
@@ -1312,8 +1335,9 @@ export const videoPlayer: ServerModule = {
                 },
                 '[player] 静态 VOD 播放列表已生成',
               );
-              reply.header('cache-control', 'no-store').type('application/vnd.apple.mpegurl');
-              return reply.send(vod);
+                reply.header('cache-control', 'no-store').type('application/vnd.apple.mpegurl');
+                return reply.send(vod);
+              }
             }
           }
         }
@@ -1322,7 +1346,8 @@ export const videoPlayer: ServerModule = {
         // 接缝处 DISCONTINUITY，末尾不写 ENDLIST（后面还会续段）。
         const parts = isPlaylist ? partsOf(k, session) : [];
         let body: Buffer | null =
-          isPlaylist && parts.length > 0 ? Buffer.from(mergePlaylists(parts), 'utf8') : null;
+          passthroughList ??
+          (isPlaylist && parts.length > 0 ? Buffer.from(mergePlaylists(parts), 'utf8') : null);
         // 首片还没落盘时**最多等 2 秒**就回一个空的 EVENT 播放列表。
         //
         // 为什么只等 2s：实测播放器（mpv / libmpv）打开 m3u8 时，服务端只要
