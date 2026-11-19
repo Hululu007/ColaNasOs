@@ -28,6 +28,7 @@ import '../../core/video_render.dart';
 import '../../core/video_subtitle_prefs.dart';
 import 'player_screen.dart';
 import 'tv_player_controls.dart';
+import 'tv_media3_player.dart';
 
 String _redactedUrlForLog(String value) {
   final uri = Uri.tryParse(value);
@@ -42,8 +43,17 @@ bool _isExplicitDecoderOpenFailure(String message) {
   final m = message.toLowerCase();
   return m.contains('failed to recognize file format') ||
       m.contains('no video or audio streams') ||
+      m.contains('no video tracks') ||
       m.contains('no decoder found') ||
+      m.contains('no suitable decoder') ||
       m.contains('decoder not found') ||
+      m.contains('decoder initialization') ||
+      m.contains('decoder init') ||
+      m.contains('decoding_failed') ||
+      m.contains('error_code_decoding') ||
+      m.contains('decoder_video_renderer') ||
+      m.contains('format_supported=no') ||
+      m.contains('unsupported format') ||
       m.contains('unsupported codec') ||
       m.contains('unknown codec') ||
       m.contains('failed to initialize video decoder') ||
@@ -144,6 +154,12 @@ class PlayerPage extends StatefulWidget {
 class _PlayerPageState extends State<PlayerPage> {
   late final Player _player;
   late final VideoController _controller;
+  late final TvMedia3PlayerController _tvMedia3Player;
+  TvMedia3State _lastTvMedia3State = const TvMedia3State();
+  bool _nativeTvActive = false;
+  bool _nativeFallbackAttempted = false;
+  int _nativeDecoderLoggedGeneration = -1;
+  int _nativeFirstFrameLoggedGeneration = -1;
 
   String? _error;
   late String _url;
@@ -260,6 +276,66 @@ class _PlayerPageState extends State<PlayerPage> {
   /// 用设置位而不是 `TvScope.of(context)`：`initState` / 定时器里不能查
   /// InheritedWidget，而 TV 模式本来就是全局开关，两者取值一致。
   bool get _tvMode => AppSettings.instance.tvMode.value;
+
+  bool get _shouldUseNativeTvPlayer =>
+      !kIsWeb &&
+      defaultTargetPlatform == TargetPlatform.android &&
+      _tvMode &&
+      _srcHdr.isHdr &&
+      !PlayPreferences.toneMap &&
+      (_isTranscode || !_colorBlocksDirect);
+
+  Duration get _playbackPosition =>
+      _nativeTvActive ? _tvMedia3Player.state.position : _player.state.position;
+  Duration get _playbackDuration =>
+      _nativeTvActive ? _tvMedia3Player.state.duration : _player.state.duration;
+  Duration get _playbackBuffer =>
+      _nativeTvActive ? _tvMedia3Player.state.buffer : _player.state.buffer;
+  bool get _playbackPlaying =>
+      _nativeTvActive ? _tvMedia3Player.state.isPlaying : _player.state.playing;
+  bool get _playbackBuffering => _nativeTvActive
+      ? _tvMedia3Player.state.isBuffering
+      : _player.state.buffering;
+  bool get _playbackCompleted => _nativeTvActive
+      ? _tvMedia3Player.state.isCompleted
+      : _player.state.completed;
+  int get _playbackWidth => _nativeTvActive
+      ? _tvMedia3Player.state.videoWidth
+      : (_player.state.width ?? 0);
+  int get _playbackHeight => _nativeTvActive
+      ? _tvMedia3Player.state.videoHeight
+      : (_player.state.height ?? 0);
+  String get _rendererSummary {
+    if (!_nativeTvActive) return _caps.summary;
+    final decoder = _tvMedia3Player.state.videoDecoder;
+    return decoder.isEmpty ? 'Media3' : 'Media3 · $decoder';
+  }
+
+  bool get _dolbyVisionDirectActive =>
+      _nativeTvActive &&
+      _srcHdr == HdrLevel.dolbyVision &&
+      (!_isTranscode || _isVideoCopySession);
+  Stream<Duration> get _positionStream => _nativeTvActive
+      ? _tvMedia3Player.positionStream
+      : _player.stream.position;
+  Stream<Duration> get _durationStream => _nativeTvActive
+      ? _tvMedia3Player.durationStream
+      : _player.stream.duration;
+  Stream<bool> get _playingStream =>
+      _nativeTvActive ? _tvMedia3Player.playingStream : _player.stream.playing;
+
+  Future<void> _playbackPlay() =>
+      _nativeTvActive ? _tvMedia3Player.play() : _player.play();
+  Future<void> _playbackPause() =>
+      _nativeTvActive ? _tvMedia3Player.pause() : _player.pause();
+  Future<void> _playbackSeek(Duration position) => _nativeTvActive
+      ? _tvMedia3Player.seekTo(position)
+      : _player.seek(position);
+  Future<void> _playbackSetRate(double rate) =>
+      _nativeTvActive ? _tvMedia3Player.setRate(rate) : _player.setRate(rate);
+  Future<void> _playbackSetVolume(double volume) => _nativeTvActive
+      ? _tvMedia3Player.setVolume(volume)
+      : _player.setVolume(volume);
 
   // —— TV 控制层焦点（索引式，不依赖 Flutter 焦点遍历）
   /// 0 = 进度条，1 = 按钮行
@@ -425,8 +501,8 @@ class _PlayerPageState extends State<PlayerPage> {
     final startedAt = _seekRecoveryStartedAt;
     final target = _seekRecoveryTarget;
     if (startedAt == null || target == null || !_wantPlay) return;
-    final position = _absPosition(_player.state.position);
-    if (!_player.state.completed &&
+    final position = _absPosition(_playbackPosition);
+    if (!_playbackCompleted &&
         position < target + const Duration(milliseconds: 250)) {
       return;
     }
@@ -573,6 +649,8 @@ class _PlayerPageState extends State<PlayerPage> {
     _url = widget.url;
     _directUrl = widget.url;
     _player = Player();
+    _tvMedia3Player = TvMedia3PlayerController();
+    _logSubs.add(_tvMedia3Player.states.listen(_onTvMedia3State));
     // 停滞看门狗**在这里起一次**，之后整页生命周期内不再取消（除 dispose）。
     // 以前是每个 seek / 每次 open 各挂一个、还互相 cancel，于是留下了三次
     // 「画面冻住了但日志里一条告警都没有」的事故。常驻之后，任何一条路径都
@@ -606,6 +684,7 @@ class _PlayerPageState extends State<PlayerPage> {
     _controller = VideoController(_player);
     _logSubs.add(
       _player.stream.playing.listen((playing) {
+        if (_nativeTvActive) return;
         // TV 的播放/暂停按钮图标要跟着变（索引式控制层不是 StreamBuilder）
         if (mounted && _tvMode) setState(() {});
         // 暂停期间画面不动是用户自己的意愿，看门狗会跳过判定（[stallSkipQuiet]）；
@@ -620,7 +699,7 @@ class _PlayerPageState extends State<PlayerPage> {
             _wantPlay &&
             !_jumping &&
             !_switching &&
-            !_player.state.completed) {
+            !_playbackCompleted) {
           unawaited(_resumeIfIdle('playing 掉了'));
         }
         ClientLogger.instance.info(
@@ -631,6 +710,7 @@ class _PlayerPageState extends State<PlayerPage> {
     );
     _logSubs.add(
       _player.stream.buffering.listen((buffering) {
+        if (_nativeTvActive) return;
         ClientLogger.instance.info(
           'buffering=$buffering',
           route: 'player.state/${_sessionId ?? 'direct'}',
@@ -641,14 +721,15 @@ class _PlayerPageState extends State<PlayerPage> {
         if (!buffering &&
             mounted &&
             _wantPlay &&
-            !_player.state.playing &&
-            !_player.state.completed) {
+            !_playbackPlaying &&
+            !_playbackCompleted) {
           unawaited(_resumeIfIdle('缓冲结束'));
         }
       }),
     );
     _logSubs.add(
       _player.stream.completed.listen((done) {
+        if (_nativeTvActive) return;
         if (done) {
           ClientLogger.instance.info(
             '播放结束 transcodedMs=$_transcodedMs',
@@ -660,6 +741,7 @@ class _PlayerPageState extends State<PlayerPage> {
     _loadUiPrefs();
 
     _player.stream.error.listen((message) {
+      if (_nativeTvActive) return;
       if (!mounted) return;
       // 播放失败必须进服务端日志：装上就用的人看不到控制台，界面只显示一行
       // 「播放失败」，光靠它没法判断是解码器、令牌还是转码的问题。
@@ -869,6 +951,101 @@ class _PlayerPageState extends State<PlayerPage> {
     await store.setString('player.volume', '$_volume');
   }
 
+  void _onTvMedia3State(TvMedia3State state) {
+    final previous = _lastTvMedia3State;
+    _lastTvMedia3State = state;
+    if (state.videoWidth > 0 && state.videoHeight > 0) {
+      _decodedVideoFrame = true;
+    }
+    if (_nativeTvActive &&
+        state.videoDecoder.isNotEmpty &&
+        state.videoDecoder != previous.videoDecoder &&
+        _nativeDecoderLoggedGeneration != _openGen) {
+      _nativeDecoderLoggedGeneration = _openGen;
+      ClientLogger.instance.info(
+        'Media3 首帧/解码器就绪 decoder=${state.videoDecoder} '
+        'size=${state.videoWidth}x${state.videoHeight}',
+        route: 'player.decode/${_sessionId ?? 'direct'}',
+      );
+    }
+    if (_nativeTvActive &&
+        state.firstFrameMs != null &&
+        previous.firstFrameMs == null &&
+        _nativeFirstFrameLoggedGeneration != _openGen) {
+      _nativeFirstFrameLoggedGeneration = _openGen;
+      ClientLogger.instance.info(
+        'Media3 首帧 ${state.firstFrameMs}ms decoder=${state.videoDecoder}',
+        route: 'player.decode/${_sessionId ?? 'direct'}',
+      );
+    }
+    final error = state.error;
+    if (error != null && error.isNotEmpty) {
+      unawaited(_handleTvMedia3Error(error));
+    }
+    if (_nativeTvActive &&
+        error == null &&
+        state.isPlaying != previous.isPlaying &&
+        !state.isPlaying &&
+        !state.isBuffering &&
+        _wantPlay &&
+        !_jumping &&
+        !_switching &&
+        !state.isCompleted) {
+      unawaited(_resumeIfIdle('Media3 播放状态停止'));
+    }
+    if (_nativeTvActive &&
+        error == null &&
+        previous.isBuffering &&
+        !state.isBuffering &&
+        _wantPlay &&
+        !state.isPlaying &&
+        !state.isCompleted) {
+      unawaited(_resumeIfIdle('Media3 缓冲结束'));
+    }
+    if (mounted &&
+        (state.isPlaying != previous.isPlaying ||
+            state.isBuffering != previous.isBuffering ||
+            state.isCompleted != previous.isCompleted ||
+            state.videoWidth != previous.videoWidth ||
+            state.videoHeight != previous.videoHeight ||
+            state.videoDecoder != previous.videoDecoder ||
+            state.firstFrameMs != previous.firstFrameMs)) {
+      setState(() {});
+    }
+  }
+
+  Future<void> _handleTvMedia3Error(String message) async {
+    ClientLogger.instance.error(
+      'Media3 播放失败：$message',
+      route: 'player',
+      detail:
+          'item=${widget.itemId} session=$_sessionId preset=$_preset '
+          'codec=$_codec url=${_redactedUrlForLog(_url)}',
+    );
+    if (_nativeTvActive &&
+        !_isTranscode &&
+        _tvMode &&
+        widget.itemId != null &&
+        !_nativeFallbackAttempted &&
+        _isExplicitDecoderOpenFailure(message)) {
+      _nativeFallbackAttempted = true;
+      final codec = _codec == 'original' ? defaultTranscodeCodec() : _codec;
+      final preset = _transcodeFallback(codec: codec);
+      await _switchQuality(preset, codec: codec, persist: false, notify: false);
+      if (mounted) {
+        _showNotice(
+          tr('player.directFailed', {
+            'actual': playQualityPresetOf(preset)?.labelFor(codec) ?? preset,
+          }),
+          log: 'Media3 明确解码失败：$message → $preset/$codec',
+        );
+      }
+      return;
+    }
+    if (mounted) setState(() => _error = message);
+    _renewIfTokenExpired(message);
+  }
+
   @override
   void dispose() {
     _hideTimer?.cancel();
@@ -887,11 +1064,13 @@ class _PlayerPageState extends State<PlayerPage> {
     unawaited(exitPlayerFullscreen(portrait: _wantPortraitOnExit));
     // 先把位置交出去再销毁播放器：本地播放要用它写进度
     try {
-      widget.onPosition?.call(_player.state.position);
+      widget.onPosition?.call(_playbackPosition);
     } catch (_) {
       // 播放器已经不可用（初始化失败）：没有位置可报
     }
     AudioFocus.instance.release(_player);
+    AudioFocus.instance.release(_tvMedia3Player);
+    unawaited(_tvMedia3Player.dispose());
     _player.dispose();
     super.dispose();
   }
@@ -905,7 +1084,21 @@ class _PlayerPageState extends State<PlayerPage> {
     bool resetBenignRetries = true,
     bool? autoPlay,
   }) async {
+    await _renderReady;
+    if (!mounted) return;
+    final openGen = ++_openGen;
     _url = u;
+    final useNativeTv = _shouldUseNativeTvPlayer;
+    if (useNativeTv != _nativeTvActive) {
+      setState(() => _nativeTvActive = useNativeTv);
+      if (useNativeTv) {
+        await _player.stop();
+      } else {
+        await _tvMedia3Player.stop();
+      }
+    }
+    if (!mounted || openGen != _openGen) return;
+    _nativeFallbackAttempted = false;
     _seekQueue.invalidate();
     _lastOpenAt = DateTime.now();
     // 音频处理由服务端 HLS 会话承担；每次换源都清掉播放器侧可能残留的滤镜。
@@ -914,15 +1107,11 @@ class _PlayerPageState extends State<PlayerPage> {
     // ⛔ 只重置判定，**不取消看门狗** —— 以前这里 cancel，换流期间一旦出岔子
     // 看门狗就永久缺席（`c16e2aeb` 116 秒静默就是这么来的）。
     _stall.reset(Duration.zero);
-    _openGen += 1;
     _decodedVideoFrame = null;
     final openSw = Stopwatch()..start();
     // 要不要在打开后自动播：默认沿用用户意图（跳转 / 首播 = 想播，暂停中换档 = 不想播）
     final want = autoPlay ?? _wantPlay;
     if (want) _wantPlay = true;
-    // 色调映射 / dither 必须在 open 之前生效，否则第一个 HDR 帧就按 mpv 默认
-    // （hdr-compute-peak=no）渲染，出现「开头几秒发灰、后面才对」。
-    await _renderReady;
     ClientLogger.instance.info(
       'open 开始',
       route: 'player.open/${_sessionId ?? 'direct'}',
@@ -930,10 +1119,29 @@ class _PlayerPageState extends State<PlayerPage> {
     );
     try {
       // 视频也带声音：开播前先让音乐 / 播客 / 音色试听让路
-      await AudioFocus.instance.request(_player, () async => _player.pause());
+      await AudioFocus.instance.request(
+        useNativeTv ? _tvMedia3Player : _player,
+        useNativeTv ? _tvMedia3Player.pause : _player.pause,
+      );
+      if (!mounted || openGen != _openGen) return;
       // `play: want` 显式给意图：media_kit 的默认值是 true，换档时如果用户
       // 本来是暂停状态（在挑画质），默认值会莫名其妙自己播起来。
-      await _player.open(Media(u), play: want);
+      if (useNativeTv) {
+        final formatHint = _isTranscode
+            ? 'hls'
+            : (widget.compat?['container'] as String? ??
+                  Uri.tryParse(u)?.path.split('.').last ??
+                  '');
+        await _tvMedia3Player.open(
+          url: u,
+          positionMs: seekTo?.inMilliseconds ?? 0,
+          play: want,
+          formatHint: formatHint,
+        );
+      } else {
+        await _player.open(Media(u), play: want);
+      }
+      if (!mounted || openGen != _openGen) return;
       // open 返回后播放器手里的位置才属于这条新流，[_absPosition] 可以正常算了
       _pendingStartMs = null;
       ClientLogger.instance.info(
@@ -941,26 +1149,39 @@ class _PlayerPageState extends State<PlayerPage> {
         route: 'player.open/${_sessionId ?? 'direct'}',
       );
       // 实际用的解码器：`hwdec=auto-safe` 到底选中了硬解还是软解，只有 mpv 自己知道
-      unawaited(_logDecodeInfo());
+      if (!useNativeTv) unawaited(_logDecodeInfo());
       // 起播之后立刻挂上停滞看门狗：第一次 open 也可能停在「首片到了但画面不走」，
       // 那时候没有任何 seek 可挂，光靠 seek 看门狗是接不住的。
       if (want) _armStallWatch();
       // 字幕走控制层自绘；关掉内核自带字幕轨，避免内嵌字幕再叠一层。
       // 自绘的 cue 是 State 字段，重开 Media 不需要重新挂载。
-      try {
-        await _player.setSubtitleTrack(SubtitleTrack.no());
-      } catch (_) {
-        /* 部分平台没有字幕轨接口，忽略 */
+      if (!useNativeTv) {
+        try {
+          await _player.setSubtitleTrack(SubtitleTrack.no());
+        } catch (_) {
+          /* 部分平台没有字幕轨接口，忽略 */
+        }
       }
-      await _player.setRate(_rate);
-      await _player.setVolume(_volume);
-      await _player.setPlaylistMode(_loop);
-      await _player.setShuffle(_shuffle);
-      if (seekTo != null && seekTo > Duration.zero) {
+      await _playbackSetRate(_rate);
+      if (!mounted || openGen != _openGen) return;
+      await _playbackSetVolume(_volume);
+      if (!mounted || openGen != _openGen) return;
+      if (useNativeTv) {
+        await _tvMedia3Player.setRepeatMode(_nativeRepeatMode(_loop));
+        if (!mounted || openGen != _openGen) return;
+        await _tvMedia3Player.setShuffle(_shuffle);
+      } else {
+        await _player.setPlaylistMode(_loop);
+        if (!mounted || openGen != _openGen) return;
+        await _player.setShuffle(_shuffle);
+      }
+      if (!mounted || openGen != _openGen) return;
+      if (!useNativeTv && seekTo != null && seekTo > Duration.zero) {
         // HLS 首帧就绪前 seek 会被吞掉，等一小拍再跳
         await Future<void>.delayed(const Duration(milliseconds: 350));
         await _queuePlayerSeek(seekTo, _seekGen, showLoading: false);
       }
+      if (!mounted || openGen != _openGen) return;
       // 良性错误重试链里不能清零，否则「报错→重开→成功清零→又报错」无限循环，
       // 永远走不到 _benignRetries >= 2，黑屏且不显示任何错误。
       if (resetBenignRetries) _benignRetries = 0;
@@ -970,8 +1191,9 @@ class _PlayerPageState extends State<PlayerPage> {
       if (want) unawaited(_ensurePlayingAfterOpen());
       // 直连保底：libmpv 解不了的容器/编码（典型 MKV + HEVC 10bit / DV）不会报错，
       // 而是「有声音、画面停在首帧」。8 秒还拿不到视频尺寸就自动切回转码。
-      if (!_isTranscode) unawaited(_guardDirectPlayback());
+      if (!_isTranscode) unawaited(_guardDirectPlayback(openGen));
     } catch (e) {
+      if (!mounted || openGen != _openGen) return;
       ClientLogger.instance.warn(
         'open 失败 ${openSw.elapsedMilliseconds}ms: ${e.runtimeType}',
         route: 'player.open/${_sessionId ?? 'direct'}',
@@ -1078,7 +1300,7 @@ class _PlayerPageState extends State<PlayerPage> {
     _decodedVideoFrame = false;
     ClientLogger.instance.warn(
       '首帧未就绪 ${sw.elapsedMilliseconds}ms '
-      'width=${_player.state.width ?? 0} buffering=${_player.state.buffering}',
+      'width=$_playbackWidth buffering=$_playbackBuffering',
       route: 'player.decode/${sessionId ?? 'direct'}',
     );
   }
@@ -1102,11 +1324,11 @@ class _PlayerPageState extends State<PlayerPage> {
       // 以前直接 return，等于每次跳转都白白放弃补播 —— 拖完停在暂停的根因之一。
       if (_jumping || _switching) continue;
       if (!_wantPlay) return;
-      if (_player.state.playing || _player.state.completed) return;
+      if (_playbackPlaying || _playbackCompleted) return;
       // 正在拉流（buffering）说明这次播放请求已经被接受，插一脚只会打断它
-      if (_player.state.buffering) continue;
-      final pos = _player.state.position;
-      await _player.play();
+      if (_playbackBuffering) continue;
+      final pos = _playbackPosition;
+      await _playbackPlay();
       ClientLogger.instance.info(
         '补播 play() #${i + 1} pos=${pos.inMilliseconds}ms',
         route: 'player.resume/${_sessionId ?? 'direct'}',
@@ -1120,9 +1342,13 @@ class _PlayerPageState extends State<PlayerPage> {
   /// 决定要不要补播 —— 用户主动按的暂停必须尊重，浏览器自己丢掉的那次播放才补。
   void _togglePlay() {
     // buffering 时 `playing` 是 false，但用户此刻按的显然是「暂停」
-    final nowPlaying = _player.state.playing || _player.state.buffering;
+    final nowPlaying = _playbackPlaying || _playbackBuffering;
     _wantPlay = !nowPlaying;
-    _player.playOrPause();
+    if (_nativeTvActive) {
+      unawaited(nowPlaying ? _playbackPause() : _playbackPlay());
+    } else {
+      _player.playOrPause();
+    }
   }
 
   /// 缓冲刚结束 / 换流之后，播放器没在播就补一次 play（800ms 内只补一次）。
@@ -1140,10 +1366,10 @@ class _PlayerPageState extends State<PlayerPage> {
     if (!mounted || _jumping || _switching || !_wantPlay) return;
     // 还没装过播放地址（首帧之前的初始 playing=false）时没得补
     if (_url.isEmpty) return;
-    if (_player.state.playing || _player.state.completed) return;
+    if (_playbackPlaying || _playbackBuffering || _playbackCompleted) return;
     _lastResumeAt = now;
-    final pos = _player.state.position;
-    await _player.play();
+    final pos = _playbackPosition;
+    await _playbackPlay();
     ClientLogger.instance.info(
       '补播 play() [$why] pos=${pos.inMilliseconds}ms',
       route: 'player.resume/${_sessionId ?? 'direct'}',
@@ -1197,7 +1423,7 @@ class _PlayerPageState extends State<PlayerPage> {
 
   /// 良性中断 → 静默重开当前地址；重试四次仍没播起来才把错误显示出来。
   void _retryAfterBenignError(String message) {
-    final young = _player.state.position <= const Duration(seconds: 2);
+    final young = _playbackPosition <= const Duration(seconds: 2);
     final fatalOpen =
         message.toLowerCase().contains('failed to open') ||
         message.toLowerCase().contains('failed to recognize') ||
@@ -1221,7 +1447,7 @@ class _PlayerPageState extends State<PlayerPage> {
         route: 'player.retry/${_sessionId ?? 'direct'}',
       );
       Future<void>.delayed(const Duration(milliseconds: 1500), () {
-        if (!mounted || _player.state.playing) return;
+        if (!mounted || _playbackPlaying) return;
         _openUrl(target, resetBenignRetries: false);
       });
       return;
@@ -1243,7 +1469,7 @@ class _PlayerPageState extends State<PlayerPage> {
     final target = _url;
     if (target.isEmpty) return;
     Future<void>.delayed(const Duration(milliseconds: 900), () {
-      if (!mounted || _player.state.playing) return;
+      if (!mounted || _playbackPlaying) return;
       _openUrl(target, resetBenignRetries: false);
     });
   }
@@ -1254,8 +1480,8 @@ class _PlayerPageState extends State<PlayerPage> {
   /// HEVC 10bit / 杜比视界的片源直连时音频正常出、`state.width` 一直是 0，
   /// 画面就停在首帧。这种情况不能静默让人对着封面干等，也不能偷偷转码
   /// （用户明确要原片），所以：明确提示 + 切成一个转码档位。
-  Future<void> _guardDirectPlayback() async {
-    final startPos = _player.state.position;
+  Future<void> _guardDirectPlayback(int openGeneration) async {
+    final startPos = _playbackPosition;
     // 2026-11-16：从「先睡满 8 秒再看一眼」改成 1 秒一拍地看。
     // 手机端 4K AV1 直连实测 8 秒只走了 66ms —— 用户就是「干黑 8 秒才看到提示」。
     // 判据要把「没出视频帧 / 解码停滞」与「网络没喂够」分开：
@@ -1267,10 +1493,15 @@ class _PlayerPageState extends State<PlayerPage> {
     var elapsed = Duration.zero;
     for (var i = 0; i < 10; i += 1) {
       await Future<void>.delayed(const Duration(seconds: 1));
-      if (!mounted || _isTranscode || _error != null) return;
+      if (!mounted ||
+          openGeneration != _openGen ||
+          _isTranscode ||
+          _error != null) {
+        return;
+      }
       elapsed = Duration(seconds: i + 1);
-      w = _player.state.width ?? 0;
-      advanced = _player.state.position - startPos;
+      w = _playbackWidth;
+      advanced = _playbackPosition - startPos;
       final videoFrameReady = _decodedVideoFrame ?? w > 0;
       // 只看 width 不够：libmpv 对某些 HEVC 10bit / DV 片源能报出视频尺寸，
       // 但画面帧出不来（用户看到的就是「有声音、画面停住」）。
@@ -1287,7 +1518,7 @@ class _PlayerPageState extends State<PlayerPage> {
         if (_directBlocked) unawaited(_markDirectBlocked(false));
         return;
       }
-      final ahead = kIsWeb ? Duration.zero : _player.state.buffer;
+      final ahead = kIsWeb ? Duration.zero : _playbackBuffer;
       final issue = classifyDirectPlaybackIssue(
         width: w,
         videoFrameReady: videoFrameReady,
@@ -1307,9 +1538,14 @@ class _PlayerPageState extends State<PlayerPage> {
         break;
       }
     }
-    if (!mounted || _isTranscode || _error != null) return;
-    w = _player.state.width ?? 0;
-    advanced = _player.state.position - startPos;
+    if (!mounted ||
+        openGeneration != _openGen ||
+        _isTranscode ||
+        _error != null) {
+      return;
+    }
+    w = _playbackWidth;
+    advanced = _playbackPosition - startPos;
     final videoFrameReady = _decodedVideoFrame ?? w > 0;
     if (videoFrameReady &&
         advanced > const Duration(seconds: 2) &&
@@ -1325,8 +1561,8 @@ class _PlayerPageState extends State<PlayerPage> {
     }
     ClientLogger.instance.info(
       '直连检测 width=$w advanced=${advanced.inMilliseconds}ms '
-      'buffered=${(kIsWeb ? Duration.zero : _player.state.buffer).inMilliseconds}ms '
-      'playing=${_player.state.playing} buffering=${_player.state.buffering} '
+      'buffered=${(kIsWeb ? Duration.zero : _playbackBuffer).inMilliseconds}ms '
+      'playing=$_playbackPlaying buffering=$_playbackBuffering '
       '$reason',
       route: 'player.directGuard',
     );
@@ -1536,7 +1772,7 @@ class _PlayerPageState extends State<PlayerPage> {
       try {
         // 上报的是**片源绝对位置**：服务端据此判断要不要续转下一段，
         // 起转偏移必须算进去，否则每次跳转后都会误判「离末尾还很远」。
-        final pos = _absPosition(_player.state.position).inMilliseconds;
+        final pos = _absPosition(_playbackPosition).inMilliseconds;
         final job = await ApiSession.instance.client.playerSessionGet(
           id: id,
           pos: pos > 0 ? pos.toDouble() : 0,
@@ -1683,6 +1919,17 @@ class _PlayerPageState extends State<PlayerPage> {
     final display = await readDisplayCaps().catchError(
       (_) => DisplayCaps.unknown,
     );
+    if (!kIsWeb &&
+        defaultTargetPlatform == TargetPlatform.android &&
+        _tvMode &&
+        _srcHdr == HdrLevel.dolbyVision) {
+      final supportsDolbyVision =
+          await TvMedia3PlayerController.supportsDolbyVision();
+      ClientLogger.instance.info(
+        'Media3 Dolby Vision decoder=$supportsDolbyVision',
+        route: 'player.render',
+      );
+    }
     if (!mounted) return;
     ClientLogger.instance.info(
       'render=${caps.renderer} ${caps.summary} displayHdr=${display.maxHdr.reason}',
@@ -1699,10 +1946,9 @@ class _PlayerPageState extends State<PlayerPage> {
 
   /// 直连能不能保证**颜色是对的**。
   ///
-  /// - 电视（Android，且真的读到了 Display.HdrCapabilities）：屏幕报支持哪一档
-  ///   就直连哪一档，包括杜比视界。DV / HDR10+ 的动态元数据只有交给电视自己的
-  ///   解码器与显示管线才有意义；服务端一转就变成 SDR 了。能力低于片源等级
-  ///   （或明确报「一块 HDR 屏都没有」）才回落色调映射。
+  /// - Android TV：用户允许原片时交给 Media3 / 系统 Surface，由实际解码结果决定
+  ///   是否回退；显示能力枚举可能漏报 Dolby Vision。
+  /// - 其他 Android 端：显示能力明确低于片源时回落兼容播放。
   /// - 桌面 / Web：libmpv 的 vo=libmpv 没有 libplacebo / DV RPU 解析，
   ///   DV 直连是紫 / 荧光绿，维持旧行为走服务端 HDR→SDR；HDR10/HLG 可直连。
   bool get _colorBlocksDirect {
@@ -1710,8 +1956,13 @@ class _PlayerPageState extends State<PlayerPage> {
     final src = _srcHdr;
     if (!src.isHdr) return false;
     final tv = _tvMode || (kIsWeb && AppSettings.instance.tvMode.value);
-    // 用户在播放设置里关掉电视原片直连时，HDR 一律回服务端色调映射。
+    // 用户在播放设置里关掉电视原片直连时，按兼容播放链路处理。
     if (tv && !PlayPreferences.tvDirectOriginal) return true;
+    // Android TV 的 HDR 类型列表可能漏报 Dolby Vision；原片交给系统解码器和
+    // Surface 输出，失败时再按实际解码结果回退，避免能力探测误拦原片。
+    if (tv && !kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      return false;
+    }
     // 电视：面板能力读到了具体类型才据此降级；空数组 / 读不到按「能显示」，
     // 由电视自己的解码器和显示管线处理 DV / HDR10+ 的动态元数据。
     if (!kIsWeb && _display.trustworthy) return !_display.supports(src);
@@ -2022,10 +2273,10 @@ class _PlayerPageState extends State<PlayerPage> {
         log: '切清晰度触发色调映射回退：src=${_srcHdr.reason} preset=$effective',
       );
     }
-    final pos = _absPosition(_player.state.position);
+    final pos = _absPosition(_playbackPosition);
     // 换档前记下「当时是不是在播」：暂停中挑画质的人，换完还应该停在暂停，
     // 别因为 open 默认 play=true 自己响起来；在播的人则必须无缝续上。
-    final wasPlaying = _player.state.playing || _player.state.buffering;
+    final wasPlaying = _playbackPlaying || _playbackBuffering;
     // 先把档位/编码写进界面，再去等服务端首片：新会话要 8~12s 才出片，
     // 码率列表不能等它 —— 以前 `_codec` 要等 open 成功才更新，切完打开菜单
     // 还是旧的 1080P 8M（H.264 码率），看起来像「切了没生效」。
@@ -2138,7 +2389,7 @@ class _PlayerPageState extends State<PlayerPage> {
     }
     _renewing = true;
     _renewTries += 1;
-    final pos = _player.state.position;
+    final pos = _playbackPosition;
     try {
       final res = await ApiSession.instance.client.videoStreamUrl(id: id);
       final u = res.url.startsWith('http')
@@ -2431,7 +2682,7 @@ class _PlayerPageState extends State<PlayerPage> {
 
   Future<void> _setRate(double v) async {
     _rate = v;
-    await _player.setRate(v);
+    await _playbackSetRate(v);
     await _saveUiPrefs();
     if (mounted) setState(() {});
   }
@@ -2439,7 +2690,7 @@ class _PlayerPageState extends State<PlayerPage> {
   Future<void> _setVolume(double v) async {
     _volume = v;
     _volumeVN.value = v;
-    await _player.setVolume(v);
+    await _playbackSetVolume(v);
     await _saveUiPrefs();
     if (mounted) setState(() {});
   }
@@ -2455,8 +2706,8 @@ class _PlayerPageState extends State<PlayerPage> {
     final next = !_immersive;
     setState(() => _immersive = next);
     _poke();
-    final w = _player.state.width ?? 0;
-    final h = _player.state.height ?? 0;
+    final w = _playbackWidth;
+    final h = _playbackHeight;
     if (next) {
       await enterPlayerFullscreen(videoWidth: w, videoHeight: h);
     } else {
@@ -2504,7 +2755,7 @@ class _PlayerPageState extends State<PlayerPage> {
   ///   - 其余情况 → 播放器当前位置，这是最准的。
   Duration get _seekBaseAbs {
     final ms = seekBaseMs(
-      playerPosMs: _player.state.position.inMilliseconds,
+      playerPosMs: _playbackPosition.inMilliseconds,
       startMs: _startMs,
       lastTargetMs: _lastSeekTarget.inMilliseconds,
       jumping: _jumping,
@@ -2554,10 +2805,9 @@ class _PlayerPageState extends State<PlayerPage> {
   /// 拖动中：只更新预览，不做 seek（每帧都 seek 会把转码会话拖垮）
   void _onSeekDragStart(DragStartDetails d) {
     if (_locked) return;
-    final total = _timelineDuration(_player.state.duration);
+    final total = _timelineDuration(_playbackDuration);
     if (total <= Duration.zero) return;
-    _dragStartMs = _absPosition(_player.state.position).inMilliseconds
-        .toDouble();
+    _dragStartMs = _absPosition(_playbackPosition).inMilliseconds.toDouble();
     _dragDeltaMs = 0;
     setState(() => _dragSeeking = true);
   }
@@ -2565,7 +2815,7 @@ class _PlayerPageState extends State<PlayerPage> {
   void _onSeekDragUpdate(DragUpdateDetails d) {
     if (!_dragSeeking) return;
     final w = MediaQuery.sizeOf(context).width;
-    final total = _timelineDuration(_player.state.duration).inMilliseconds
+    final total = _timelineDuration(_playbackDuration).inMilliseconds
         .toDouble();
     if (w <= 0 || total <= 0) return;
     // 划满一屏 ≈ 整片的 1/4，夹在 1 分钟 ~ 5 分钟之间：
@@ -2577,7 +2827,7 @@ class _PlayerPageState extends State<PlayerPage> {
   Future<void> _onSeekDragEnd(DragEndDetails d) async {
     if (!_dragSeeking) return;
     final start = _dragStartMs ?? 0;
-    final total = _timelineDuration(_player.state.duration).inMilliseconds
+    final total = _timelineDuration(_playbackDuration).inMilliseconds
         .toDouble();
     final target = (start + _dragDeltaMs).clamp(0.0, total);
     final jumped = (target - start).abs() >= 1000;
@@ -2603,7 +2853,7 @@ class _PlayerPageState extends State<PlayerPage> {
   /// 拖动预览：`12:34 / +2:30`
   String get _seekPreviewText {
     final start = _dragStartMs ?? 0;
-    final total = _timelineDuration(_player.state.duration).inMilliseconds
+    final total = _timelineDuration(_playbackDuration).inMilliseconds
         .toDouble();
     final target = (start + _dragDeltaMs).clamp(0.0, total);
     final sign = _dragDeltaMs < 0 ? '-' : '+';
@@ -2632,9 +2882,13 @@ class _PlayerPageState extends State<PlayerPage> {
   Duration _bufferedEndAbs() {
     // 新流还没 open：缓冲还是上一条流的，算出来的绝对位置毫无意义
     if (_pendingStartMs != null) return Duration.zero;
-    final pos = _player.state.position;
-    final buf = _player.state.buffer;
-    final end = kIsWeb ? buf : pos + buf;
+    final pos = _playbackPosition;
+    final buf = _playbackBuffer;
+    final end = kIsWeb
+        ? buf
+        : _nativeTvActive
+        ? _tvMedia3Player.state.bufferedPosition
+        : pos + buf;
     if (end <= Duration.zero) return Duration.zero;
     return end + _startOffset;
   }
@@ -2647,7 +2901,7 @@ class _PlayerPageState extends State<PlayerPage> {
     final gen = ++_seekGen;
     if (_waitingTarget != null) _markWaitingTarget(null);
     if (_seeking) setState(() => _seeking = false);
-    final total = _timelineDuration(_player.state.duration);
+    final total = _timelineDuration(_playbackDuration);
     var t = target;
     if (t < Duration.zero) t = Duration.zero;
     if (total > Duration.zero && t > total) t = total;
@@ -2656,7 +2910,7 @@ class _PlayerPageState extends State<PlayerPage> {
     _lastSeekTarget = t;
     if (!_isTranscode || widget.itemId == null) {
       // 直链 / 没有条目 id（详情页指定的 HLS 地址）没法重建会话，只能按老规矩夹取
-      final limit = _seekLimit(_player.state.duration);
+      final limit = _seekLimit(_playbackDuration);
       if (_isTranscode && limit > Duration.zero && t > limit) t = limit;
       if (allowJump) _beginSeekRecovery(t);
       try {
@@ -2817,7 +3071,7 @@ class _PlayerPageState extends State<PlayerPage> {
     try {
       return await _seekQueue.enqueue(() async {
         if (!mounted || gen != _seekGen) return;
-        await _player.seek(position).timeout(_seekCommandTimeout);
+        await _playbackSeek(position).timeout(_seekCommandTimeout);
       });
     } finally {
       if (showLoading && mounted && gen == _seekGen && _seeking) {
@@ -2865,7 +3119,7 @@ class _PlayerPageState extends State<PlayerPage> {
   /// [target] 只用于日志（`_jumpTo` 用的位置从播放器实时读，不用它）。
   void _armStallWatch({Duration? target}) {
     if (target != null) _stallTarget = target;
-    _stall.reset(_player.state.position);
+    _stall.reset(_playbackPosition);
     // 常驻：已经在跑就别重建（重建会让判定基准跟着漂）
     if (_stallTicker?.isActive ?? false) return;
     _stallTicker = Timer.periodic(const Duration(seconds: 1), _stallTick);
@@ -2887,7 +3141,7 @@ class _PlayerPageState extends State<PlayerPage> {
     if (_waitingTarget != null) return '等转码追上';
     if (!_wantPlay) return '用户暂停';
     if (_error != null) return '错误页';
-    if (_player.state.completed) return '已播完';
+    if (_playbackCompleted) return '已播完';
     return null;
   }
 
@@ -2905,10 +3159,10 @@ class _PlayerPageState extends State<PlayerPage> {
       '看门狗跳过（$why）',
       route: 'player.stall/${_sessionId ?? 'direct'}',
       detail:
-          'pos=${_player.state.position.inMilliseconds}ms '
+          'pos=${_playbackPosition.inMilliseconds}ms '
           'target=${_stallTarget?.inMilliseconds ?? '-'}ms '
           'produced=${_loadedEnd.inMilliseconds}ms '
-          'buffering=${_player.state.buffering}',
+          'buffering=$_playbackBuffering',
     );
   }
 
@@ -2935,7 +3189,7 @@ class _PlayerPageState extends State<PlayerPage> {
         route: 'player.stall/${_sessionId ?? 'direct'}',
         detail:
             'target=${_lastSeekTarget.inMilliseconds}ms '
-            'pos=${_player.state.position.inMilliseconds}ms',
+            'pos=${_playbackPosition.inMilliseconds}ms',
       );
       if (mounted) {
         setState(() => _jumping = false);
@@ -2944,7 +3198,7 @@ class _PlayerPageState extends State<PlayerPage> {
           NasSnack.showOn(messenger, tr('player.seekNotReady'), error: true);
         }
       }
-      _stall.reset(_player.state.position);
+      _stall.reset(_playbackPosition);
       return;
     }
     _logSeekRecoveryIfReady();
@@ -2953,19 +3207,19 @@ class _PlayerPageState extends State<PlayerPage> {
       _logStallSkip(why);
       // 暂停 / 播完期间画面本来就不动：把基准跟着挪走，
       // 免得恢复播放后第一拍就被算成「这一拍没涨」
-      _stall.reset(_player.state.position);
+      _stall.reset(_playbackPosition);
       return;
     }
     _stallSkipWhy = null;
-    final action = _stall.tick(_player.state.position);
+    final action = _stall.tick(_playbackPosition);
     if (action == PlayStallAction.none) return;
-    final at = _absPosition(_player.state.position);
+    final at = _absPosition(_playbackPosition);
     final detail =
-        'pos=${_player.state.position.inMilliseconds}ms '
+        'pos=${_playbackPosition.inMilliseconds}ms '
         'at=${at.inMilliseconds}ms '
         'buffered=${_bufferedEndAbs().inMilliseconds}ms '
         'produced=${_loadedEnd.inMilliseconds}ms '
-        'buffering=${_player.state.buffering} '
+        'buffering=$_playbackBuffering '
         'want=${_stallTarget?.inMilliseconds ?? '-'}ms';
     if (action == PlayStallAction.nudge) {
       ClientLogger.instance.warn(
@@ -3000,7 +3254,7 @@ class _PlayerPageState extends State<PlayerPage> {
         route: 'player.stall/${_sessionId ?? 'direct'}',
       );
       // 收手之后别每拍重复报错：把基准挪到当前位置，等它自己再攒 8 拍
-      _stall.reset(_player.state.position);
+      _stall.reset(_playbackPosition);
       return;
     }
     _stallRebuiltAt.add(now);
@@ -3008,7 +3262,7 @@ class _PlayerPageState extends State<PlayerPage> {
       '播放停滞 ${_stall.limitSeconds * 2}s 仍未恢复 → 重建会话 target=${at.inMilliseconds}ms（$detail）',
       route: 'player.stall/${_sessionId ?? 'direct'}',
     );
-    _stall.reset(_player.state.position);
+    _stall.reset(_playbackPosition);
     unawaited(_jumpTo(at));
   }
 
@@ -3021,7 +3275,7 @@ class _PlayerPageState extends State<PlayerPage> {
     _nudgeTranscode(at);
     try {
       final applied = await _seekQueue.enqueue(() async {
-        await _player.seek(at - _startOffset).timeout(_seekCommandTimeout);
+        await _playbackSeek(at - _startOffset).timeout(_seekCommandTimeout);
       });
       if (!applied) return;
     } catch (_) {
@@ -3029,7 +3283,7 @@ class _PlayerPageState extends State<PlayerPage> {
     }
     if (!mounted) return;
     // seek 会让 position 立刻回到 at，水位要跟着重置，否则下一拍就误判「涨了」
-    _stall.noteStageOne(_player.state.position);
+    _stall.noteStageOne(_playbackPosition);
     if (_wantPlay) unawaited(_ensurePlayingAfterOpen());
   }
 
@@ -3073,7 +3327,7 @@ class _PlayerPageState extends State<PlayerPage> {
       }
       // 只看 `_wantPlay` 太脆：一次误置（比如点画面唤出控件）就会把等待直接
       // 短路成「立刻重建会话」。真暂停了位置本来就不动，多等这一轮没损失。
-      if (!_wantPlay && !_player.state.playing && !_player.state.buffering) {
+      if (!_wantPlay && !_playbackPlaying && !_playbackBuffering) {
         giveUp('用户已暂停');
         return false;
       }
@@ -3201,10 +3455,21 @@ class _PlayerPageState extends State<PlayerPage> {
   Future<void> _setLoop(PlaylistMode mode, {bool shuffle = false}) async {
     _loop = mode;
     _shuffle = shuffle;
-    await _player.setPlaylistMode(mode);
-    await _player.setShuffle(shuffle);
+    if (_nativeTvActive) {
+      await _tvMedia3Player.setRepeatMode(_nativeRepeatMode(mode));
+      await _tvMedia3Player.setShuffle(shuffle);
+    } else {
+      await _player.setPlaylistMode(mode);
+      await _player.setShuffle(shuffle);
+    }
     if (mounted) setState(() {});
   }
+
+  String _nativeRepeatMode(PlaylistMode mode) => switch (mode) {
+    PlaylistMode.single => 'one',
+    PlaylistMode.loop => 'all',
+    PlaylistMode.none => 'off',
+  };
 
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
     if (event is! KeyDownEvent) return KeyEventResult.ignored;
@@ -3306,7 +3571,7 @@ class _PlayerPageState extends State<PlayerPage> {
     final abs = _startOffset + raw;
     // HLS EVENT 列表首片未就绪时，mpv 可能把分片绝对 PTS 当成 time-pos
     // （26 小时量级）。不夹住会让进度条、字幕定位、观看上报一起跑飞。
-    final limit = _timelineDuration(_player.state.duration);
+    final limit = _timelineDuration(_playbackDuration);
     return limit > Duration.zero && abs > limit ? limit : abs;
   }
 
@@ -3321,7 +3586,7 @@ class _PlayerPageState extends State<PlayerPage> {
     return Duration(
       milliseconds: loadedEndMs(
         startMs: _startMs,
-        playerMs: done ? _player.state.duration.inMilliseconds : 0,
+        playerMs: done ? _playbackDuration.inMilliseconds : 0,
         serverMs: _transcodedMs,
       ),
     );
@@ -3509,6 +3774,11 @@ class _PlayerPageState extends State<PlayerPage> {
   Future<void> _selectAudio(int i) async {
     final tracks = _player.state.tracks.audio;
     final source = _audioTracks;
+    if (_nativeTvActive && !_isTranscode && i >= 0 && i < source.length) {
+      await _tvMedia3Player.setAudioTrack(i);
+      if (mounted) setState(() => _audioIndex = i);
+      return;
+    }
     if (source.isEmpty) {
       if (i >= 0 && i < tracks.length) {
         await _player.setAudioTrack(tracks[i]);
@@ -3518,7 +3788,7 @@ class _PlayerPageState extends State<PlayerPage> {
     if (i == _audioIndex) return;
     // 转码流只有一条音轨：切源里的第 N 条要重建会话，并从当前位置接着播
     // （位置直接当成新会话的起转点，时间轴 0 = 这里）
-    final pos = _absPosition(_player.state.position);
+    final pos = _absPosition(_playbackPosition);
     _audioIndex = i;
     final u = await _ensureTranscode(
       _preset,
@@ -3622,7 +3892,7 @@ class _PlayerPageState extends State<PlayerPage> {
               onChanged: (v) {
                 _volume = v;
                 _volumeVN.value = v;
-                _player.setVolume(v);
+                _playbackSetVolume(v);
               },
               onCommit: _saveUiPrefs,
             ),
@@ -3778,7 +4048,7 @@ class _PlayerPageState extends State<PlayerPage> {
             ),
             if (_reasons.isNotEmpty) _infoRow(tr('player.hdr'), _reasonText),
             // 渲染器 / 色调映射：色不对时先看这两行，比猜「显卡不支持」有用
-            _infoRow(tr('player.renderer'), _caps.summary),
+            _infoRow(tr('player.renderer'), _rendererSummary),
             _infoRow(
               tr('player.toneMap'),
               !_isTranscode
@@ -3791,7 +4061,9 @@ class _PlayerPageState extends State<PlayerPage> {
             ),
             _infoRow(
               tr('player.dvDirect'),
-              _caps.dolbyVisionDirect ? tr('player.on') : tr('player.off'),
+              _dolbyVisionDirectActive || _caps.dolbyVisionDirect
+                  ? tr('player.on')
+                  : tr('player.off'),
             ),
             if (_display.known)
               _infoRow(
@@ -4168,9 +4440,9 @@ class _PlayerPageState extends State<PlayerPage> {
   }
 
   Widget _progressRow() => StreamBuilder<Duration>(
-    stream: _player.stream.position,
+    stream: _positionStream,
     builder: (_, pos) => StreamBuilder<Duration>(
-      stream: _player.stream.duration,
+      stream: _durationStream,
       builder: (_, dur) {
         // 播放器时间轴 → 片源时间（从中途起转时要加偏移），时间与滑块都按它来
         final p = _absPosition(pos.data ?? Duration.zero);
@@ -4232,7 +4504,7 @@ class _PlayerPageState extends State<PlayerPage> {
   );
 
   Widget _leftControls(bool wide) => StreamBuilder<bool>(
-    stream: _player.stream.playing,
+    stream: _playingStream,
     builder: (_, snap) {
       final playing = snap.data ?? false;
       return Row(
@@ -4404,7 +4676,7 @@ class _PlayerPageState extends State<PlayerPage> {
               _btn(Icons.replay_30, tr('player.rewind10'), () => _seekBy(-10)),
               const SizedBox(width: 24),
               StreamBuilder<bool>(
-                stream: _player.stream.playing,
+                stream: _playingStream,
                 builder: (_, snap) => IconButton(
                   iconSize: 52,
                   icon: Icon(
@@ -4435,8 +4707,8 @@ class _PlayerPageState extends State<PlayerPage> {
     return Positioned.fill(
       child: IgnorePointer(
         child: StreamBuilder<Duration>(
-          stream: _player.stream.position,
-          initialData: _player.state.position,
+          stream: _positionStream,
+          initialData: _playbackPosition,
           builder: (_, snap) {
             final text = activeSubtitleText(
               _cues,
@@ -4586,6 +4858,9 @@ class _PlayerPageState extends State<PlayerPage> {
   /// 注意别在上层再套一层默认 `StackFit.loose` 的 Stack：Web 上平台视图
   /// 在零尺寸盒子里拿不到 slot，表现是黑屏但声音正常。
   Widget _videoSurface() {
+    if (_nativeTvActive) {
+      return TvMedia3PlayerSurface(controller: _tvMedia3Player);
+    }
     return Video(
       controller: _controller,
       controls: null,
@@ -4643,9 +4918,8 @@ class _PlayerPageState extends State<PlayerPage> {
         _error = null;
       });
     }
-    final target = position ?? _absPosition(_player.state.position);
-    final shouldPlay =
-        _wantPlay || _player.state.playing || _player.state.buffering;
+    final target = position ?? _absPosition(_playbackPosition);
+    final shouldPlay = _wantPlay || _playbackPlaying || _playbackBuffering;
     final processAudio = _audioProcessingRequested || widget.compat == null;
     try {
       _sessionId = null;
@@ -4781,7 +5055,7 @@ class _PlayerPageState extends State<PlayerPage> {
   int get _tvPlayIndex => 0;
 
   List<_TvAction> _tvActions() {
-    final playing = _player.state.playing;
+    final playing = _playbackPlaying;
     return <_TvAction>[
       _TvAction(
         icon: playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
@@ -5089,10 +5363,10 @@ class _PlayerPageState extends State<PlayerPage> {
 
   Widget _tvProgress() {
     return StreamBuilder<Duration>(
-      stream: _player.stream.position,
-      initialData: _player.state.position,
+      stream: _positionStream,
+      initialData: _playbackPosition,
       builder: (_, snap) {
-        final total = _timelineDuration(_player.state.duration);
+        final total = _timelineDuration(_playbackDuration);
         final totalMs = total.inMilliseconds;
         double frac(Duration d) =>
             totalMs <= 0 ? 0 : (d.inMilliseconds / totalMs).clamp(0.0, 1.0);
@@ -5164,14 +5438,16 @@ class _PlayerPageState extends State<PlayerPage> {
                   : tr('player.reason.${_display.maxHdr.reason}'))
             : tr('player.tv.hdrUnknown'),
       ),
-      row(tr('player.renderer'), _caps.summary),
+      row(tr('player.renderer'), _rendererSummary),
       row(
         tr('player.toneMap'),
         _srcHdr.isHdr ? tr('player.on') : tr('player.off'),
       ),
       row(
         tr('player.dvDirect'),
-        _caps.dolbyVisionDirect ? tr('player.on') : tr('player.off'),
+        _dolbyVisionDirectActive || _caps.dolbyVisionDirect
+            ? tr('player.on')
+            : tr('player.off'),
       ),
     ];
     return [
@@ -5441,12 +5717,12 @@ class _PlayerPageState extends State<PlayerPage> {
                     onVerticalDragEnd: _onVerticalDragEnd,
                     onLongPressStart: (_) {
                       _boosting = true;
-                      _player.setRate(2.0);
+                      _playbackSetRate(2.0);
                       setState(() {});
                     },
                     onLongPressEnd: (_) {
                       _boosting = false;
-                      _player.setRate(_rate);
+                      _playbackSetRate(_rate);
                       setState(() {});
                     },
                     child: _videoSurface(),

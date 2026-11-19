@@ -67,6 +67,12 @@ android {
     }
 }
 
+dependencies {
+    implementation("androidx.media3:media3-exoplayer:1.10.0")
+    implementation("androidx.media3:media3-exoplayer-hls:1.10.0")
+    implementation("androidx.media3:media3-ui:1.10.0")
+}
+
 kotlin {
     compilerOptions {
         jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17

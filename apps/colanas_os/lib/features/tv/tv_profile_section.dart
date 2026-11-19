@@ -52,6 +52,41 @@ class _TvProfileSectionState extends State<TvProfileSection> {
   String get _codecLabel =>
       playCodecOf(PlayPreferences.codec)?.label ?? PlayPreferences.codec;
 
+  String _normalizeLabel(AudioNormalizeMode mode) => switch (mode) {
+    AudioNormalizeMode.inherit => tr('video.client.audioNormalizeInherit'),
+    AudioNormalizeMode.enabled => tr('video.client.audioNormalizeForceOn'),
+    AudioNormalizeMode.disabled => tr('video.client.audioNormalizeForceOff'),
+  };
+
+  Future<void> _pickNormalize() async {
+    final current = PlayPreferences.audioNormalizeMode;
+    final picked = await showTvOptionDialog(
+      context,
+      title: tr('video.client.audioNormalize'),
+      hint: tr('video.client.audioNormalizeHint'),
+      columns: 1,
+      items: [
+        for (final mode in AudioNormalizeMode.values)
+          TvOptionItem(
+            value: mode.name,
+            label: _normalizeLabel(mode),
+            selected: current == mode,
+          ),
+      ],
+    );
+    if (picked == null) return;
+    final mode = AudioNormalizeMode.values.firstWhere(
+      (mode) => mode.name == picked,
+    );
+    await PlayPreferences.saveAudio(normalizeMode: mode);
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _toggleToneMap(bool value) async {
+    await PlayPreferences.saveToneMap(value);
+    if (mounted) setState(() {});
+  }
+
   Future<void> _logout(BuildContext context) async {
     final ok = await showDialog<bool>(
       context: context,
@@ -178,6 +213,22 @@ class _TvProfileSectionState extends State<TvProfileSection> {
             hint: tr('tv.profile.defaultCodecHint'),
             value: _codecLabel,
             onTap: _pickCodec,
+          ),
+          SizedBox(height: m.px(12)),
+          _ToggleSettingRow(
+            icon: Icons.hdr_on_rounded,
+            label: tr('video.client.toneMap'),
+            hint: tr('video.client.toneMapHint'),
+            value: PlayPreferences.toneMap,
+            onChanged: _toggleToneMap,
+          ),
+          SizedBox(height: m.px(12)),
+          _SettingRow(
+            icon: Icons.volume_up_outlined,
+            label: tr('video.client.audioNormalize'),
+            hint: tr('video.client.audioNormalizeHint'),
+            value: _normalizeLabel(PlayPreferences.audioNormalizeMode),
+            onTap: _pickNormalize,
           ),
           SizedBox(height: m.px(28)),
           Wrap(
@@ -344,6 +395,74 @@ class _SettingRow extends StatelessWidget {
               size: m.px(22),
               color: scheme.onSurfaceVariant,
             ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ToggleSettingRow extends StatelessWidget {
+  const _ToggleSettingRow({
+    required this.icon,
+    required this.label,
+    required this.hint,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final IconData icon;
+  final String label;
+  final String hint;
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final m = TvMetricsScope.of(context);
+    final scheme = Theme.of(context).colorScheme;
+    return TvFocusCard(
+      onTap: () => onChanged(!value),
+      radius: m.px(14),
+      focusScale: 1.02,
+      child: Container(
+        padding: EdgeInsets.symmetric(horizontal: m.px(18), vertical: m.px(14)),
+        decoration: BoxDecoration(
+          color: scheme.onSurface.withValues(alpha: 0.05),
+          borderRadius: BorderRadius.circular(m.px(14)),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, size: m.px(22), color: scheme.onSurfaceVariant),
+            SizedBox(width: m.px(14)),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    label,
+                    style: TextStyle(
+                      fontSize: m.px(18),
+                      fontWeight: FontWeight.w700,
+                      color: scheme.onSurface,
+                    ),
+                  ),
+                  SizedBox(height: m.px(4)),
+                  Text(
+                    hint,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: m.px(13),
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            SizedBox(width: m.px(16)),
+            Switch(value: value, onChanged: onChanged),
           ],
         ),
       ),

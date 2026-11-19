@@ -23,7 +23,13 @@ class MainActivity : AudioServiceActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, BACKUP_CHANNEL)
+        val messenger = flutterEngine.dartExecutor.binaryMessenger
+        flutterEngine.platformViewsController.registry.registerViewFactory(
+            "colanasos.tv_media3",
+            TvMedia3PlayerFactory(messenger),
+        )
+        TvMedia3MethodHandler.install(this, messenger)
+        MethodChannel(messenger, BACKUP_CHANNEL)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "start" -> {
@@ -56,7 +62,7 @@ class MainActivity : AudioServiceActivity() {
 
         // 离线下载的前台服务：下载开始 / 进度 / 结束三件事。
         // 失败一律返回 false，不抛给 Dart —— 没有通知栏也得能下载。
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, DOWNLOAD_CHANNEL)
+        MethodChannel(messenger, DOWNLOAD_CHANNEL)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "start" -> {
@@ -85,7 +91,7 @@ class MainActivity : AudioServiceActivity() {
         // 电视 HDR 能力：播放器按它决定「直连原画」还是「服务端色调映射转码」。
         // 只读能力，不改任何播放状态；老系统 / 通道异常时返回空数组，
         // Dart 侧按「能力未知」处理（不退化成「不支持」）。
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, DISPLAY_CHANNEL)
+        MethodChannel(messenger, DISPLAY_CHANNEL)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "hdrTypes" -> result.success(readHdrTypes())
