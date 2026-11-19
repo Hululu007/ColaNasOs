@@ -23,7 +23,6 @@ import '../features/music/shell/music_shell_view.dart';
 import '../features/photo/photo_shell.dart';
 import '../features/settings/settings_page.dart';
 import '../features/sync/sync_page.dart';
-import '../features/sync/sync_scheduler.dart';
 import '../features/sync/sync_tray_bridge.dart';
 import '../features/terminal/terminal_page.dart';
 import '../features/transmission/transmission_page.dart';
@@ -99,8 +98,6 @@ class _AppShellState extends State<AppShell> {
     AppShell.openAppRequest = _open;
     // 手机端二级页左上角的房子：回到根页面（有工作台时是工作台）
     AppNavShell.onExitToHome = () => _open(_ids.first);
-    // 用户开启过「自动同步」才启动调度；默认关，避免悄悄读写本地磁盘
-    if (SyncScheduler.instance.enabled) SyncScheduler.instance.start();
     // 托盘桥在 `runColanasApp` 里已经装好；这里补报一次状态 —— 登录之后才拿得到
     // 任务数，「立即同步」该不该置灰取决于它。
     unawaited(syncTrayBridge.refresh());

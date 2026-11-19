@@ -47,8 +47,6 @@ class WebSyncTrayHost implements SyncTrayHost {
       switch (action) {
         case 'syncNow':
           await h.onSyncNow();
-        case 'toggleAutoSync':
-          await h.onToggleAutoSync();
         case 'openTasks':
           await h.onOpenTasks();
       }
@@ -60,12 +58,11 @@ class WebSyncTrayHost implements SyncTrayHost {
   }
 
   @override
-  Future<void> publish({required bool paused, required int taskCount}) async {
+  Future<void> publish({required int taskCount}) async {
     final bridge = _bridge;
     if (bridge == null) return;
     final payload = jsonEncode(<String, dynamic>{
       'op': 'trayState',
-      'paused': paused,
       'taskCount': taskCount,
     });
     final promise =

@@ -10,7 +10,7 @@ class StubSyncTrayHost implements SyncTrayHost {
   Future<void> install(SyncTrayHandlers handlers) async {}
 
   @override
-  Future<void> publish({required bool paused, required int taskCount}) async {}
+  Future<void> publish({required int taskCount}) async {}
 }
 
 SyncTrayHost createPlatformSyncTrayHost() => StubSyncTrayHost();

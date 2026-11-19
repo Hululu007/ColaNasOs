@@ -86,6 +86,7 @@ try {
 const stats = { thumbs: 0, transcodes: 0, reused: 0, fails: 0 };
 const inflight = new Map();
 const CONCURRENCY = Math.max(1, Math.min(Number(process.env.COLANAS_MEDIA_CONCURRENCY) || 4, 16));
+const failedHwEncoders = new Set();
 
 /** 正在跑的 HLS ffmpeg：dir → child。取消会话时按 dir 精确 kill，不误伤其它任务。 */
 const activeHls = new Map();
@@ -761,7 +762,9 @@ function videoCodecArgs(codec, allowHw, prefer = 'auto', hw = null, targetKbps =
   const kbps = Number(targetKbps) > 0 ? Math.round(Number(targetKbps)) : 0;
   let enc = null;
   if (allowHw) {
-    const list = (hw || { h264: [], h265: [], av1: [] })[kind];
+    const list = ((hw || { h264: [], h265: [], av1: [] })[kind] || []).filter(
+      (name) => !failedHwEncoders.has(name),
+    );
     if (prefer === 'cpu') enc = null;
     else if (prefer === 'auto' || !prefer) enc = list[0] || null;
     else enc = list.find((n) => n.endsWith('_' + prefer)) || null;
@@ -882,6 +885,27 @@ function videoCodecArgs(codec, allowHw, prefer = 'auto', hw = null, targetKbps =
     ],
     encoder: 'libx264',
   };
+}
+
+function rememberHwEncoderFailure(encoder, error) {
+  if (
+    !encoder ||
+    gpu.vendorOf(encoder) === 'cpu' ||
+    !gpu.isHardwareEncoderInitializationFailure(error) ||
+    failedHwEncoders.has(encoder)
+  ) {
+    return;
+  }
+  failedHwEncoders.add(encoder);
+  console.error(`[media] disabling ${encoder} after encoder initialization failure`);
+}
+
+function assertHwEncoderAvailable(encoder) {
+  if (!failedHwEncoders.has(encoder)) return;
+  throw Object.assign(
+    new Error(`hardware encoder ${encoder} disabled after initialization failure`),
+    { code: 'E_HW_ENCODER_DISABLED' },
+  );
 }
 
 /**
@@ -1267,8 +1291,9 @@ async function hls(params) {
 
     const started = process.hrtime.bigint();
     const exec = () =>
-      limit(() =>
-        runFfmpeg(args, timeoutMs, {
+      limit(() => Promise.resolve().then(() => {
+        if (!copyVideo) assertHwEncoderAvailable(vc.encoder);
+        return runFfmpeg(args, timeoutMs, {
           cwd: dir,
           hlsKey: dir,
           watch: {
@@ -1286,10 +1311,15 @@ async function hls(params) {
               pipeline: copyVideo ? 'copy' : plan.pipeline,
             },
           },
-        }),
-      );
+        });
+      }));
     // GPU 零拷贝串行；CPU 链路直接跑
-    await (plan.gpu ? withGpuGate(exec) : exec());
+    try {
+      await (plan.gpu ? withGpuGate(exec) : exec());
+    } catch (err) {
+      if (!copyVideo) rememberHwEncoderFailure(vc.encoder, err);
+      throw err;
+    }
 
     const playlist = nodePath.join(dir, 'index.m3u8');
     if (!fs.existsSync(playlist))
@@ -1600,10 +1630,19 @@ async function encode(params) {
       targetKbps: resolved.targetKbps,
       copyVideo: resolved.copyVideo,
     });
-    const exec = () => encodeLimiter(() => runFfmpeg(args, timeoutMs, { hlsKey: dir, progress: onProgress }));
+    const exec = () =>
+      encodeLimiter(() => Promise.resolve().then(() => {
+        if (!resolved.copyVideo) assertHwEncoderAvailable(vc.encoder);
+        return runFfmpeg(args, timeoutMs, { hlsKey: dir, progress: onProgress });
+      }));
     // GPU 零拷贝链是全局串行的，且两路硬件编码会把编码器卡死。播放正在转码时
     // 本任务只走 CPU：宁可慢，也不能把用户正在看的片子卡住。
-    await (plan.gpu ? withGpuGate(exec) : exec());
+    try {
+      await (plan.gpu ? withGpuGate(exec) : exec());
+    } catch (err) {
+      if (!resolved.copyVideo) rememberHwEncoderFailure(vc.encoder, err);
+      throw err;
+    }
     if (!fs.existsSync(part) || fs.statSync(part).size <= 0) {
       throw Object.assign(new Error('encode output missing'), { code: 'E_FFMPEG' });
     }

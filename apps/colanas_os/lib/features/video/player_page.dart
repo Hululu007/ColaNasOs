@@ -370,10 +370,6 @@ class _PlayerPageState extends State<PlayerPage> {
   /// `_jumping` 会永远是 true，看门狗每拍都被跳过 —— 那也是卡住，得有硬超时。
   DateTime? _jumpingSince;
 
-  /// 上一次「强制复位卡死的跳转」的时刻。限速用：万一是服务端一直不回，
-  /// 每 15 秒重跳一次只会把 ffmpeg 反复掐死。1 分钟最多硬掰一次。
-  DateTime? _jumpResetAt;
-
   /// 停滞判定的水位计（判据：**历史最大位置**在多少秒内没涨过）。
   /// 换成纯 Dart 的 [PlayStallDetector] 是为了能单独写单测 —— 这段逻辑
   /// 2026-11-17 出过一次「看门狗被 seek 回显骗过、整场冻死」的事故。
@@ -1459,11 +1455,9 @@ class _PlayerPageState extends State<PlayerPage> {
   /// 这里零延迟返回，不影响秒开。
   Future<void> _waitForFirstSegment(String id) async {
     final sw = Stopwatch()..start();
-    // 首片预算按编码给：AV1 实测 1080P 首片 7.8~10.4s（4K / 两路并跑更久），
-    // 原来固定 40 次 × ~260ms ≈ 10s 就放弃 —— 播放器拿到的是一份「分片还没落盘」
-    // 的点播列表，首片请求等满 10s 变 404，libmpv 直接 fatal：表现就是「跳转 /
-    // 换档后黑屏卡死」。H.264 / H.265 首片只有 1~2s，所以这个坑只在 AV1 上显形。
-    final budgetMs = _codec == 'av1' ? 30000 : 15000;
+    // 与服务端首片看门狗对齐：硬件编码失败后会尝试软件链路，HDR 片源可能需要更久。
+    // 不要在首片尚未生成时把空播放列表交给播放器，否则后续分片超时会使整条流失效。
+    const budgetMs = 90000;
     var polls = 0;
     var last = '';
     void log(String why) {
@@ -1502,15 +1496,22 @@ class _PlayerPageState extends State<PlayerPage> {
         }
         if (st == 'failed' || st == 'canceled' || st == 'done') {
           log('terminal');
-          return;
+          throw StateError(
+            'session $id $st${job.error == null ? '' : ': ${job.error}'}',
+          );
         }
       } catch (e) {
+        if (e is StateError) rethrow;
         last = 'err=$e';
       }
       // 2s 分片下首片来得快，500ms 轮询会平白多等半拍
       await Future<void>.delayed(const Duration(milliseconds: 200));
     }
     log('timeout');
+    throw TimeoutException(
+      'first segment timeout (session=$id, ${budgetMs}ms)',
+      const Duration(milliseconds: budgetMs),
+    );
   }
 
   /// 后台盯会话状态：失败要明确说出来，成功就静默结束。
@@ -2934,34 +2935,33 @@ class _PlayerPageState extends State<PlayerPage> {
       timer.cancel();
       return;
     }
-    // 跳转卡在 [_ensureTranscode] / open 上不返回时 `_jumping` 会永远是 true，
-    // 看门狗每拍都被跳过 —— 那也是一种「卡住」。15 秒还没复位就硬掰回来。
+    // 跳转可等待服务端的软编首片（看门狗最多 90s）；超过上限只复位 UI，
+    // 不要重新建会话，否则旧 ffmpeg 还在跑时会反复抢占并继续卡住。
     final since = _jumpingSince;
     if (_jumping &&
         since != null &&
-        DateTime.now().difference(since) > const Duration(seconds: 15)) {
-      final lastReset = _jumpResetAt;
-      if (lastReset != null &&
-          DateTime.now().difference(lastReset) < const Duration(minutes: 1)) {
-        // 刚硬掰过一次又卡住：别再掐 ffmpeg 了，留着日志等人看
-        _logStallSkip('跳转卡死（已强制复位过）');
-        return;
-      }
-      _jumpResetAt = DateTime.now();
+        DateTime.now().difference(since) > const Duration(seconds: 150)) {
       _jumpRunGen += 1;
+      _seekGen += 1;
       _jumpingSince = null;
       _pendingJump = null;
       _pendingJumpGen = null;
+      _seekByTimer?.cancel();
       ClientLogger.instance.error(
-        '跳转卡住 15s 未复位 → 强制复位并重跳',
+        '跳转超过 150s 未完成 → 取消旧请求并保留当前流',
         route: 'player.stall/${_sessionId ?? 'direct'}',
         detail:
             'target=${_lastSeekTarget.inMilliseconds}ms '
             'pos=${_player.state.position.inMilliseconds}ms',
       );
-      if (mounted) setState(() => _jumping = false);
+      if (mounted) {
+        setState(() => _jumping = false);
+        final messenger = ScaffoldMessenger.maybeOf(context);
+        if (messenger != null) {
+          NasSnack.showOn(messenger, tr('player.seekNotReady'), error: true);
+        }
+      }
       _stall.reset(_player.state.position);
-      unawaited(_jumpTo(_lastSeekTarget));
       return;
     }
     _logSeekRecoveryIfReady();
@@ -4554,7 +4554,7 @@ class _PlayerPageState extends State<PlayerPage> {
     if (_switching || _jumping || _seeking || _waitingTarget != null) {
       final String label;
       if (_jumping) {
-        label = tr('player.seekingTarget');
+        label = tr('common.loading');
       } else if (_switching) {
         label = tr('player.switching');
       } else if (_seeking) {

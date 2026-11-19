@@ -74,6 +74,13 @@ function vendorOf(encoder) {
   return 'cpu';
 }
 
+function isHardwareEncoderInitializationFailure(error) {
+  const message = String(error && error.message ? error.message : error || '');
+  return /could not open encoder before eof|error while opening encoder|error initializing output stream/i.test(
+    message,
+  );
+}
+
 const CPU_PLAN = Object.freeze({
   decoder: 'cpu',
   pipeline: 'cpu',
@@ -262,6 +269,7 @@ module.exports = {
   resetHwaccelsCacheForTest,
   resetFiltersCacheForTest,
   vendorOf,
+  isHardwareEncoderInitializationFailure,
   hasCap,
   cpuTonemapUsable,
   cpuFilter,

@@ -121,26 +121,23 @@ Future<void> runColanasApp({
   // 桌面端托盘：关窗缩到托盘常驻；初始化失败自动降级为普通关闭
   await desktopTray.init();
   mark('services');
-  // Electron 托盘的同步三项：**登录前就要挂上**，否则「同步任务」点了没反应
-  // （页面停在登录页时 AppShell 还没创建）。动作本身在未登录时会自己空转。
+  // 托盘的同步操作登录前就挂上；动作本身在未登录时会自己空转。
   unawaited(
     syncTrayBridge.install(
       SyncTrayHandlers(
         onSyncNow: () => SyncScheduler.instance.runAllNow(),
-        onToggleAutoSync: () async {
-          await SyncScheduler.instance.setEnabled(
-            !SyncScheduler.instance.enabled,
-          );
-        },
         onOpenTasks: () async => AppShell.openApp('sync'),
       ),
     ),
   );
-  syncTrayBridge.bindScheduler();
-  // 装好就把状态报一次：主进程据此画「暂停/恢复自动同步」「立即同步是否可点」。
+  // 装好就把本机任务数报给托盘，「立即同步」据此置灰。
   // 未登录时 `localTaskCount` 返回 0，菜单里「立即同步」是灰的 —— 符合实际。
   unawaited(syncTrayBridge.refresh());
   runApp(ColaNasApp(launchMode: mode, tvEntry: tvEntry));
+  if (mode == AppLaunchMode.full || mode == AppLaunchMode.sync) {
+    // 每任务间隔是唯一的定时配置；客户端启动后立即检查到期任务。
+    SyncScheduler.instance.start();
+  }
   // 首帧出来后再补一个时间点：启动阶段到底是卡在磁盘 / 网络 / 首帧渲染，
   // 这一行日志就能分开（帧耗时单独由 PerfDiagnostics 每 60s 打一次）。
   WidgetsBinding.instance.addPostFrameCallback((_) {

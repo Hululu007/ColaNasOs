@@ -5,7 +5,6 @@ import '../../core/session.dart';
 import 'sync_engine.dart';
 import 'sync_fs.dart';
 import 'sync_remote_dir_picker.dart';
-import 'sync_scheduler.dart';
 
 /// 创建 / 编辑同步任务：设备确认 → 规则（名称/模式/按需/高级）→ 路径。
 ///
@@ -70,10 +69,7 @@ class _SyncCreateWizardState extends State<SyncCreateWizard> {
     _mode = e?.mode ?? 'bidirectional';
     _filter = e?.filterConfig ?? const SyncFilterConfig();
     _config = e?.syncConfig ??
-        SyncTaskConfig(
-          conflictStrategy: 'prefer_newer',
-          intervalMinutes: SyncScheduler.instance.intervalMin,
-        );
+        const SyncTaskConfig(conflictStrategy: 'prefer_newer');
     _intervalCtrl = TextEditingController(
       text: (_config.intervalMinutes > 0) ? '${_config.intervalMinutes}' : '',
     );

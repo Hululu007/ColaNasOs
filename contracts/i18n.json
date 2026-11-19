@@ -2344,7 +2344,6 @@
     "player.seekForward": {
       "n": {}
     },
-    "player.seekingTarget": {},
     "player.settings": {},
     "player.sourceDirect": {},
     "player.sourceAudioProcessed": {},
@@ -2574,21 +2573,6 @@
     "style.preview": {},
     "style.previewHint": {},
     "style.title": {},
-    "sync.auto.checkNow": {},
-    "sync.auto.enable": {},
-    "sync.auto.hint": {},
-    "sync.auto.interval": {},
-    "sync.auto.minutes": {
-      "n": {}
-    },
-    "sync.auto.offHint": {},
-    "sync.auto.runCheck": {},
-    "sync.auto.title": {},
-    "sync.autostart.enable": {},
-    "sync.autostart.failed": {},
-    "sync.autostart.hint": {},
-    "sync.autostart.unsupported": {},
-    "sync.autostart.web": {},
     "sync.cancelRun": {},
     "sync.createTask": {},
     "sync.delete.body": {},

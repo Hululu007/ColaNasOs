@@ -8,11 +8,9 @@ import '../../shell/app_nav_shell.dart';
 import '../../shell/app_widgets.dart';
 
 import '../../core/session.dart';
-import 'sync_autostart.dart';
 import 'sync_create_wizard.dart';
 import 'sync_engine.dart';
 import 'sync_record_dialog.dart';
-import 'sync_scheduler.dart';
 import 'sync_task_card.dart';
 import 'sync_tray_bridge.dart';
 
@@ -44,16 +42,11 @@ class _SyncPageState extends State<SyncPage> {
     super.initState();
     _engine.revision.addListener(_onEngine);
     _searchCtrl.addListener(_onSearch);
-    // 按需同步（每任务 realtime）依赖调度器的目录监听，进入页面即启动
-    SyncScheduler.instance.start();
     unawaited(_initializeAndLoad());
   }
 
   @override
   void dispose() {
-    // 页面打开的按需同步随页面关掉；用户若开了「后台自动同步」则保持调度
-    // （以前这里不停，没开自动同步的用户也会每分钟空转一次直到退出应用）。
-    if (!SyncScheduler.instance.enabled) SyncScheduler.instance.stop();
     _engine.revision.removeListener(_onEngine);
     _searchCtrl.removeListener(_onSearch);
     _searchCtrl.dispose();
@@ -196,104 +189,6 @@ class _SyncPageState extends State<SyncPage> {
     await _load();
   }
 
-  /// 自动同步设置：开关 + 间隔（应用运行期间生效）+ 开机自启（桌面独立端）。
-  Future<void> _openAutoSync() async {
-    var enabled = SyncScheduler.instance.enabled;
-    var interval = SyncScheduler.instance.intervalMin;
-    final autoStart = createSyncAutoStart();
-    var autoStartEnabled = autoStart.enabled;
-    final messenger = ScaffoldMessenger.of(context);
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setLocal) => AlertDialog(
-          title: Text(tr('sync.auto.title')),
-          content: SizedBox(
-            width: 420,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: Text(tr('sync.auto.enable')),
-                  value: enabled,
-                  onChanged: (v) => setLocal(() => enabled = v),
-                ),
-                Text(
-                  tr('sync.auto.hint'),
-                  style: TextStyle(
-                    fontSize: NasTokens.fontCaption,
-                    color: Theme.of(ctx).colorScheme.onSurfaceVariant,
-                  ),
-                ),
-                const SizedBox(height: NasTokens.spaceSm),
-                NasDropdown<int>(
-                  initialValue: interval,
-                  decoration: InputDecoration(
-                    labelText: tr('sync.auto.interval'),
-                  ),
-                  items: [
-                    for (final m in syncIntervalOptions)
-                      DropdownMenuItem(
-                        value: m,
-                        child: Text(tr('sync.auto.minutes', {'n': m})),
-                      ),
-                  ],
-                  onChanged: (v) => setLocal(() => interval = v ?? interval),
-                ),
-                const SizedBox(height: NasTokens.spaceSm),
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: Text(tr('sync.autostart.enable')),
-                  subtitle: Text(
-                    autoStart.supported
-                        ? tr('sync.autostart.hint')
-                        : tr(autoStart.unsupportedReasonKey),
-                    style: TextStyle(
-                      fontSize: NasTokens.fontCaption,
-                      color: Theme.of(ctx).colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                  value: autoStartEnabled,
-                  onChanged: autoStart.supported
-                      ? (v) => setLocal(() => autoStartEnabled = v)
-                      : null,
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () async {
-                await SyncScheduler.instance.tickNow();
-                NasSnack.showOn(messenger, tr('sync.auto.checkNow'));
-              },
-              child: Text(tr('sync.auto.runCheck')),
-            ),
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: Text(tr('common.cancel')),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: Text(tr('common.save')),
-            ),
-          ],
-        ),
-      ),
-    );
-    if (ok != true) return;
-    await SyncScheduler.instance.setIntervalMinutes(interval);
-    await SyncScheduler.instance.setEnabled(enabled);
-    if (autoStart.supported && autoStartEnabled != autoStart.enabled) {
-      final changed = await autoStart.setEnabled(autoStartEnabled);
-      if (!changed) {
-        NasSnack.showOn(messenger, tr('sync.autostart.failed'));
-      }
-    }
-  }
-
   List<SyncTask> get _visible {
     final k = _keyword.trim().toLowerCase();
     if (k.isEmpty) return _tasks;
@@ -328,57 +223,6 @@ class _SyncPageState extends State<SyncPage> {
     }
   }
 
-  /// 「自动同步未开启」提示条：点一下直接打开自动同步设置
-  Widget _autoOffBanner() {
-    final scheme = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(
-        NasTokens.spaceMd,
-        NasTokens.spaceSm,
-        NasTokens.spaceMd,
-        0,
-      ),
-      child: InkWell(
-        onTap: _openAutoSync,
-        borderRadius: BorderRadius.circular(NasTokens.radiusSm),
-        child: Container(
-          padding: const EdgeInsets.symmetric(
-            horizontal: NasTokens.spaceMd,
-            vertical: NasTokens.spaceSm,
-          ),
-          decoration: BoxDecoration(
-            color: scheme.error.withValues(alpha: 0.10),
-            borderRadius: BorderRadius.circular(NasTokens.radiusSm),
-            border: Border.all(color: scheme.error.withValues(alpha: 0.35)),
-          ),
-          child: Row(
-            children: [
-              Icon(Icons.schedule, size: 18, color: scheme.error),
-              const SizedBox(width: NasTokens.spaceXs),
-              Expanded(
-                child: Text(
-                  tr('sync.auto.offHint'),
-                  style: TextStyle(
-                    fontSize: NasTokens.fontCaption,
-                    color: scheme.onSurface,
-                  ),
-                ),
-              ),
-              Text(
-                tr('sync.auto.enable'),
-                style: TextStyle(
-                  fontSize: NasTokens.fontCaption,
-                  fontWeight: FontWeight.w700,
-                  color: scheme.primary,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
   Widget _tasksView(bool canSync) {
     if (_loading) return const NasLoading();
     if (_error != null) return NasErrorState(message: _error!, onRetry: _load);
@@ -386,12 +230,6 @@ class _SyncPageState extends State<SyncPage> {
     final wide = MediaQuery.sizeOf(context).width >= 760;
     return Column(
       children: [
-        // 用户以为「每任务 30 分钟」就会自己跑，但总开关默认关着 —— 不提示的话
-        // 表现就是「同步记录停在某一条再也不动」，很难自己发现。
-        if (canSync &&
-            !SyncScheduler.instance.enabled &&
-            items.any((t) => t.syncConfig.intervalMinutes > 0))
-          _autoOffBanner(),
         Padding(
           padding: const EdgeInsets.fromLTRB(
             NasTokens.spaceMd,
@@ -432,12 +270,6 @@ class _SyncPageState extends State<SyncPage> {
                   ),
                 ),
               const SizedBox(width: NasTokens.spaceXs),
-              if (canSync)
-                IconButton(
-                  tooltip: tr('sync.auto.title'),
-                  onPressed: _openAutoSync,
-                  icon: const Icon(Icons.schedule),
-                ),
               // 换成统一二级菜单后没有 AppBar 了，刷新与「新建」挪到这里
               NasRefreshButton(onPressed: _load),
               if (canSync)

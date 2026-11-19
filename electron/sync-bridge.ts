@@ -30,14 +30,14 @@ interface DownloadJob {
 const jobs = new Map<string, DownloadJob>();
 
 /**
- * 托盘状态上报（`{op:'trayState'}`）：Dart 侧把「自动同步是否暂停 / 本机任务数」
+ * 托盘状态上报（`{op:'trayState'}`）：Dart 侧把「本机任务数」
  * 交给主进程，主进程据此重画托盘菜单。用注入回调而不是直接 import main.ts，
  * 避免 main ⇄ bridge 互相 import 的循环。
  */
-let trayStateHandler: ((state: { paused: boolean; taskCount: number }) => void) | null = null;
+let trayStateHandler: ((state: { taskCount: number }) => void) | null = null;
 
 export function onTrayState(
-  handler: (state: { paused: boolean; taskCount: number }) => void,
+  handler: (state: { taskCount: number }) => void,
 ): void {
   trayStateHandler = handler;
 }
@@ -78,7 +78,6 @@ async function handle(req: Record<string, unknown>): Promise<unknown> {
       return cancelJob(String(req.jobId ?? ''));
     case 'trayState':
       trayStateHandler?.({
-        paused: req.paused === true,
         taskCount: Number(req.taskCount ?? 0),
       });
       return {};

@@ -217,6 +217,18 @@ process.chdir(root);
       gpu.vendorOf('h264_qsv') === 'intel' && gpu.vendorOf('libx264') === 'cpu',
     'amf/nvenc/qsv/cpu',
   );
+  check(
+    'hardware_encoder_init_failure_detected',
+    gpu.isHardwareEncoderInitializationFailure(
+      new Error('Could not open encoder before EOF'),
+    ),
+    'AMF initialization failure',
+  );
+  check(
+    'other_ffmpeg_failures_do_not_disable_encoder',
+    !gpu.isHardwareEncoderInitializationFailure(new Error('ffmpeg timeout')),
+    'timeout',
+  );
   const nv = gpu.decodePlans(gpuCtx({ encoder: 'h264_nvenc' }))[0];
   check('gpu_vendor_nvidia', nv.decoder === 'cuda' && nv.pipeline === 'gpu-zero-copy', nv.decoder + '/' + nv.pipeline);
   check(

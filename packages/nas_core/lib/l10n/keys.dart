@@ -1730,7 +1730,6 @@ class I18nKeys {
   static const playerSeekBack = 'player.seekBack';
   static const playerSeekFailed = 'player.seekFailed';
   static const playerSeekForward = 'player.seekForward';
-  static const playerSeekingTarget = 'player.seekingTarget';
   static const playerSettings = 'player.settings';
   static const playerSourceDirect = 'player.sourceDirect';
   static const playerSourceAudioProcessed = 'player.sourceAudioProcessed';
@@ -1904,19 +1903,6 @@ class I18nKeys {
   static const stylePreviewHint = 'style.previewHint';
   static const styleTitle = 'style.title';
   // ---- sync ----
-  static const syncAutoCheckNow = 'sync.auto.checkNow';
-  static const syncAutoEnable = 'sync.auto.enable';
-  static const syncAutoHint = 'sync.auto.hint';
-  static const syncAutoInterval = 'sync.auto.interval';
-  static const syncAutoMinutes = 'sync.auto.minutes';
-  static const syncAutoOffHint = 'sync.auto.offHint';
-  static const syncAutoRunCheck = 'sync.auto.runCheck';
-  static const syncAutoTitle = 'sync.auto.title';
-  static const syncAutostartEnable = 'sync.autostart.enable';
-  static const syncAutostartFailed = 'sync.autostart.failed';
-  static const syncAutostartHint = 'sync.autostart.hint';
-  static const syncAutostartUnsupported = 'sync.autostart.unsupported';
-  static const syncAutostartWeb = 'sync.autostart.web';
   static const syncCancelRun = 'sync.cancelRun';
   static const syncCreateTask = 'sync.createTask';
   static const syncDeleteBody = 'sync.delete.body';
@@ -3119,4 +3105,4 @@ class I18nKeys {
 }
 
 /// 契约键总数（生成时确定），供完整性自检使用。
-const int i18nKeyCount = 3068;
+const int i18nKeyCount = 3054;
