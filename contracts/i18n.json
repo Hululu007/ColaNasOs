@@ -2239,12 +2239,17 @@
     "player.audioCodec": {},
     "player.audioDownmix": {},
     "player.audioNormalize": {},
+    "player.toneMapRequiresTranscode": {},
     "player.audioTrack": {},
     "player.back": {},
     "player.bitrate": {},
     "player.codecFallback": {
       "want": {},
       "actual": {}
+    },
+    "player.codecFallbackBlocked": {},
+    "player.codecFallbackOriginal": {
+      "want": {}
     },
     "player.codecHintDirect": {},
     "player.webTranscode": {
@@ -2296,6 +2301,8 @@
     "player.pause": {},
     "player.play": {},
     "player.playFailed": {},
+    "player.originalAlsoUnsupported": {},
+    "player.originalPlaybackFailed": {},
     "player.playbackSource": {},
     "player.playlist": {},
     "player.preparing": {},
@@ -2340,6 +2347,8 @@
     "player.seekingTarget": {},
     "player.settings": {},
     "player.sourceDirect": {},
+    "player.sourceAudioProcessed": {},
+    "player.sourceAudioOriginal": {},
     "player.sourceTranscode": {},
     "player.speed": {},
     "player.speedBoost": {},
@@ -3267,6 +3276,9 @@
     "video.card.watched": {},
     "video.client.audioNormalize": {},
     "video.client.audioNormalizeHint": {},
+    "video.client.audioNormalizeInherit": {},
+    "video.client.audioNormalizeForceOn": {},
+    "video.client.audioNormalizeForceOff": {},
     "video.client.bitrateNow": {
       "rate": {}
     },
@@ -3286,6 +3298,8 @@
     "video.client.localOnly": {},
     "video.client.playQuality": {},
     "video.client.playQualityHint": {},
+    "video.client.toneMap": {},
+    "video.client.toneMapHint": {},
     "video.collection.addTo": {},
     "video.collection.added": {
       "count": {}
@@ -3506,6 +3520,9 @@
     "video.jp.fanart": {},
     "video.jp.favorite": {},
     "video.jp.favorites": {},
+    "video.jp.filterActiveCount": {
+      "count": {}
+    },
     "video.jp.height": {},
     "video.jp.hips": {},
     "video.jp.inLibrary": {},
@@ -3530,6 +3547,12 @@
     "video.jp.works": {
       "count": {}
     },
+    "video.jp.worksSort": {},
+    "video.jp.worksSortRating": {},
+    "video.jp.worksSortSmart": {},
+    "video.jp.worksSortTitle": {},
+    "video.jp.worksSortUnwatched": {},
+    "video.jp.worksSortYear": {},
     "video.libSummary": {
       "path": {},
       "count": {}

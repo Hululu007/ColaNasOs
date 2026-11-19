@@ -28,6 +28,27 @@ import '../../core/video_subtitle_prefs.dart';
 import 'player_screen.dart';
 import 'tv_player_controls.dart';
 
+String _redactedUrlForLog(String value) {
+  final uri = Uri.tryParse(value);
+  if (uri == null) return '<unparseable-url>';
+  if (!uri.hasAuthority) return '<relative-url>';
+  return uri
+      .replace(userInfo: '', path: '', query: '', fragment: '')
+      .toString();
+}
+
+bool _isExplicitDecoderOpenFailure(String message) {
+  final m = message.toLowerCase();
+  return m.contains('failed to recognize file format') ||
+      m.contains('no video or audio streams') ||
+      m.contains('no decoder found') ||
+      m.contains('decoder not found') ||
+      m.contains('unsupported codec') ||
+      m.contains('unknown codec') ||
+      m.contains('failed to initialize video decoder') ||
+      m.contains('error while decoding');
+}
+
 /// 内置播放器：media_kit 作为跨平台内核，**控制层全部自绘**。
 ///
 /// 之前直接套 SDK 默认控件，右下角一个参数项都没有，画质/码率只能在详情页
@@ -143,10 +164,10 @@ class _PlayerPageState extends State<PlayerPage> {
 
   late String _preset;
 
-  /// 当前编码：用用户偏好，但本机解不出来时回落 H.264。
+  /// 当前播放策略：设备不支持所选输出编码时回到原码。
   String _codec = codecPlayable(PlayPreferences.codec)
       ? PlayPreferences.codec
-      : 'h264';
+      : 'original';
   int _audioIndex = 0;
 
   /// 源文件的音轨清单（语言 / 音轨名 / 声道），菜单里显示成「1 · 中文 · TrueHD 7.1」。
@@ -305,6 +326,8 @@ class _PlayerPageState extends State<PlayerPage> {
 
   /// 跳转进行中又有新目标：只保留最后一个，等当前这次完成后再跳。
   Duration? _pendingJump;
+  int? _pendingJumpGen;
+  int _jumpRunGen = 0;
 
   /// 播放停滞看门狗：**页面级常驻**，整个播放页只有一个，任何路径都不许 cancel
   /// （除了 dispose）。
@@ -359,6 +382,8 @@ class _PlayerPageState extends State<PlayerPage> {
   /// 最近一次 `_seekTo` 的目标（片源绝对）。[_pendingStartMs] 非空时拿它当
   /// 快进 / 快退的基准 —— 此时 position 属于旧流，不可信。
   Duration _lastSeekTarget = Duration.zero;
+  DateTime? _seekRecoveryStartedAt;
+  Duration? _seekRecoveryTarget;
 
   /// 正在「等转码追上」的目标（片源绝对）。非空时右上角显示
   /// 「正在转码到 xx:xx」—— 等待期间画面会停在已转出末尾不动，
@@ -382,6 +407,29 @@ class _PlayerPageState extends State<PlayerPage> {
     _markWaitingTarget(null);
   }
 
+  void _beginSeekRecovery(Duration target) {
+    _seekRecoveryStartedAt = DateTime.now();
+    _seekRecoveryTarget = target;
+  }
+
+  void _logSeekRecoveryIfReady() {
+    final startedAt = _seekRecoveryStartedAt;
+    final target = _seekRecoveryTarget;
+    if (startedAt == null || target == null || !_wantPlay) return;
+    final position = _absPosition(_player.state.position);
+    if (!_player.state.completed &&
+        position < target + const Duration(milliseconds: 250)) {
+      return;
+    }
+    ClientLogger.instance.info(
+      'seek恢复 ${DateTime.now().difference(startedAt).inMilliseconds}ms '
+      'target=${target.inMilliseconds}ms position=${position.inMilliseconds}ms',
+      route: 'player.seek/${_sessionId ?? 'direct'}',
+    );
+    _seekRecoveryStartedAt = null;
+    _seekRecoveryTarget = null;
+  }
+
   /// 第几次 `open()`。同一个 open 只允许「首片没到就补开」一次 ——
   /// 没有这个计数的话，失败→重开→再失败会把画面刷成闪烁（早期线上问题）。
   int _openGen = 0;
@@ -391,15 +439,19 @@ class _PlayerPageState extends State<PlayerPage> {
   ///
   /// 手机端 4K AV1 直连实测：8 秒里播放位置只走了 66ms，画面是黑的。
   /// 用户一旦把默认档存成「原画」，就是**每次进播放页都黑一遍再切**、提示反复弹。
-  /// 这里只记「数据已经缓冲、位置却不动」这种解码跟不上的情况（网慢不记，
-  /// 换个网络还能直连）；命中就直接进转码档，只留一条提示说明原因。
+  /// 这里只将 Android TV 上「缓冲充足但无视频帧 / 解码停滞」判定为解码失败并自动回退。
+  /// 其他设备或网络异常显示错误与可选转码入口，不以码率/分辨率自动改变策略。
   static const _directBlockKey = 'player.directBlock';
 
   /// 服务端回传的**实际**编码（降级后以它为准）；为空表示还没出片。
   String? _actualCodec;
+  bool? _actualToneMap;
+  bool? _sessionAudioNormalizeEffective;
+  bool? _decodedVideoFrame;
 
   /// 「服务端把编码降级了」这条提示只弹一次，别每 3 秒轮询都刷一遍。
   bool _codecNoticeShown = false;
+  bool _originalFallbackAttempted = false;
 
   /// 上次刷新隐藏定时器的时间，用来给 `onHover` 做节流。
   DateTime _lastPoke = DateTime.fromMillisecondsSinceEpoch(0);
@@ -491,12 +543,14 @@ class _PlayerPageState extends State<PlayerPage> {
     //
     // TV 第一次进来默认「原画」：电视本来就该放原片，转码是降级；
     // 用户一旦在「我的 → 默认码率」里存过值，就按存的那档走。
-    final preferred =
+    final requestedPreset =
         widget.initialPreset ??
-        PlayPreferences.savedPreset ??
-        (AppSettings.instance.tvMode.value
+        (PlayPreferences.codec == 'original'
             ? 'original'
-            : PlayPreferences.preset);
+            : PlayPreferences.savedPreset ?? PlayPreferences.preset);
+    final preferred = requestedPreset == 'original' && _codec != 'original'
+        ? PlayPreferences.preset
+        : requestedPreset;
     _preset = clampPresetForSource(preferred, _srcHeight, codec: _codec);
     // 详情页「转码」入口给的已经是 HLS 地址，不能再当直链处理
     _isTranscode = widget.initialPreset != null;
@@ -604,7 +658,8 @@ class _PlayerPageState extends State<PlayerPage> {
         message,
         route: 'player',
         detail:
-            'item=${widget.itemId} session=$_sessionId preset=$_preset codec=$_codec url=$_url',
+            'item=${widget.itemId} session=$_sessionId preset=$_preset '
+            'codec=$_codec url=${_redactedUrlForLog(_url)}',
       );
       // 「play() 被新 load / 移除元素打断」是浏览器换 src 的正常副作用，
       // 不是播放失败：既不重开（会再次打断新的 play()），也不显示错误页。
@@ -856,13 +911,14 @@ class _PlayerPageState extends State<PlayerPage> {
   }) async {
     _url = u;
     _lastOpenAt = DateTime.now();
-    // 直连 / 转码两条路径的音频处理不同，每次换源都要按当前路径重设。
+    // 音频处理由服务端 HLS 会话承担；每次换源都清掉播放器侧可能残留的滤镜。
     _applyDirectAudio();
     // 换了播放源：位置不再连续，判定基准要挪到新流的起点。
     // ⛔ 只重置判定，**不取消看门狗** —— 以前这里 cancel，换流期间一旦出岔子
     // 看门狗就永久缺席（`c16e2aeb` 116 秒静默就是这么来的）。
     _stall.reset(Duration.zero);
     _openGen += 1;
+    _decodedVideoFrame = null;
     final openSw = Stopwatch()..start();
     // 要不要在打开后自动播：默认沿用用户意图（跳转 / 首播 = 想播，暂停中换档 = 不想播）
     final want = autoPlay ?? _wantPlay;
@@ -873,7 +929,7 @@ class _PlayerPageState extends State<PlayerPage> {
     ClientLogger.instance.info(
       'open 开始',
       route: 'player.open/${_sessionId ?? 'direct'}',
-      detail: u,
+      detail: _redactedUrlForLog(u),
     );
     try {
       // 视频也带声音：开播前先让音乐 / 播客 / 音色试听让路
@@ -920,10 +976,34 @@ class _PlayerPageState extends State<PlayerPage> {
       if (!_isTranscode) unawaited(_guardDirectPlayback());
     } catch (e) {
       ClientLogger.instance.warn(
-        'open 失败 ${openSw.elapsedMilliseconds}ms: $e',
+        'open 失败 ${openSw.elapsedMilliseconds}ms: ${e.runtimeType}',
         route: 'player.open/${_sessionId ?? 'direct'}',
-        detail: u,
+        detail: _redactedUrlForLog(u),
       );
+      if (!_isTranscode &&
+          _tvMode &&
+          widget.itemId != null &&
+          !_originalFallbackAttempted &&
+          _isExplicitDecoderOpenFailure('$e')) {
+        unawaited(_markDirectBlocked(true));
+        final fallbackCodec = defaultTranscodeCodec();
+        final fallback = _transcodeFallback(codec: fallbackCodec);
+        _showNotice(
+          tr('player.directFailed', {
+            'actual':
+                playQualityPresetOf(fallback)?.labelFor(fallbackCodec) ??
+                fallback,
+          }),
+          log: 'TV 原片打开时明确解码失败：${e.runtimeType} → $fallback',
+        );
+        await _switchQuality(
+          fallback,
+          codec: fallbackCodec,
+          persist: false,
+          notify: false,
+        );
+        return;
+      }
       // 边转边播的第一次打开会「打不开」：播放器拉 index.m3u8 时首片可能还没落盘
       // （服务端最多等 15s，超时就先给空 EVENT 列表），内核当场就报错退出。
       // 转码本身没失败，过一两秒分片就有了 —— 直接弹「播放失败」太冤。
@@ -942,7 +1022,13 @@ class _PlayerPageState extends State<PlayerPage> {
       // 彻底放弃了这条流：位置又回到「不可信」状态，别让 [_absPosition] 继续
       // 按新会话起点报位置（进度条会显示一个根本没播到的点）。
       _pendingStartMs = null;
-      if (mounted) setState(() => _error = e.toString());
+      if (mounted) {
+        setState(() {
+          _error = _originalFallbackAttempted
+              ? tr('player.originalAlsoUnsupported')
+              : e.toString();
+        });
+      }
       _renewIfTokenExpired(e.toString());
     }
   }
@@ -955,30 +1041,49 @@ class _PlayerPageState extends State<PlayerPage> {
   /// 「4K AV1 直连 8 秒只走 66ms」到底是解不动还是没数据一看便知。
   Future<void> _logDecodeInfo() async {
     if (kIsWeb) return;
+    final openGen = _openGen;
+    final sessionId = _sessionId;
+    final sw = Stopwatch()..start();
     for (var i = 0; i < 8; i += 1) {
       await Future<void>.delayed(const Duration(milliseconds: 700));
-      if (!mounted) return;
+      if (!mounted || openGen != _openGen) return;
       try {
         // ignore: avoid_dynamic_calls
         final p = _player.platform as dynamic;
         // ignore: avoid_dynamic_calls
         final codec = '${await p.getProperty('video-codec')}';
+        if (!mounted || openGen != _openGen) return;
         // 还没解出第一帧时 video-codec 是 "no"
         if (codec.isEmpty || codec == 'no') continue;
+        _decodedVideoFrame = true;
         // ignore: avoid_dynamic_calls
         final hwdec = '${await p.getProperty('hwdec-current')}';
         // ignore: avoid_dynamic_calls
         final pix = '${await p.getProperty('video-params/pixelformat')}';
+        if (!mounted || openGen != _openGen) return;
         ClientLogger.instance.info(
-          'decoder hwdec=${hwdec.isEmpty ? '?' : hwdec} codec=$codec pixfmt=$pix',
-          route: 'player.decode/${_sessionId ?? 'direct'}',
+          '首帧/解码器就绪 ${sw.elapsedMilliseconds}ms '
+          'hwdec=${hwdec.isEmpty ? '?' : hwdec} codec=$codec pixfmt=$pix',
+          route: 'player.decode/${sessionId ?? 'direct'}',
         );
         return;
-      } catch (_) {
-        // 拿不到就算了：这是诊断，不能影响播放
+      } catch (e) {
+        if (!mounted || openGen != _openGen) return;
+        _decodedVideoFrame = null;
+        ClientLogger.instance.warn(
+          '读取解码器属性失败：${e.runtimeType}',
+          route: 'player.decode/${sessionId ?? 'direct'}',
+        );
         return;
       }
     }
+    if (!mounted || openGen != _openGen) return;
+    _decodedVideoFrame = false;
+    ClientLogger.instance.warn(
+      '首帧未就绪 ${sw.elapsedMilliseconds}ms '
+      'width=${_player.state.width ?? 0} buffering=${_player.state.buffering}',
+      route: 'player.decode/${sessionId ?? 'direct'}',
+    );
   }
 
   /// open() 之后核对「到底播起来没有」，没播就补 play()。
@@ -1156,10 +1261,9 @@ class _PlayerPageState extends State<PlayerPage> {
     final startPos = _player.state.position;
     // 2026-11-16：从「先睡满 8 秒再看一眼」改成 1 秒一拍地看。
     // 手机端 4K AV1 直连实测 8 秒只走了 66ms —— 用户就是「干黑 8 秒才看到提示」。
-    // 判据拆成两种，别把慢网当成解不了：
-    //   数据已经缓冲了 ≥2s、位置却不动 → 解码跟不上（APP 里 `state.buffer` 是
-    //   「当前位置之后还有多少秒」），3 拍就能定；
-    //   连缓冲都没有 → 是网速，多给几拍（最多 10 秒）。
+    // 判据要把「没出视频帧 / 解码停滞」与「网络没喂够」分开：
+    //   缓冲 ≥2s 且解码未推进 → 解码跟不上；已知无视频帧则最多等 7s 初始化宽限；
+    //   连缓冲都没有 → 是网速，多给几拍（最多 10 秒），不记成设备解码失败。
     var reason = '';
     var w = 0;
     var advanced = Duration.zero;
@@ -1170,13 +1274,14 @@ class _PlayerPageState extends State<PlayerPage> {
       elapsed = Duration(seconds: i + 1);
       w = _player.state.width ?? 0;
       advanced = _player.state.position - startPos;
+      final videoFrameReady = _decodedVideoFrame ?? w > 0;
       // 只看 width 不够：libmpv 对某些 HEVC 10bit / DV 片源能报出视频尺寸，
       // 但画面帧出不来（用户看到的就是「有声音、画面停住」）。
       // 也不能只看「位置往前走了」：外网喂不饱 4K 原片时，8 秒能走 2.5 秒，
       // 旧判据把它当「直连正常」，用户那边就是「播几秒停十几秒」。
       // 所以要求位置**跟得上时间轴**（≥55% 实时速度）才算真的能播。
       final keptUp = advanced.inMilliseconds >= elapsed.inMilliseconds * 0.55;
-      if (w > 0 && keptUp && advanced > const Duration(seconds: 2)) {
+      if (videoFrameReady && keptUp && advanced > const Duration(seconds: 2)) {
         ClientLogger.instance.info(
           '直连正常 width=$w advanced=${advanced.inMilliseconds}ms 用时${i + 1}s',
           route: 'player.directGuard',
@@ -1186,29 +1291,30 @@ class _PlayerPageState extends State<PlayerPage> {
         return;
       }
       final ahead = kIsWeb ? Duration.zero : _player.state.buffer;
-      if (w > 0 &&
-          ahead >= const Duration(seconds: 2) &&
-          advanced < const Duration(milliseconds: 500) &&
-          i >= 2) {
-        reason = '解码跟不上 buffered=${ahead.inMilliseconds}ms';
-        break;
-      }
-      // 5 秒了连数据都没进来：这条链路撑不起片源码率（实测 4K 直连走外网，
-      // 片源 56Mbps，8 秒只走 66ms）。继续等对用户没有价值 —— 转码档码率低
-      // 一个数量级，切过去本来就更该做，所以这里不再死等满 10 秒。
-      if (!kIsWeb &&
-          w > 0 &&
-          ahead < const Duration(seconds: 1) &&
-          advanced < const Duration(milliseconds: 500) &&
-          i >= 4) {
-        reason = '链路没数据';
+      final issue = classifyDirectPlaybackIssue(
+        width: w,
+        videoFrameReady: videoFrameReady,
+        buffered: ahead,
+        advanced: advanced,
+        sample: i,
+        isWeb: kIsWeb,
+      );
+      if (issue != null) {
+        reason = switch (issue) {
+          DirectPlaybackIssue.noVideoFrame =>
+            '首帧未出现 buffered=${ahead.inMilliseconds}ms',
+          DirectPlaybackIssue.decodeStalled =>
+            '解码跟不上 buffered=${ahead.inMilliseconds}ms',
+          DirectPlaybackIssue.noData => '链路没数据',
+        };
         break;
       }
     }
     if (!mounted || _isTranscode || _error != null) return;
     w = _player.state.width ?? 0;
     advanced = _player.state.position - startPos;
-    if (w > 0 &&
+    final videoFrameReady = _decodedVideoFrame ?? w > 0;
+    if (videoFrameReady &&
         advanced > const Duration(seconds: 2) &&
         advanced.inMilliseconds >= elapsed.inMilliseconds * 0.55) {
       return;
@@ -1227,26 +1333,44 @@ class _PlayerPageState extends State<PlayerPage> {
       '$reason',
       route: 'player.directGuard',
     );
+    if (_originalFallbackAttempted) {
+      if (mounted) {
+        setState(() => _error = tr('player.originalAlsoUnsupported'));
+      }
+      return;
+    }
+    final confirmedDecodeFailure =
+        reason.startsWith('解码跟不上') || reason.startsWith('首帧未出现');
+    if (!_tvMode || !confirmedDecodeFailure) {
+      if (mounted) {
+        setState(() => _error = tr('player.originalPlaybackFailed'));
+      }
+      return;
+    }
     // 兜底档：桌面端保分辨率（4K 直连失败不该跳成 1080P），手机 / Web / TV
     // 退到用户偏好档 —— 手机上 4K 7M 在移动网络里就是「一直缓冲 + 软解跟不上」。
-    final fallback = _transcodeFallback();
-    // 只有「数据在手、位置不动」这种才算这台机器解不动，记下来下次免试；
+    final fallbackCodec = _codec == 'original'
+        ? defaultTranscodeCodec()
+        : _codec;
+    final fallback = _transcodeFallback(codec: fallbackCodec);
+    // 只有「数据在手、无视频帧 / 解码不动」才记成设备解码失败，下次免试；
     // 网慢导致的卡顿不记（换个网络它就能直连）。
-    if (reason.startsWith('解码跟不上')) unawaited(_markDirectBlocked(true));
+    if (confirmedDecodeFailure) unawaited(_markDirectBlocked(true));
     // persist: false —— 这是自动兜底，不能写进用户偏好。存下来的结果就是
     // 「下次一进播放页直接从 4K 7M 起步」，用户再也调不回来。
     // notify: false —— 提示由本方法统一发一条「原画直连没有画面，已切到 X」，
     // 否则 3~8 秒内会连弹两条（「原画直连切编码」+「直连没有画面」）。
     await _switchQuality(
       fallback,
-      codec: _codec,
+      codec: fallbackCodec,
       persist: false,
       notify: false,
     );
     if (!mounted) return;
     _showNotice(
       tr('player.directFailed', {
-        'actual': playQualityPresetOf(fallback)?.labelFor(_codec) ?? fallback,
+        'actual':
+            playQualityPresetOf(fallback)?.labelFor(fallbackCodec) ?? fallback,
       }),
       log:
           '直连无画面：width=$w advanced=${advanced.inMilliseconds}ms '
@@ -1269,19 +1393,10 @@ class _PlayerPageState extends State<PlayerPage> {
     int startMs = 0,
   }) async {
     final id = widget.itemId!;
-    // 请求的编码在本机解不出来时回落 H.264（桌面端一律解得出来，浏览器由
-    // `MediaSource.isTypeSupported` 说了算 —— 真 Chrome 上 AV1 / HEVC 都是支持的）。
-    final outCodec = codecPlayable(codec) ? codec : 'h264';
-    // 编码回落不能静默：以前只是换个编码继续播，用户完全不知道。
-    if (outCodec != codec) {
-      _showNotice(
-        tr('player.codecFallback', {
-          'want': playCodecOf(codec)?.label ?? codec,
-          'actual': playCodecOf(outCodec)?.label ?? outCodec,
-        }),
-        log: '编码回落：请求 $codec，本机不可解，改用 $outCodec',
-      );
+    if (codec == 'original' || !codecPlayable(codec)) {
+      throw StateError('播放设备不支持转码输出编码：$codec');
     }
+    final outCodec = codec;
     final sw = Stopwatch()..start();
     final created = await ApiSession.instance.client.playerSessionCreate(
       body: PlayerSessionCreateBody(
@@ -1289,11 +1404,9 @@ class _PlayerPageState extends State<PlayerPage> {
         preset: preset,
         codec: outCodec,
         audioIndex: _audioIndex,
-        // 只让服务端按片源标记决定 HDR→SDR。以前这里跟 needTranscode 一起传
-        // true，会把普通 SDR 片也塞进 tonemap 链：zscale 报「no path between
-        // colorspaces」，多绕两次失败重试，起播更慢。
-        forceSdr: null,
-        audioNormalize: PlayPreferences.audioNormalize ? true : null,
+        // toneMap 是客户端显式策略；服务端只对 HDR/DV/HLG 片源执行映射。
+        toneMap: PlayPreferences.toneMap,
+        audioNormalize: PlayPreferences.audioNormalizeOverride,
         audioDownmix: PlayPreferences.audioDownmix ? true : null,
         // 服务端一律按段转（默认 3 分钟），播放位置靠近末尾才续下一段。
         // 0 / 负数会被服务端归到默认值，客户端不再有「整片一次转完」这条路径。
@@ -1307,10 +1420,11 @@ class _PlayerPageState extends State<PlayerPage> {
         : '${ApiSession.instance.baseUrl}${created.url}';
     // 记下会话：媒体信息面板要拿它查「转码中 / 完成」和实际编码
     _sessionId = created.id;
+    _sessionAudioNormalizeEffective = null;
     ClientLogger.instance.info(
       '会话已创建 ${sw.elapsedMilliseconds}ms preset=$preset codec=$outCodec',
       route: 'player.session/${created.id}',
-      detail: u,
+      detail: _redactedUrlForLog(u),
     );
     _jobStatus = null;
     _transcodedMs = 0;
@@ -1325,6 +1439,7 @@ class _PlayerPageState extends State<PlayerPage> {
     _pendingStartMs = _startOffset;
     // 实际编码换会话后必须清空，否则换了档还显示上一轮的结果
     _actualCodec = null;
+    _actualToneMap = null;
     // 后台只盯失败：转码挂了要明确说出来，别让用户对着无限缓冲猜。
     _watchSession(created.id);
     // 首片落盘之前不要把地址交给播放器（见 _waitForFirstSegment）
@@ -1363,6 +1478,13 @@ class _PlayerPageState extends State<PlayerPage> {
           id: id,
           pos: 0,
         );
+        if (mounted &&
+            _sessionId == id &&
+            _sessionAudioNormalizeEffective != job.audioNormalizeEffective) {
+          setState(() {
+            _sessionAudioNormalizeEffective = job.audioNormalizeEffective;
+          });
+        }
         polls += 1;
         // transcodedMs 是**片源绝对位置** = startedMs + 已转出时长。
         // 跳转会话的 startedMs 本身就有几十万毫秒，直接判断 > 0 会立刻放行，
@@ -1421,32 +1543,70 @@ class _PlayerPageState extends State<PlayerPage> {
         final st = '${job.status}';
         final codec = job.codec ?? '';
         final transcoded = job.transcodedMs ?? 0;
+        final normalizeChanged =
+            _sessionAudioNormalizeEffective != job.audioNormalizeEffective;
         // 会话可能是详情页传进来的（没走过 _ensureTranscode），lead 在这里补齐，
         // 否则 _loadedEnd 会退回「信 player.duration」那条错路
         _leadMs = job.leadMs ?? _leadMs;
         // 分段会话会一直 paused 着轮询，值没变就别每 3 秒重排整页
         if (_jobStatus != st ||
             _transcodedMs != transcoded ||
-            (codec.isNotEmpty && _actualCodec != codec)) {
+            (codec.isNotEmpty && _actualCodec != codec) ||
+            _actualToneMap != job.hdrToSdr ||
+            normalizeChanged) {
           setState(() {
             _jobStatus = st;
             _transcodedMs = transcoded;
             if (codec.isNotEmpty) _actualCodec = codec;
+            _actualToneMap = job.hdrToSdr;
+            _sessionAudioNormalizeEffective = job.audioNormalizeEffective;
           });
         }
-        // 服务端实际编码与请求不同（例如 AV1 没编出来降级成 H.264）时明确提示一次。
-        if (codec.isNotEmpty && codec != _codec && !_codecNoticeShown) {
+        // 服务端不能按请求编码输出时，按策略改试原片，而不是把内部 H.264 降级
+        // 包装成成功播放。
+        if (_preset != 'original' &&
+            codec.isNotEmpty &&
+            codec != _codec &&
+            !_codecNoticeShown) {
           _codecNoticeShown = true;
-          _showNotice(
-            tr('player.codecFallback', {
-              'want': playCodecOf(_codec)?.label ?? _codec,
-              'actual': playCodecOf(codec)?.label ?? codec,
-            }),
-            log: '服务端编码降级：请求 $_codec，实际 $codec（session=$id）',
-          );
+          if (_codec == 'h265' || _codec == 'av1') {
+            final requested = playCodecOf(_codec)?.label ?? _codec;
+            _showNotice(
+              _originalFallbackBlockedByColor
+                  ? tr('player.codecFallbackBlocked')
+                  : tr('player.codecFallbackOriginal', {'want': requested}),
+              log: '服务端编码不匹配：请求 $_codec，实际 $codec（session=$id）',
+            );
+            await _fallbackToOriginal(_codec);
+            return;
+          } else {
+            _showNotice(
+              tr('player.codecFallback', {
+                'want': playCodecOf(_codec)?.label ?? _codec,
+                'actual': playCodecOf(codec)?.label ?? codec,
+              }),
+              log: '服务端编码降级：请求 $_codec，实际 $codec（session=$id）',
+            );
+          }
         }
         if (st == 'done' || st == 'canceled') return;
         if (st == 'failed') {
+          if ((_codec == 'h265' || _codec == 'av1') &&
+              !_originalFallbackAttempted) {
+            _codecNoticeShown = true;
+            _showNotice(
+              _originalFallbackBlockedByColor
+                  ? tr('player.codecFallbackBlocked')
+                  : tr('player.codecFallbackOriginal', {
+                      'want': playCodecOf(_codec)?.label ?? _codec,
+                    }),
+              log:
+                  '转码会话失败，尝试原码直连：${job.error ?? 'transcode failed'} '
+                  '(session=$id)',
+            );
+            await _fallbackToOriginal(_codec);
+            return;
+          }
           ClientLogger.instance.error(
             '转码会话失败：${job.error ?? 'transcode failed'}',
             route: 'player.session',
@@ -1485,27 +1645,33 @@ class _PlayerPageState extends State<PlayerPage> {
     }
   }
 
-  /// 原片直连时补上客户端侧的音频处理。
-  ///
-  /// 转码流由服务端在 ffmpeg 里做响度归一 / 降混，这里再做一次会双重处理；
-  /// 直连是把原文件直接丢给 libmpv，服务端完全没碰音频，只能由播放器自己套
-  /// `dynaudnorm`（单遍、实时，适合电影里「对白小、爆炸响」的动态范围）。
-  /// 开关跟随库级设置，客户端「响度归一 / 降混」显式打开时也能单独覆盖。
+  /// 音频处理统一由服务端 HLS 会话完成；播放器侧清除滤镜，避免双重处理。
   void _applyDirectAudio() {
     if (kIsWeb) return;
-    final direct = !_isTranscode;
-    final normalize =
-        PlayPreferences.audioNormalize ||
-        widget.compat?['audioNormalize'] == true;
-    _setMpvProp(
-      'af',
-      direct && normalize ? 'lavfi=[dynaudnorm=f=250:g=15]' : '',
-    );
-    _setMpvProp(
-      'audio-channels',
-      direct && PlayPreferences.audioDownmix ? 'stereo' : 'auto',
-    );
+    _setMpvProp('af', '');
+    _setMpvProp('audio-channels', 'auto');
   }
+
+  bool get _audioProcessingRequested =>
+      PlayPreferences.audioNormalizeEnabled(
+        widget.compat?['audioNormalize'] == true,
+      ) ||
+      PlayPreferences.audioDownmix;
+
+  bool get _isVideoCopySession => _isTranscode && _preset == 'original';
+
+  bool get _isCopyAudioSession =>
+      _isVideoCopySession &&
+      (_audioProcessingRequested || _sessionAudioNormalizeEffective == true);
+
+  bool get _originalFallbackBlockedByColor =>
+      (PlayPreferences.toneMap && _srcHdr.isHdr) || _colorBlocksDirect;
+
+  String get _copySessionLabel => tr(
+    _isCopyAudioSession
+        ? 'player.sourceAudioProcessed'
+        : 'player.sourceAudioOriginal',
+  );
 
   /// 探测 libmpv 能力并下发色调映射参数；同时读一次显示端 HDR 能力。
   ///
@@ -1553,26 +1719,13 @@ class _PlayerPageState extends State<PlayerPage> {
     return false;
   }
 
-  /// 「原画」没法直连时退到哪一档。
+  /// 「原码」没法直连时退到哪一档。
   ///
   /// 桌面端保片源分辨率（4K 片退 4K，不退 1080P）：用户选的就是原画，
   /// 掉分辨率比多占一点转码算力更难受。TV 按方案退默认转码档，
   /// 因为电视解码 / 网络更脆弱，1080P 3M 的起播和拖动都更稳。
   String _transcodeFallback({String? codec}) {
     final c = codec ?? _codec;
-    // 大屏选「原画」但直链用不了（MKV 进浏览器、或上次直连黑过）时，
-    // 不要偷偷降成 1080P：走 `original` 会话，服务端只换容器不重编码，
-    // DV / HDR10+ 元数据原样送到电视。只有本机真解不了片源编码才走下面的降档。
-    if ((_tvMode || (kIsWeb && AppSettings.instance.tvMode.value)) &&
-        !_colorBlocksDirect) {
-      final src = '${widget.compat?['videoCodec'] ?? ''}'.toLowerCase();
-      final key = src.contains('hevc') || src.contains('h265')
-          ? 'h265'
-          : src.contains('av1')
-          ? 'av1'
-          : 'h264';
-      if (codecPlayable(key)) return 'original';
-    }
     // 手机 / 平板（安卓、iOS）：网络和解码都比桌面脆。实测 4K 源退到「保分辨率」
     // 的 4K 7M，在移动网络里就是一直缓冲，而且 4K HEVC / AV1 软解根本跟不上
     // —— 用户看到的是「进度条加载完了还在卡、看几秒停一下，等一分钟再几秒」。
@@ -1616,50 +1769,68 @@ class _PlayerPageState extends State<PlayerPage> {
     // 提到 try 外：直通起不来时要在 catch 里知道「刚才走的是不是直通」，
     // 才能自动降一档再试，而不是弹一个错误页了事。
     bool toDirect = false;
+    bool copyAudio = false;
     String effective = _preset;
+    final wantOriginal = _codec == 'original';
+    final transcodeCodec = _codec == 'original'
+        ? defaultTranscodeCodec()
+        : _codec;
     try {
-      final wantOriginal = _preset == 'original';
-      // 直连条件：用户要原画 + 本机能保证颜色正确 + 真有直链可用。
+      // 直连条件：用户选原码 + 本机能保证颜色正确 + 真有直链可用。
       // Web 端仍然受「浏览器解不了 MKV/HEVC」限制（_needTranscode）。
-      final colorBlocked = _colorBlocksDirect;
+      final toneMapRequested = PlayPreferences.toneMap && _srcHdr.isHdr;
+      final colorBlocked = _colorBlocksDirect || toneMapRequested;
       // 上一次同样特征的片源（编码 + 高度）直连就是「有尺寸、画面不走」：
       // 别再黑一遍再说同样的话，直接进转码档。
       final directBlocked = _directBlocked;
-      toDirect =
+      final canKeepSourceVideo =
           wantOriginal &&
           !colorBlocked &&
           !directBlocked &&
           widget.compat != null &&
           (!kIsWeb || !_needTranscode);
+      copyAudio = canKeepSourceVideo && _audioProcessingRequested;
+      toDirect = canKeepSourceVideo && !_audioProcessingRequested;
       // 档位按片源高度收敛：偏好 1080P 但片源只有 720P 时，按 720P 转，
       // 不做放大转码（放大只会更大更糊，还多占 GPU）。菜单同样只列 ≤720P 的档。
-      // 「原画但必须转码」时退到「保分辨率」的兜底档，不再默默变成 1080P 3M。
-      effective = toDirect
+      // 「原码但必须转码」时退到「保分辨率」的兜底档。
+      effective = toDirect || copyAudio
           ? 'original'
           : (wantOriginal
-                ? _transcodeFallback()
-                : clampPresetForSource(_preset, _srcHeight, codec: _codec));
+                ? _transcodeFallback(codec: transcodeCodec)
+                : clampPresetForSource(
+                    _preset,
+                    _srcHeight,
+                    codec: transcodeCodec,
+                  ));
       if (kIsWeb &&
           wantOriginal &&
           !toDirect &&
+          !copyAudio &&
           !colorBlocked &&
           !directBlocked) {
-        // 浏览器解不了 HEVC/10bit 时，「原画」实际是转码档；不说明的话
-        // 用户会以为「我选了原片为什么还在转」。
+        // 浏览器解不了源编码时明确说明实际转码输出。
         _showNotice(
           tr('player.webTranscode', {
             'actual':
-                playQualityPresetOf(effective)?.labelFor(_codec) ?? effective,
+                playQualityPresetOf(effective)?.labelFor(transcodeCodec) ??
+                effective,
           }),
           log: 'Web 不支持源编码：原画 → $effective',
         );
       }
-      if (colorBlocked && wantOriginal) {
+      if (toneMapRequested && wantOriginal) {
+        _showNotice(
+          tr('player.toneMapRequiresTranscode'),
+          log: '原码选择与色调映射冲突：转码 HDR 片源 $effective',
+        );
+      } else if (colorBlocked && wantOriginal) {
         _showNotice(
           tr('player.colorFallback', {
             'source': tr('player.reason.${_srcHdr.reason}'),
             'actual':
-                playQualityPresetOf(effective)?.labelFor(_codec) ?? effective,
+                playQualityPresetOf(effective)?.labelFor(transcodeCodec) ??
+                effective,
           }),
           log:
               '色调映射回退：src=${_srcHdr.reason} direct=false preset=$effective '
@@ -1667,44 +1838,61 @@ class _PlayerPageState extends State<PlayerPage> {
         );
       }
       if (directBlocked && wantOriginal) {
-        // 上次同样特征直连就黑过：跳过那 8 秒试探，但仍要说明为什么没给你原画
+        // 上次同样特征直连就黑过：跳过探测并说明为什么没有原码直连。
         _showNotice(
           tr('player.directFailed', {
             'actual':
-                playQualityPresetOf(effective)?.labelFor(_codec) ?? effective,
+                playQualityPresetOf(effective)?.labelFor(transcodeCodec) ??
+                effective,
           }),
           log: '直连历史失败（$_directKey），直接进转码档 $effective',
         );
       }
       final u = toDirect
           ? _directUrl
-          : await _ensureTranscode(effective, _codec);
+          : await _ensureTranscode(effective, transcodeCodec);
       if (!mounted) return;
       setState(() {
         _preparing = false;
         _isTranscode = !toDirect;
         _preset = effective;
+        _codec = toDirect || copyAudio ? 'original' : transcodeCodec;
       });
       _disarmTryOriginal();
       // retries: 首片还没落盘时内核会「打不开」，不是转码失败，给五次重试
       await _openUrl(u, retries: toDirect ? 0 : 5);
     } catch (e) {
       if (!mounted) return;
+      if (!toDirect &&
+          !copyAudio &&
+          (transcodeCodec == 'h265' || transcodeCodec == 'av1') &&
+          !_originalFallbackAttempted) {
+        _showNotice(
+          tr('player.codecFallbackOriginal', {
+            'want': playCodecOf(transcodeCodec)?.label ?? transcodeCodec,
+          }),
+          log: '转码会话创建失败，尝试原码直连：${e.runtimeType}',
+        );
+        await _fallbackToOriginal(transcodeCodec);
+        _disarmTryOriginal();
+        return;
+      }
       // 直通会话起不来（电视浏览器不支持源编码 / fMP4 解不出）：再降一档重编码
       // 起播，别让用户对着「切换失败」自己找画质菜单。
       if (!toDirect && effective == 'original' && _tvMode) {
         final fallback = clampPresetForSource(
           defaultPlayPreset,
           _srcHeight,
-          codec: _codec,
+          codec: transcodeCodec,
         );
         try {
-          final u = await _ensureTranscode(fallback, _codec);
+          final u = await _ensureTranscode(fallback, transcodeCodec);
           if (!mounted) return;
           setState(() {
             _preparing = false;
             _isTranscode = true;
             _preset = fallback;
+            _codec = transcodeCodec;
           });
           _disarmTryOriginal();
           await _openUrl(u, retries: 5);
@@ -1761,19 +1949,21 @@ class _PlayerPageState extends State<PlayerPage> {
     bool notify = true,
   }) async {
     final messenger = ScaffoldMessenger.maybeOf(context);
-    // 本机解不出来的编码先回落 H.264：界面标签也要跟着回落，
-    // 否则会显示「已切到 AV1」而实际跑的是 264。
+    // 本机解不出来的输出编码按策略回到原码，不再替用户静默选择 H.264。
     final wantedCodec = codec ?? _codec;
-    final targetCodec = codecPlayable(wantedCodec) ? wantedCodec : 'h264';
+    final targetCodec = codec == null && wantedCodec == 'original'
+        ? defaultTranscodeCodec()
+        : (codecPlayable(wantedCodec) ? wantedCodec : 'original');
     final prevPreset = _preset;
     final prevCodec = _codec;
+    final previousError = _error;
 
-    // 选「编码」时如果当前是**原画直连**，编码参数根本没地方生效：
-    // 直连就是把原文件丢给 libmpv，不存在转码编码。以前这里仍然走直链，
-    // 用户点 H.265 / AV1 什么都不发生 —— 这就是「无法切换解码方式」。
-    // 现在自动落到一个保分辨率的转码档，让编码选择真的起作用。
-    final fromDirect = codec != null && !_isTranscode;
-    final wanted = fromDirect ? _transcodeFallback(codec: targetCodec) : preset;
+    final fromDirect = !_isTranscode;
+    final wanted = targetCodec == 'original'
+        ? 'original'
+        : (preset == 'original' || (fromDirect && codec != null)
+              ? _transcodeFallback(codec: targetCodec)
+              : preset);
 
     // 直链要求：调用方给的是真直链（compat 存在）且片源本身能直链。
     // 详情页「转码」入口拿的是 HLS 地址（compat=null），那里不存在直链可退。
@@ -1781,34 +1971,52 @@ class _PlayerPageState extends State<PlayerPage> {
     // 这个构建的 libmpv 没有 libplacebo / DV RPU，直连出来是紫的。
     // 所以「原画」是否直连要看 _colorBlocksDirect，而不是只看平台。
     // Web 端保持原判定（Chromium 确实解不了 MKV/HEVC）。
-    final colorBlocked = _colorBlocksDirect;
-    final toDirect =
-        wanted == 'original' &&
+    final toneMapRequested = PlayPreferences.toneMap && _srcHdr.isHdr;
+    final colorBlocked = _colorBlocksDirect || toneMapRequested;
+    final canKeepSourceVideo =
+        targetCodec == 'original' &&
         !colorBlocked &&
+        !_directBlocked &&
         widget.compat != null &&
         (!kIsWeb || !_needTranscode);
+    final copyAudio = canKeepSourceVideo && _audioProcessingRequested;
+    final toDirect = canKeepSourceVideo && !_audioProcessingRequested;
     if (!toDirect && widget.itemId == null) return;
     // 必须转码时「原画」没法真原样播：桌面退到保分辨率的档，
     // 界面也跟着显示实际档位，不要出现「显示原画、跑的是 1080p」。
-    final effective = wanted == 'original' && !toDirect
-        ? _transcodeFallback(codec: targetCodec)
+    final effectiveCodec = targetCodec == 'original' && !toDirect && !copyAudio
+        ? defaultTranscodeCodec()
+        : targetCodec;
+    final effective = copyAudio
+        ? 'original'
+        : wanted == 'original' && !toDirect
+        ? _transcodeFallback(codec: effectiveCodec)
         : wanted;
-    if (kIsWeb && wanted == 'original' && !toDirect && !colorBlocked) {
+    if (kIsWeb &&
+        wanted == 'original' &&
+        !toDirect &&
+        !copyAudio &&
+        !colorBlocked) {
       _showNotice(
         tr('player.webTranscode', {
           'actual':
-              playQualityPresetOf(effective)?.labelFor(targetCodec) ??
+              playQualityPresetOf(effective)?.labelFor(effectiveCodec) ??
               effective,
         }),
         log: 'Web 不支持源编码：原画 → $effective',
       );
     }
-    if (wanted == 'original' && colorBlocked) {
+    if (wanted == 'original' && toneMapRequested) {
+      _showNotice(
+        tr('player.toneMapRequiresTranscode'),
+        log: '原码选择与色调映射冲突：转码 HDR 片源 $effective',
+      );
+    } else if (wanted == 'original' && colorBlocked) {
       _showNotice(
         tr('player.colorFallback', {
           'source': tr('player.reason.${_srcHdr.reason}'),
           'actual':
-              playQualityPresetOf(effective)?.labelFor(targetCodec) ??
+              playQualityPresetOf(effective)?.labelFor(effectiveCodec) ??
               effective,
         }),
         log: '切清晰度触发色调映射回退：src=${_srcHdr.reason} preset=$effective',
@@ -1824,21 +2032,23 @@ class _PlayerPageState extends State<PlayerPage> {
     setState(() {
       _switching = true;
       _preset = effective;
-      _codec = targetCodec;
+      _codec = toDirect || copyAudio ? 'original' : effectiveCodec;
+      _error = null;
     });
-    if (fromDirect && notify) {
+    if (fromDirect && codec != null && targetCodec != 'original' && notify) {
       _showNotice(
         tr('player.codecToTranscode', {
           'preset':
-              playQualityPresetOf(effective)?.labelFor(targetCodec) ??
+              playQualityPresetOf(effective)?.labelFor(effectiveCodec) ??
               effective,
-          'codec': playCodecOf(targetCodec)?.label ?? targetCodec,
+          'codec': playCodecOf(effectiveCodec)?.label ?? effectiveCodec,
         }),
-        log: '原画直连切编码：$targetCodec → $effective',
+        log: '原码直连切编码：$effectiveCodec → $effective',
       );
     }
     // 新一次换档允许再提示一次编码回落
     _codecNoticeShown = false;
+    _originalFallbackAttempted = false;
     try {
       // 服务端建新会话时，旧会话会延后到新会话首片就绪再取消
       // （见 videoPlayer supersedeOlder），切换期间旧画面还能继续放。
@@ -1846,7 +2056,7 @@ class _PlayerPageState extends State<PlayerPage> {
           ? _directUrl
           : await _ensureTranscode(
               effective,
-              targetCodec,
+              copyAudio ? defaultTranscodeCodec() : effectiveCodec,
               // 换档从当前位置接着播：新会话直接从这儿起转，不用再 seek
               startMs: pos.inMilliseconds,
             );
@@ -1869,21 +2079,38 @@ class _PlayerPageState extends State<PlayerPage> {
       if (!mounted) return;
       setState(() {
         _preset = effective;
-        _codec = targetCodec;
+        _codec = toDirect || copyAudio ? 'original' : effectiveCodec;
         _isTranscode = !toDirect;
       });
       // 只有用户自己点的档位才写进偏好。自动降级（原画黑屏兜底、编码回落）
       // 也存下来的话，下一次进播放页会直接从 4K 7M 起步 —— 手机上就是
       // 「明明设了 1080P 0.9M，一播又变 4K 7M」。
       if (persist) {
-        await PlayPreferences.save(preset: preset, codec: targetCodec);
+        await PlayPreferences.save(
+          preset: preset == 'original' ? effective : preset,
+          codec: toDirect || copyAudio ? 'original' : effectiveCodec,
+        );
       }
     } catch (e) {
+      if (!toDirect &&
+          !copyAudio &&
+          (effectiveCodec == 'h265' || effectiveCodec == 'av1') &&
+          !_originalFallbackAttempted) {
+        _showNotice(
+          tr('player.codecFallbackOriginal', {
+            'want': playCodecOf(effectiveCodec)?.label ?? effectiveCodec,
+          }),
+          log: '目标编码转码失败，尝试原码直连：${e.runtimeType}',
+        );
+        await _fallbackToOriginal(effectiveCodec, position: pos);
+        return;
+      }
       // 切换失败：把界面回滚到切换前的档位/编码，别让菜单显示一个没跑起来的档
       if (mounted) {
         setState(() {
           _preset = prevPreset;
           _codec = prevCodec;
+          _error = previousError;
         });
       }
       if (messenger != null) {
@@ -2434,7 +2661,9 @@ class _PlayerPageState extends State<PlayerPage> {
       // 直链 / 没有条目 id（详情页指定的 HLS 地址）没法重建会话，只能按老规矩夹取
       final limit = _seekLimit(_player.state.duration);
       if (_isTranscode && limit > Duration.zero && t > limit) t = limit;
+      if (allowJump) _beginSeekRecovery(t);
       await _player.seek(t);
+      if (!mounted || gen != _seekGen) return;
       _poke();
       // Web 上 seek 会把当前 play() 打断（"interrupted by a new load request"），
       // 浏览器不会自己续上；想让位置动起来只能显式再 play。仅当用户意图是播。
@@ -2480,7 +2709,9 @@ class _PlayerPageState extends State<PlayerPage> {
     }
 
     Future<void> seekHere() async {
+      if (allowJump) _beginSeekRecovery(t);
       await _player.seek(t - _startOffset);
+      if (!mounted || gen != _seekGen) return;
       _poke();
       if (_wantPlay) unawaited(_ensurePlayingAfterOpen());
       // 拖动过程中每帧都会走这里，看门狗只在松手那次（allowJump）挂
@@ -2655,8 +2886,10 @@ class _PlayerPageState extends State<PlayerPage> {
         return;
       }
       _jumpResetAt = DateTime.now();
+      _jumpRunGen += 1;
       _jumpingSince = null;
       _pendingJump = null;
+      _pendingJumpGen = null;
       ClientLogger.instance.error(
         '跳转卡住 15s 未复位 → 强制复位并重跳',
         route: 'player.stall/${_sessionId ?? 'direct'}',
@@ -2669,6 +2902,7 @@ class _PlayerPageState extends State<PlayerPage> {
       unawaited(_jumpTo(_lastSeekTarget));
       return;
     }
+    _logSeekRecoveryIfReady();
     final why = _stallSkipWhyNow();
     if (why != null) {
       _logStallSkip(why);
@@ -2833,43 +3067,72 @@ class _PlayerPageState extends State<PlayerPage> {
     // 等当前会话起完再跳一次，别每一下拖拽都掐掉 ffmpeg 重来。
     if (_jumping) {
       _pendingJump = target;
+      _pendingJumpGen = _seekGen;
       return;
     }
+    final seekGen = _seekGen;
+    final jumpRunGen = ++_jumpRunGen;
+    _beginSeekRecovery(target);
     final messenger = ScaffoldMessenger.maybeOf(context);
     setState(() => _jumping = true);
     _jumpingSince = DateTime.now();
     try {
+      final sessionCodec = _codec == 'original'
+          ? defaultTranscodeCodec()
+          : _codec;
       final u = await _ensureTranscode(
         _preset,
-        _codec,
+        sessionCodec,
         startMs: target.inMilliseconds,
         // 跳转会话同样按段转（跟随偏好，默认 3 分钟）：整片模式已取消，
         // 而且目标位置之后通常只占几分钟，没必要从头铺到头。
       );
+      if (!mounted || seekGen != _seekGen || jumpRunGen != _jumpRunGen) {
+        return;
+      }
       // 新播放列表的时间轴 0 就是 target，不能再 seekTo（否则会跳过 target 那一段）。
       // autoPlay: true —— 拖进度条的人一定是想继续看，浏览器把自己的 play() 丢掉时
       // 要在这里补回来，不能让人手动点第二次。
       await _openUrl(u, retries: 3, autoPlay: true);
-      _poke();
+      if (mounted && seekGen == _seekGen && jumpRunGen == _jumpRunGen) {
+        _poke();
+      }
     } catch (e) {
+      if (!mounted || seekGen != _seekGen || jumpRunGen != _jumpRunGen) {
+        return;
+      }
+      if ((_codec == 'h265' || _codec == 'av1') &&
+          !_originalFallbackAttempted) {
+        _showNotice(
+          tr('player.codecFallbackOriginal', {
+            'want': playCodecOf(_codec)?.label ?? _codec,
+          }),
+          log: '跳转转码失败，尝试原码直连：${e.runtimeType}',
+        );
+        await _fallbackToOriginal(_codec, position: target);
+        return;
+      }
       if (messenger != null && mounted) {
         NasSnack.showOn(messenger, tr('player.seekFailed', {'error': '$e'}));
       }
     } finally {
-      _jumpingSince = null;
-      if (mounted) setState(() => _jumping = false);
-      final next = _pendingJump;
-      _pendingJump = null;
-      if (next == null && mounted) {
-        // 跳转收尾：新会话 open 期间那次 play() 会被「media removed / new load」
-        // 打断，浏览器不会自己再补。这里等 _jumping 清掉后补一次，
-        // 否则用户拖完进度条看到的就是「数据都加载好了，却停在暂停」。
-        unawaited(_resumeIfIdle('跳转完成'));
-      }
-      if (next != null && mounted) {
-        // 让当前这次 open 的 play() 中断先落地，再发起最后一次跳转
-        await Future<void>.delayed(const Duration(milliseconds: 300));
-        if (mounted) unawaited(_jumpTo(next));
+      if (jumpRunGen == _jumpRunGen) {
+        _jumpingSince = null;
+        if (mounted) setState(() => _jumping = false);
+        final next = _pendingJump;
+        final nextGen = _pendingJumpGen;
+        _pendingJump = null;
+        _pendingJumpGen = null;
+        if (next == null && mounted) {
+          // 跳转收尾：新会话 open 期间那次 play() 会被「media removed / new load」
+          // 打断，浏览器不会自己再补。这里等 `_jumping` 清掉后补一次播放。
+          unawaited(_resumeIfIdle('跳转完成'));
+        }
+        if (next != null && mounted) {
+          // 让当前这次 open 的 play() 中断先落地，再发起最后一个仍有效的目标。
+          await Future<void>.delayed(const Duration(milliseconds: 300));
+          if (mounted && nextGen == _seekGen) unawaited(_jumpTo(next));
+        }
       }
     }
   }
@@ -3057,9 +3320,16 @@ class _PlayerPageState extends State<PlayerPage> {
   Widget _qualityButton() {
     // 一档一行：`1080P 1.4Mbps`（码率跟着当前编码走）。别再把分辨率和码率
     // 拆成两段拼「·」，同一档位并排两个码率看着像重复行。
-    final cur = playQualityPresetOf(_preset)?.labelFor(_codec) ?? _preset;
+    final qualityCodec = _codec == 'original'
+        ? defaultTranscodeCodec()
+        : _codec;
+    final cur = _isVideoCopySession
+        ? _copySessionLabel
+        : _codec == 'original'
+        ? tr('player.sourceDirect')
+        : playQualityPresetOf(_preset)?.labelFor(qualityCodec) ?? _preset;
     // 只列这部片转得出来的档位：没有 1080p 的片就别给 1080P 选项。
-    final options = presetsForSource(_srcHeight);
+    final options = presetsForSource(_srcHeight).where((p) => !p.copy).toList();
     return PopupMenuButton<String>(
       // 控制栏上**只留一个图标**：原来是「HD 图标 + 1080P 1.4Mbps」，
       // 这串文字宽了近百像素，窄屏上把字幕 / 更多按钮直接挤出可视区
@@ -3085,19 +3355,10 @@ class _PlayerPageState extends State<PlayerPage> {
         for (final p in options)
           PopupMenuItem<String>(
             value: p.key,
-            child: _checked(p.labelFor(_codec), _preset == p.key),
+            child: _checked(p.labelFor(qualityCodec), _preset == p.key),
           ),
         const PopupMenuDivider(),
-        // 原画直连没有「转码编码」可切，先说明一声：选编码会自动转码
-        if (!_isTranscode)
-          PopupMenuItem<String>(
-            enabled: false,
-            child: Text(
-              tr('player.codecHintDirect'),
-              style: const TextStyle(color: Colors.white54, fontSize: 12),
-            ),
-          ),
-        // 只列本机能解的编码：列了点了却黑屏，比不列更糟
+        // 原码是播放策略；H.264 只保留为内部兼容编码。
         for (final c in playableCodecs())
           PopupMenuItem<String>(
             value: 'codec:${c.key}',
@@ -3413,7 +3674,9 @@ class _PlayerPageState extends State<PlayerPage> {
             const SizedBox(height: NasTokens.spaceMd),
             _infoRow(
               tr('player.playbackSource'),
-              _isTranscode
+              _isVideoCopySession
+                  ? _copySessionLabel
+                  : _isTranscode
                   ? tr('player.sourceTranscode')
                   : tr('player.sourceDirect'),
             ),
@@ -3438,7 +3701,9 @@ class _PlayerPageState extends State<PlayerPage> {
             // 编码回落（如 DV 片源 AV1 → H.264）也会在这里直接看到原因。
             _infoRow(
               tr('player.videoCodec'),
-              _isTranscode
+              _isVideoCopySession
+                  ? _sourceCodecLabel(c['videoCodec'])
+                  : _isTranscode
                   ? tr('player.rateTo', {
                       'from': _sourceCodecLabel(c['videoCodec']),
                       'to': _outputCodecText,
@@ -3455,7 +3720,13 @@ class _PlayerPageState extends State<PlayerPage> {
             _infoRow(tr('player.renderer'), _caps.summary),
             _infoRow(
               tr('player.toneMap'),
-              _srcHdr.isHdr ? tr('player.on') : tr('player.off'),
+              !_isTranscode
+                  ? tr('player.off')
+                  : _actualToneMap == null
+                  ? '—'
+                  : _actualToneMap!
+                  ? tr('player.on')
+                  : tr('player.off'),
             ),
             _infoRow(
               tr('player.dvDirect'),
@@ -3470,9 +3741,7 @@ class _PlayerPageState extends State<PlayerPage> {
               ),
             _infoRow(
               tr('player.audioNormalize'),
-              PlayPreferences.audioNormalize
-                  ? tr('player.on')
-                  : tr('player.off'),
+              _audioNormalizeLabel(PlayPreferences.audioNormalizeMode),
             ),
             _infoRow(
               tr('player.audioDownmix'),
@@ -3503,6 +3772,12 @@ class _PlayerPageState extends State<PlayerPage> {
     ),
   );
 
+  String _audioNormalizeLabel(AudioNormalizeMode mode) => switch (mode) {
+    AudioNormalizeMode.inherit => tr('video.client.audioNormalizeInherit'),
+    AudioNormalizeMode.enabled => tr('video.client.audioNormalizeForceOn'),
+    AudioNormalizeMode.disabled => tr('video.client.audioNormalizeForceOff'),
+  };
+
   void _showSettings() {
     showModalBottomSheet<void>(
       context: context,
@@ -3517,16 +3792,38 @@ class _PlayerPageState extends State<PlayerPage> {
                 tr('player.settings'),
                 style: const TextStyle(color: Colors.white, fontSize: 17),
               ),
-              SwitchListTile(
+              ListTile(
                 title: Text(
                   tr('player.audioNormalize'),
                   style: const TextStyle(color: Colors.white),
                 ),
-                value: PlayPreferences.audioNormalize,
-                onChanged: (v) async {
-                  await PlayPreferences.saveAudio(normalize: v);
-                  setLocal(() {});
-                },
+                trailing: DropdownButton<AudioNormalizeMode>(
+                  dropdownColor: const Color(0xFF333333),
+                  value: PlayPreferences.audioNormalizeMode,
+                  underline: const SizedBox.shrink(),
+                  items: [
+                    for (final mode in AudioNormalizeMode.values)
+                      DropdownMenuItem<AudioNormalizeMode>(
+                        value: mode,
+                        child: Text(
+                          _audioNormalizeLabel(mode),
+                          style: const TextStyle(color: Colors.white),
+                        ),
+                      ),
+                  ],
+                  onChanged: (mode) async {
+                    if (mode == null) return;
+                    await PlayPreferences.saveAudio(normalizeMode: mode);
+                    _applyDirectAudio();
+                    setLocal(() {});
+                    await _switchQuality(
+                      _preset,
+                      codec: _codec,
+                      persist: false,
+                      notify: false,
+                    );
+                  },
+                ),
               ),
               SwitchListTile(
                 title: Text(
@@ -3537,6 +3834,33 @@ class _PlayerPageState extends State<PlayerPage> {
                 onChanged: (v) async {
                   await PlayPreferences.saveAudio(downmix: v);
                   setLocal(() {});
+                  await _switchQuality(
+                    _preset,
+                    codec: _codec,
+                    persist: false,
+                    notify: false,
+                  );
+                },
+              ),
+              SwitchListTile(
+                title: Text(
+                  tr('video.client.toneMap'),
+                  style: const TextStyle(color: Colors.white),
+                ),
+                subtitle: Text(
+                  tr('video.client.toneMapHint'),
+                  style: const TextStyle(color: Colors.white54),
+                ),
+                value: PlayPreferences.toneMap,
+                onChanged: (v) async {
+                  await PlayPreferences.saveToneMap(v);
+                  setLocal(() {});
+                  await _switchQuality(
+                    _preset,
+                    codec: _codec,
+                    persist: false,
+                    notify: false,
+                  );
                 },
               ),
               if (_tvMode)
@@ -4214,12 +4538,114 @@ class _PlayerPageState extends State<PlayerPage> {
     await _openUrl(_url, retries: 3);
   }
 
-  /// 换到 H.264 重新建会话。DV / 10-bit 片源在 AV1 下跨段会解不出分片，
-  /// H.264 兼容性最好（现在也是 fMP4），用户不必退出播放页就能自救。
-  Future<void> _retryWithH264() async {
-    if (widget.itemId == null) return;
-    setState(() => _error = null);
-    await _switchQuality(_preset, codec: 'h264');
+  Future<void> _fallbackToOriginal(
+    String requestedCodec, {
+    Duration? position,
+  }) async {
+    if (!mounted) return;
+    final itemId = widget.itemId;
+    if (_originalFallbackAttempted) return;
+    if (itemId == null) {
+      if (mounted) {
+        setState(() {
+          _preparing = false;
+          _error = tr('player.originalPlaybackFailed');
+        });
+      }
+      return;
+    }
+    _originalFallbackAttempted = true;
+    _disarmTryOriginal();
+    if (_originalFallbackBlockedByColor) {
+      if (mounted) {
+        setState(() {
+          _preparing = false;
+          _switching = false;
+          _error = tr('player.codecFallbackBlocked');
+        });
+      }
+      ClientLogger.instance.warn(
+        '编码 $requestedCodec 不可用，但原片回退受色彩策略阻止',
+        route: 'player.fallback',
+        detail:
+            'toneMapRequired=${PlayPreferences.toneMap && _srcHdr.isHdr} '
+            'colorBlocked=$_colorBlocksDirect',
+      );
+      return;
+    }
+    if (mounted) {
+      setState(() {
+        _preparing = false;
+        _switching = true;
+        _error = null;
+      });
+    }
+    final target = position ?? _absPosition(_player.state.position);
+    final shouldPlay =
+        _wantPlay || _player.state.playing || _player.state.buffering;
+    final processAudio = _audioProcessingRequested || widget.compat == null;
+    try {
+      _sessionId = null;
+      _actualCodec = null;
+      _actualToneMap = null;
+      _sessionAudioNormalizeEffective = null;
+      _jobStatus = null;
+      _transcodedMs = 0;
+      _startMs = 0;
+      _pendingStartMs = null;
+      setState(() {
+        _codec = 'original';
+        _preset = 'original';
+        _isTranscode = processAudio;
+        _error = null;
+      });
+      if (processAudio) {
+        final url = await _ensureTranscode(
+          'original',
+          defaultTranscodeCodec(),
+          startMs: target.inMilliseconds,
+        );
+        if (!mounted) return;
+        ClientLogger.instance.info(
+          '编码 $requestedCodec 不可用，回退到视频原码 / 音频处理会话',
+          route: 'player.fallback',
+        );
+        await _openUrl(url, retries: 3, autoPlay: shouldPlay);
+      } else {
+        final response = await ApiSession.instance.client.videoStreamUrl(
+          id: itemId,
+        );
+        if (!mounted) return;
+        final url = response.url.startsWith('http')
+            ? response.url
+            : '${ApiSession.instance.baseUrl}${response.url}';
+        _directUrl = url;
+        ClientLogger.instance.info(
+          '编码 $requestedCodec 不可用，尝试原码直连',
+          route: 'player.fallback',
+          detail: _redactedUrlForLog(url),
+        );
+        await _openUrl(url, seekTo: target, autoPlay: shouldPlay);
+      }
+      if (mounted && _error != null) {
+        setState(() => _error = tr('player.originalAlsoUnsupported'));
+      }
+    } catch (e) {
+      ClientLogger.instance.error(
+        '原片回退失败：${e.runtimeType}',
+        route: 'player.fallback',
+        detail: 'item=$itemId codec=$requestedCodec',
+      );
+      if (mounted) {
+        setState(() {
+          _error = processAudio
+              ? tr('player.switchFailed', {'error': '$e'})
+              : tr('player.originalPlaybackFailed');
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _switching = false);
+    }
   }
 
   Widget _errorLayer() => Center(
@@ -4245,17 +4671,18 @@ class _PlayerPageState extends State<PlayerPage> {
             ),
           ),
           const SizedBox(height: NasTokens.spaceMd),
-          // 播放失败后错误层会盖住控制栏，用户点不到画质菜单 —— 这就是
-          // 「切换分辨率 / 编码方式不生效」的实际表现。这里把恢复入口直接
-          // 放到错误页上：重试当前地址，或一键换到最稳的 H.264 重新建会话。
+          // 播放失败后错误层会盖住控制栏，恢复入口直接放到错误页上。
           Wrap(
             alignment: WrapAlignment.center,
             spacing: NasTokens.spaceSm,
             children: [
-              if (_isTranscode && _codec != 'h264')
+              for (final codec in playableTranscodeCodecs())
                 OutlinedButton(
-                  onPressed: _retryWithH264,
-                  child: Text(tr('player.retryWithH264')),
+                  onPressed: () => _switchQuality(
+                    _transcodeFallback(codec: codec.key),
+                    codec: codec.key,
+                  ),
+                  child: Text(codec.label),
                 ),
               OutlinedButton(
                 onPressed: _retryPlay,
@@ -4633,7 +5060,11 @@ class _PlayerPageState extends State<PlayerPage> {
     final pairs = <String>[
       row(
         tr('player.playbackSource'),
-        _isTranscode ? tr('player.sourceTranscode') : tr('player.sourceDirect'),
+        _isVideoCopySession
+            ? _copySessionLabel
+            : _isTranscode
+            ? tr('player.sourceTranscode')
+            : tr('player.sourceDirect'),
       ),
       if (_isTranscode) row(tr('player.transcodeState'), _jobStateText),
       row(
@@ -4826,7 +5257,10 @@ class _PlayerPageState extends State<PlayerPage> {
   }
 
   Future<void> _tvQualityPanel() async {
-    final options = presetsForSource(_srcHeight);
+    final qualityCodec = _codec == 'original'
+        ? defaultTranscodeCodec()
+        : _codec;
+    final options = presetsForSource(_srcHeight).where((p) => !p.copy).toList();
     final picked = await TvPlayerPanel.show(
       context,
       title: tr('player.quality'),
@@ -4834,12 +5268,16 @@ class _PlayerPageState extends State<PlayerPage> {
         for (final p in options)
           TvPanelOption(
             value: p.key,
-            label: p.labelFor(_codec),
+            label: p.labelFor(qualityCodec),
             selected: _preset == p.key,
           ),
       ],
       hint: tr('player.qualityHint', {
-        'preset': playQualityPresetOf(_preset)?.labelFor(_codec) ?? _preset,
+        'preset': _isVideoCopySession
+            ? _copySessionLabel
+            : _codec == 'original'
+            ? tr('player.sourceDirect')
+            : playQualityPresetOf(_preset)?.labelFor(qualityCodec) ?? _preset,
       }),
       columns: 3,
     );

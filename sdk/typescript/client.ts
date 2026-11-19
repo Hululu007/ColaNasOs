@@ -1622,7 +1622,7 @@ export class ColanasClient {
     return this.request('POST', '/api/v1/security/ip/remove', params, 'body');
   }
 
-  /** 认领升级前的无主任务（uid 为空的同设备任务） */
+  /** 迁移当前机器的旧同步任务到当前客户端标识 */
   async syncClaimLegacy(params: Record<string, any> = {}): Promise<any> {
     return this.request('POST', '/api/v1/sync/device/claimLegacy', params, 'body');
   }
@@ -1697,7 +1697,7 @@ export class ColanasClient {
     return this.request('POST', '/api/v1/sync/tasks/delete', params, 'body');
   }
 
-  /** 同步任务列表（当前用户） */
+  /** 同步任务列表（当前用户与当前机器） */
   async syncTaskList(params: Record<string, any> = {}): Promise<any> {
     return this.request('GET', '/api/v1/sync/tasks', params, 'query');
   }

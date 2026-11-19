@@ -106,6 +106,8 @@ export interface KernelApi {
         audioIndex?: number;
         /** 强制 / 自动 HDR→SDR 色彩转换 */
         hdrToSdr?: boolean;
+        /** false 时即使片源带 HDR 标记也不应用色调映射 */
+        toneMap?: boolean;
         /**
          * 「原画直通」：只换容器不重编码，DV / HDR 元数据原样交给显示端。
          * 由 `preset=original` 的会话自动开启，客户端不需要传。
@@ -129,6 +131,10 @@ export interface KernelApi {
       durationMs: number;
       codec?: string;
       container?: string;
+      /** 是否保留源视频码流（音频可独立处理） */
+      copyVideo?: boolean;
+      /** 是否保留源音频码流 */
+      audioCopy?: boolean;
       /** 实际用的编码器 / 解码链路（排障日志） */
       encoder?: string;
       decoder?: string;

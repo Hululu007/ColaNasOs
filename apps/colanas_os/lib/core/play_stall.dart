@@ -27,6 +27,37 @@ enum PlayStallAction {
   rebuild,
 }
 
+enum DirectPlaybackIssue { noVideoFrame, decodeStalled, noData }
+
+DirectPlaybackIssue? classifyDirectPlaybackIssue({
+  required int width,
+  required bool videoFrameReady,
+  required Duration buffered,
+  required Duration advanced,
+  required int sample,
+  required bool isWeb,
+}) {
+  if (!videoFrameReady &&
+      buffered >= const Duration(seconds: 2) &&
+      sample >= 6) {
+    return DirectPlaybackIssue.noVideoFrame;
+  }
+  if (width > 0 &&
+      buffered >= const Duration(seconds: 2) &&
+      advanced < const Duration(milliseconds: 500) &&
+      sample >= 2) {
+    return DirectPlaybackIssue.decodeStalled;
+  }
+  if (!isWeb &&
+      width > 0 &&
+      buffered < const Duration(seconds: 1) &&
+      advanced < const Duration(milliseconds: 500) &&
+      sample >= 4) {
+    return DirectPlaybackIssue.noData;
+  }
+  return null;
+}
+
 class PlayStallDetector {
   PlayStallDetector({
     this.limitSeconds = 8,

@@ -10,6 +10,82 @@ import 'package:colanas_os/core/play_stall.dart';
 void main() {
   Duration ms(int v) => Duration(milliseconds: v);
 
+  group('classifyDirectPlaybackIssue', () {
+    test('only marks buffered video with no frame after initialization grace', () {
+      expect(
+        classifyDirectPlaybackIssue(
+          width: 1920,
+          videoFrameReady: false,
+          buffered: const Duration(seconds: 2),
+          advanced: const Duration(seconds: 1),
+          sample: 5,
+          isWeb: false,
+        ),
+        isNull,
+      );
+      expect(
+        classifyDirectPlaybackIssue(
+          width: 1920,
+          videoFrameReady: false,
+          buffered: const Duration(seconds: 2),
+          advanced: const Duration(seconds: 1),
+          sample: 6,
+          isWeb: false,
+        ),
+        DirectPlaybackIssue.noVideoFrame,
+      );
+      expect(
+        classifyDirectPlaybackIssue(
+          width: 0,
+          videoFrameReady: false,
+          buffered: Duration.zero,
+          advanced: Duration.zero,
+          sample: 9,
+          isWeb: false,
+        ),
+        isNull,
+        reason:
+            'lack of buffered data must not be classified as a decoder failure',
+      );
+    });
+
+    test('distinguishes decoder stalls from network starvation', () {
+      expect(
+        classifyDirectPlaybackIssue(
+          width: 1920,
+          videoFrameReady: true,
+          buffered: const Duration(seconds: 2),
+          advanced: Duration.zero,
+          sample: 2,
+          isWeb: false,
+        ),
+        DirectPlaybackIssue.decodeStalled,
+      );
+      expect(
+        classifyDirectPlaybackIssue(
+          width: 1920,
+          videoFrameReady: true,
+          buffered: const Duration(milliseconds: 500),
+          advanced: Duration.zero,
+          sample: 4,
+          isWeb: false,
+        ),
+        DirectPlaybackIssue.noData,
+      );
+      expect(
+        classifyDirectPlaybackIssue(
+          width: 1920,
+          videoFrameReady: true,
+          buffered: const Duration(milliseconds: 500),
+          advanced: Duration.zero,
+          sample: 4,
+          isWeb: true,
+        ),
+        isNull,
+      );
+    });
+  });
+
   /// 一直喂同一个位置，返回「第几拍才动手」和「动手做的是什么」。
   ({int at, PlayStallAction action}) firstAction(
     PlayStallDetector d,
@@ -27,8 +103,11 @@ void main() {
     test('seek 回显不算停滞（回显阶段就该退场）', () {
       final d = PlayStallDetector();
       // 原位 0 → 用户跳到 30 秒，position 立刻报成 30000
-      expect(d.tick(ms(30000)) == PlayStallAction.none, isTrue,
-          reason: '跳过去的第一拍必须放过');
+      expect(
+        d.tick(ms(30000)) == PlayStallAction.none,
+        isTrue,
+        reason: '跳过去的第一拍必须放过',
+      );
       // 2 拍预热 + 8 拍判定 = 10 拍内必然发现「跳过去之后不动」
       final r = firstAction(d, ms(30000));
       expect(r.at, 10);
@@ -74,8 +153,11 @@ void main() {
       expect(firstAction(d, Duration.zero).action, PlayStallAction.rebuild);
       d.noteStageOne(Duration.zero);
       expect(d.stage, 1);
-      expect(firstAction(d, Duration.zero).action, PlayStallAction.rebuild,
-          reason: '重新计时之后还会再救一次，不会立刻触发');
+      expect(
+        firstAction(d, Duration.zero).action,
+        PlayStallAction.rebuild,
+        reason: '重新计时之后还会再救一次，不会立刻触发',
+      );
     });
   });
 }

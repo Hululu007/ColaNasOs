@@ -2,20 +2,21 @@ import 'app_settings.dart';
 import 'play_quality.dart';
 import 'settings_store.dart';
 
+enum AudioNormalizeMode { inherit, enabled, disabled }
+
 /// 播放偏好的唯一落盘入口（改进 6.4）。
 ///
 /// 画质 / 编码统一写在 `player.preset` / `player.codec` 两个键上，
 /// Web、桌面、后续安卓 / TV 端读同一份；早期键名 `video.preset` / `video.codec`
 /// 作为回退值读取，升级后首次保存即迁移到新键。
 ///
-/// 音频两项（`player.audioNormalize` / `player.audioDownmix`）是**客户端覆盖**：
-/// 只有用户显式打开才随转码会话传下去；关闭 = 不传 = 跟随库级 `audio_normalize` 开关，
-/// 所以默认值与加这两个开关之前的行为完全一致。
+/// 响度归一支持跟随库级设置、强制开启和强制关闭；旧版 false 迁移为跟随库级设置。
 class PlayPreferences {
   static const _presetKey = 'player.preset';
   static const _codecKey = 'player.codec';
   static const _normalizeKey = 'player.audioNormalize';
   static const _downmixKey = 'player.audioDownmix';
+  static const _toneMapKey = 'player.toneMap';
   static const _leadKey = 'player.leadMinutes';
   static const _tvDirectKey = 'player.tvDirectOriginal';
 
@@ -23,7 +24,8 @@ class PlayPreferences {
     final saved =
         SettingsStore.instance.getString(_presetKey) ??
         SettingsStore.instance.getString('video.preset');
-    return playQualityPresetOf(saved ?? '')?.key ?? defaultPlayPreset;
+    final preset = playQualityPresetOf(saved ?? '');
+    return preset == null || preset.copy ? defaultPlayPreset : preset.key;
   }
 
   /// 用户**显式保存过**的档位；没存过返回 null。
@@ -35,27 +37,63 @@ class PlayPreferences {
     final saved =
         SettingsStore.instance.getString(_presetKey) ??
         SettingsStore.instance.getString('video.preset');
-    return playQualityPresetOf(saved ?? '')?.key;
+    final preset = playQualityPresetOf(saved ?? '');
+    return preset == null || preset.copy ? null : preset.key;
   }
 
   static String get codec {
     final saved =
         SettingsStore.instance.getString(_codecKey) ??
         SettingsStore.instance.getString('video.codec');
-    return playCodecOf(saved ?? '')?.key ?? defaultCodecForPlatform;
+    final savedPreset =
+        SettingsStore.instance.getString(_presetKey) ??
+        SettingsStore.instance.getString('video.preset');
+    // Older versions represented original playback as a quality preset.
+    if (playQualityPresetOf(savedPreset ?? '')?.copy == true) return 'original';
+    final codec = playCodecOf(saved ?? '');
+    if (codec?.selectable == true) return codec!.key;
+    // H.264 remains an internal fallback, not a user preference.
+    if (codec?.key == 'h264') return defaultPlayCodec;
+    return defaultCodecForPlatform;
   }
 
-  /// 没存过编码时用的默认值：**除 TV 端外一律 H.265**。
-  ///
-  /// 为什么 TV 例外：遥控器那套盒子 / 老电视的解码器参差不齐，HEVC 放不出来
-  /// 就是黑屏有声，用户没法自己救；桌面 / 手机 / Web 的 H.265 都有硬解兜底
-  /// （Web 端还能用 `codecPlayable()` 探到浏览器不支持时自动回落 H.264）。
-  /// 1080P + H.265 = 1.8Mbps，同画质比 H.264 省 40% 流量。
+  /// 没存过编码时 TV 优先原码，其它端默认 H.265。
   static String get defaultCodecForPlatform =>
-      AppSettings.instance.tvMode.value ? 'h264' : defaultPlayCodec;
+      AppSettings.instance.tvMode.value ? 'original' : defaultPlayCodec;
 
-  static bool get audioNormalize =>
-      SettingsStore.instance.getBool(_normalizeKey) == true;
+  static AudioNormalizeMode get audioNormalizeMode {
+    final store = SettingsStore.instance;
+    return audioNormalizeModeFrom(
+      store.getString(_normalizeKey) ?? store.getBool(_normalizeKey),
+    );
+  }
+
+  static AudioNormalizeMode audioNormalizeModeFrom(Object? storedValue) {
+    switch (storedValue) {
+      case 'enabled':
+        return AudioNormalizeMode.enabled;
+      case 'disabled':
+        return AudioNormalizeMode.disabled;
+      case 'inherit':
+        return AudioNormalizeMode.inherit;
+    }
+    // Previous bool=false meant "do not override the library setting".
+    return storedValue == true
+        ? AudioNormalizeMode.enabled
+        : AudioNormalizeMode.inherit;
+  }
+
+  static bool? get audioNormalizeOverride => switch (audioNormalizeMode) {
+    AudioNormalizeMode.inherit => null,
+    AudioNormalizeMode.enabled => true,
+    AudioNormalizeMode.disabled => false,
+  };
+
+  static bool audioNormalizeEnabled(bool? libraryValue) =>
+      audioNormalizeOverride ?? (libraryValue == true);
+
+  static bool get toneMap =>
+      SettingsStore.instance.getBool(_toneMapKey) ?? false;
 
   static bool get audioDownmix =>
       SettingsStore.instance.getBool(_downmixKey) == true;
@@ -95,22 +133,43 @@ class PlayPreferences {
     required String preset,
     required String codec,
   }) async {
-    await SettingsStore.instance.setString(_presetKey, preset);
+    final storedPreset =
+        codec != 'original' && playQualityPresetOf(preset)?.copy == true
+        ? defaultPlayPreset
+        : preset;
+    await SettingsStore.instance.setString(_presetKey, storedPreset);
     await SettingsStore.instance.setString(_codecKey, codec);
   }
 
   static Future<void> savePreset(String preset) =>
-      SettingsStore.instance.setString(_presetKey, preset);
+      SettingsStore.instance.setString(
+        _presetKey,
+        playQualityPresetOf(preset)?.copy == true ? defaultPlayPreset : preset,
+      );
 
-  static Future<void> saveCodec(String codec) =>
-      SettingsStore.instance.setString(_codecKey, codec);
+  static Future<void> saveCodec(String codec) async {
+    final savedPreset =
+        SettingsStore.instance.getString(_presetKey) ??
+        SettingsStore.instance.getString('video.preset');
+    if (codec != 'original' &&
+        playQualityPresetOf(savedPreset ?? '')?.copy == true) {
+      await SettingsStore.instance.setString(_presetKey, defaultPlayPreset);
+    }
+    await SettingsStore.instance.setString(_codecKey, codec);
+  }
 
-  static Future<void> saveAudio({bool? normalize, bool? downmix}) async {
-    if (normalize != null) {
-      await SettingsStore.instance.setBool(_normalizeKey, normalize);
+  static Future<void> saveAudio({
+    AudioNormalizeMode? normalizeMode,
+    bool? downmix,
+  }) async {
+    if (normalizeMode != null) {
+      await SettingsStore.instance.setString(_normalizeKey, normalizeMode.name);
     }
     if (downmix != null) {
       await SettingsStore.instance.setBool(_downmixKey, downmix);
     }
   }
+
+  static Future<void> saveToneMap(bool enabled) =>
+      SettingsStore.instance.setBool(_toneMapKey, enabled);
 }

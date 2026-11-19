@@ -6,11 +6,9 @@ import 'client_id_stub.dart' if (dart.library.io) 'client_id_io.dart' as impl;
 /// 而同一台机器上的主客户端与独立同步客户端（`apps/sync_client`）共用同一个值，
 /// 这样独立端看到的就是这台机器上的同步任务。
 ///
-/// 取值来源：
-///   - Windows / macOS / Linux 桌面端：机器名（`Platform.localHostname`），
-///     天然「同机一致、异机不同」，不需要额外持久化；
-///   - Web / Android / iOS：机器名没有意义（都是 localhost / 随机），由应用层在启动时
-///     用 [override] 给一个持久化的随机 id。
+/// ColaNasOs PC 客户端启动时用同步文件能力提供的设备 ID 覆盖此值，使任务归属与
+/// 请求隔离完全一致；其它直接使用 nas_core 的桌面调用以机器名作为兜底。
+/// Web / Android / iOS 由应用层通过 [override] 提供稳定的本地客户端 ID。
 class ColanasClientId {
   ColanasClientId._();
 

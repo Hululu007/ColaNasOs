@@ -136,21 +136,13 @@ export async function registerSyncTasks(app: FastifyInstance, k: KernelApi, h: S
         schema: {
           operationId: 'syncTaskList',
           tags: TAG,
-          summary: '同步任务列表（当前用户）',
+          summary: '同步任务列表（当前用户与当前机器）',
           response: { 200: TaskListResponse },
         },
       }),
       async (req: FastifyRequest) => {
         const uid = h.uidOf(req);
         const cid = h.clientIdOf(req);
-        // 老任务（client_id = ''）归第一个打开任务列表的客户端：认领之后
-        // 同账号在别的机器上就看不到它们了 —— 这正是「每个客户端独立」的语义。
-        if (cid) {
-          await sql`
-            update sync_tasks set client_id = ${cid}
-             where uid = ${uid} and client_id = ''
-          `.execute(k.db);
-        }
         const rows = (
           await sql<SyncTaskRow>`
             select * from sync_tasks
@@ -623,17 +615,21 @@ export async function registerSyncTasks(app: FastifyInstance, k: KernelApi, h: S
         schema: {
           operationId: 'syncClaimLegacy',
           tags: TAG,
-          summary: '认领升级前的无主任务（uid 为空的同设备任务）',
+          summary: '迁移当前机器的旧同步任务到当前客户端标识',
           body: ClaimLegacyBody,
           response: { 200: ClaimLegacyResponse },
         },
       }),
       async (req: FastifyRequest) => {
         const body = (req.body || {}) as { deviceId?: string };
+        const uid = h.uidOf(req);
+        const cid = h.clientIdOf(req);
         const res = await sql`
           update sync_tasks
-             set uid = ${h.uidOf(req)}, client_id = ${h.clientIdOf(req)}, updated_at = ${h.now()}
-           where device_id = ${body.deviceId || ''} and (uid = '' or uid is null)
+             set uid = ${uid}, client_id = ${cid}, updated_at = ${h.now()}
+           where device_id = ${body.deviceId || ''}
+             and (uid = '' or uid is null or uid = ${uid})
+             and ((uid = '' or uid is null) or uid <> ${uid} or client_id <> ${cid})
         `.execute(k.db);
         return { claimed: Number(res.numAffectedRows ?? 0) };
       },

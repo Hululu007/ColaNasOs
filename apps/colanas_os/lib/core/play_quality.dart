@@ -53,23 +53,31 @@ class PlayQualityPreset {
   String get bitrateLabel => bitrateLabelFor('h264');
 }
 
-/// 输出编码：h264 / h265 / av1 统一 fMP4（带 EXT-X-MAP）。
+/// 播放策略 / 转码编码：原码直连与 h264 / h265 / av1 转码。
 class PlayCodec {
   const PlayCodec({
     required this.key,
     required this.label,
     required this.container,
     this.bitrateFactor = 1,
+    this.selectable = true,
+    this.transcode = true,
   });
 
   final String key;
   final String label;
 
-  /// 实际封装（fmp4 / mpegts，与服务端一致；2026-11-16 起统一 fmp4）。
+  /// 实际封装（fmp4 / mpegts / source，与服务端一致）。
   final String container;
 
   /// 同画质下相对 H.264 的码率系数（1.0 / 0.6 / 0.5），用于估算流量。
   final double bitrateFactor;
+
+  /// 是否作为用户的播放策略选项显示。
+  final bool selectable;
+
+  /// 是否可作为服务端视频转码编码。
+  final bool transcode;
 }
 
 const List<PlayQualityPreset> playQualityPresets = <PlayQualityPreset>[
@@ -245,22 +253,36 @@ const List<PlayQualityPreset> playQualityPresets = <PlayQualityPreset>[
 
 const List<PlayCodec> playCodecs = <PlayCodec>[
     PlayCodec(
+      key: 'original',
+      label: '原码',
+      container: 'source',
+      bitrateFactor: 0,
+      selectable: true,
+      transcode: false,
+    ),
+    PlayCodec(
       key: 'h264',
       label: 'H.264 / AVC',
       container: 'fmp4',
       bitrateFactor: 1,
+      selectable: false,
+      transcode: true,
     ),
     PlayCodec(
       key: 'h265',
       label: 'H.265 / HEVC',
       container: 'fmp4',
       bitrateFactor: 0.6,
+      selectable: true,
+      transcode: true,
     ),
     PlayCodec(
       key: 'av1',
       label: 'AV1',
       container: 'fmp4',
       bitrateFactor: 0.5,
+      selectable: true,
+      transcode: true,
     ),
 ];
 

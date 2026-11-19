@@ -968,7 +968,10 @@ async function resolveEncodePlan(params, tag) {
     presetRow.copy === true &&
     !params.subtitle &&
     !!srcMapped;
-  const hdrToSdr = !passthrough && (params.hdrToSdr === true || sourceNeedsTonemap);
+  const hdrToSdr =
+    !passthrough &&
+    params.toneMap !== false &&
+    (params.hdrToSdr === true || sourceNeedsTonemap);
   if (sourceNeedsTonemap && !passthrough && params.hdrToSdr !== true) {
     console.error(
       `[media] ${tag} 片源是 ${source.hdrKind}${source.dvProfile ? ` P${source.dvProfile}` : ''}，` +
@@ -1309,6 +1312,8 @@ async function hls(params) {
       ms: Number(process.hrtime.bigint() - started) / 1e6,
       codec,
       container: fmp4 ? 'fmp4' : 'mpegts',
+      copyVideo,
+      audioCopy,
       playlist,
       // 实际用的编码 / 解码链路：排障时能一眼看出「到底 GPU 跑了没有」。
       // copy 时三者都写 `copy`：这时候既没解码器也没编码器，写 hevc_amf+cpu

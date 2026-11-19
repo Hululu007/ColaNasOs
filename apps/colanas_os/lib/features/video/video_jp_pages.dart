@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:nas_core/nas_core.dart';
 import 'package:nas_ui/nas_ui.dart';
@@ -260,8 +262,10 @@ class VideoJpActorPage extends StatefulWidget {
 
 class _VideoJpActorPageState extends State<VideoJpActorPage> {
   final _searchCtrl = TextEditingController();
+  final _actorScroll = ScrollController();
   String _query = '';
   String _sortBy = 'smart';
+  String _worksSortBy = 'smart';
   bool _onlyFavorite = false;
   bool _onlyUnwatched = false;
   bool _showFanart = false;
@@ -287,8 +291,16 @@ class _VideoJpActorPageState extends State<VideoJpActorPage> {
   /// 语义是「名下至少有一部符合条件的影片，这个人才显示」—— 由服务端在
   /// 「演员 × 作品」关系行上过滤，不在客户端拍脑袋。
   VideoJpFilter _filter = const VideoJpFilter();
+  int _actorColumns = 1;
+  double _actorRowExtent = 0;
+  String? _returnActorKey;
+  int _returnActorIndex = 0;
+  double _returnRowViewportOffset = 0;
 
   String _k(String name) => 'video.jp.${widget.libraryId ?? 'all'}.$name';
+
+  String get _worksStorageKey =>
+      'video.jp.actorWorks.${widget.libraryId ?? 'all'}.${_actorKey(_selected!)}';
 
   /// true = 「只看这一个演员」模式（从影片详情点演员进来）
   bool get _pinned => (widget.initialActorName ?? '').trim().isNotEmpty;
@@ -298,6 +310,8 @@ class _VideoJpActorPageState extends State<VideoJpActorPage> {
     super.initState();
     _showFanart = SettingsStore.instance.getBool(_k('fanart')) ?? false;
     _sortBy = SettingsStore.instance.getString(_k('sortBy')) ?? 'smart';
+    _worksSortBy =
+        SettingsStore.instance.getString(_k('worksSortBy')) ?? 'smart';
     if (_pinned) {
       // 不拉那 500 个演员的网格，直接按名字要档案 + 作品
       _loading = false;
@@ -345,6 +359,7 @@ class _VideoJpActorPageState extends State<VideoJpActorPage> {
   @override
   void dispose() {
     _searchCtrl.dispose();
+    _actorScroll.dispose();
     super.dispose();
   }
 
@@ -428,6 +443,87 @@ class _VideoJpActorPageState extends State<VideoJpActorPage> {
       _works = const [];
       _worksError = null;
     });
+    _restoreActorPosition();
+  }
+
+  String _actorKey(Map<String, dynamic> actor) {
+    final key = _str(actor['key']);
+    return key.isNotEmpty ? key : _str(actor['name']);
+  }
+
+  void _openActorFromGrid(Map<String, dynamic> actor) {
+    final list = _visibleActors;
+    final key = _actorKey(actor);
+    final index = list.indexWhere((candidate) => _actorKey(candidate) == key);
+    final columns = _actorColumns < 1 ? 1 : _actorColumns;
+    final rowExtent = _actorRowExtent > 0 ? _actorRowExtent : 1;
+    final row = (index < 0 ? 0 : index) ~/ columns;
+    _returnActorKey = key;
+    _returnActorIndex = index < 0 ? 0 : index;
+    _returnRowViewportOffset = _actorScroll.hasClients
+        ? _actorScroll.offset - row * rowExtent
+        : 0;
+    unawaited(_openActor(actor));
+  }
+
+  void _restoreActorPosition() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _selected != null || !_actorScroll.hasClients) return;
+      final list = _visibleActors;
+      if (list.isEmpty) return;
+      var index = list.indexWhere(
+        (actor) => _actorKey(actor) == _returnActorKey,
+      );
+      if (index < 0) {
+        index = _returnActorIndex.clamp(0, list.length - 1).toInt();
+      }
+      final columns = _actorColumns < 1 ? 1 : _actorColumns;
+      final rowExtent = _actorRowExtent;
+      if (rowExtent <= 0) return;
+      final target = (index ~/ columns) * rowExtent + _returnRowViewportOffset;
+      final position = _actorScroll.position;
+      _actorScroll.jumpTo(target.clamp(0, position.maxScrollExtent).toDouble());
+    });
+  }
+
+  void _updateWorksFilter(VideoJpFilter filter) {
+    setState(() => _filter = filter);
+    final actor = _selected;
+    if (actor != null) unawaited(_openActor(actor));
+    unawaited(_load());
+  }
+
+  List<VideoItem> get _sortedWorks {
+    final works = List<VideoItem>.of(_works);
+    int titleOrder(VideoItem a, VideoItem b) {
+      final order = a.title.toLowerCase().compareTo(b.title.toLowerCase());
+      return order != 0 ? order : a.id.compareTo(b.id);
+    }
+
+    switch (_worksSortBy) {
+      case 'title':
+        works.sort(titleOrder);
+        break;
+      case 'year':
+        works.sort((a, b) {
+          final order = (b.year ?? 0).compareTo(a.year ?? 0);
+          return order != 0 ? order : titleOrder(a, b);
+        });
+        break;
+      case 'rating':
+        works.sort((a, b) {
+          final order = (b.score ?? -1).compareTo(a.score ?? -1);
+          return order != 0 ? order : titleOrder(a, b);
+        });
+        break;
+      case 'unwatched':
+        works.sort((a, b) {
+          final order = (a.watched ? 1 : 0).compareTo(b.watched ? 1 : 0);
+          return order != 0 ? order : titleOrder(a, b);
+        });
+        break;
+    }
+    return works;
   }
 
   Future<void> _toggleFavorite(Map<String, dynamic> actor) async {
@@ -743,10 +839,16 @@ class _VideoJpActorPageState extends State<VideoJpActorPage> {
         final cellW = (cons.maxWidth - spacing * (cols + 1)) / cols;
         // 卡片高度 = 图 + 文本块（见 _actorCard 的 Column：6 + 名 + 数量 + 身高）
         final imgH = _showFanart ? cellW / 1.5 : cellW * 1.5;
+        _actorColumns = cols;
+        _actorRowExtent = imgH + 64 + spacing + 4;
         // 必须用 GridView.builder 懒加载：Wrap + SingleChildScrollView 会把
         // 全部演员（本库 500 个）一次性建出来，每人再发一张封面请求 ——
         // 500 张图同时下、同时解码，滚动/点击全卡死（2026-11-04 反馈）。
         return GridView.builder(
+          key: PageStorageKey<String>(
+            'video.jp.actors.${widget.libraryId ?? 'all'}',
+          ),
+          controller: _actorScroll,
           padding: const EdgeInsets.fromLTRB(spacing, 8, spacing, 32),
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: cols,
@@ -782,7 +884,7 @@ class _VideoJpActorPageState extends State<VideoJpActorPage> {
 
     return InkWell(
       borderRadius: BorderRadius.circular(NasTokens.radiusSm),
-      onTap: () => _openActor(actor),
+      onTap: () => _openActorFromGrid(actor),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -962,7 +1064,9 @@ class _VideoJpActorPageState extends State<VideoJpActorPage> {
               // 演员档案、收藏关系、以及不符合筛选的影片一律不动。
               IconButton(
                 tooltip: tr('video.jp.deleteWorks'),
-                onPressed: _worksLoading ? null : () => _deleteFilteredWorks(actor),
+                onPressed: _worksLoading
+                    ? null
+                    : () => _deleteFilteredWorks(actor),
                 icon: const Icon(Icons.delete_outline),
               ),
               IconButton(
@@ -990,6 +1094,65 @@ class _VideoJpActorPageState extends State<VideoJpActorPage> {
             ],
           ),
         ),
+        Padding(
+          padding: const EdgeInsets.symmetric(
+            horizontal: NasTokens.spaceMd,
+            vertical: NasTokens.spaceXs,
+          ),
+          child: Row(
+            children: [
+              VideoJpFilterButton(
+                value: _filter,
+                libraryId: widget.libraryId,
+                onlyFavorite: _onlyFavorite,
+                onlyUnwatched: _onlyUnwatched,
+                onOnlyFavoriteChanged: (value) {
+                  setState(() => _onlyFavorite = value);
+                  unawaited(_load());
+                },
+                onOnlyUnwatchedChanged: (value) {
+                  setState(() => _onlyUnwatched = value);
+                  unawaited(_load());
+                },
+                onChanged: _updateWorksFilter,
+              ),
+              PopupMenuButton<String>(
+                initialValue: _worksSortBy,
+                tooltip: tr('video.jp.worksSort'),
+                onSelected: (value) {
+                  setState(() => _worksSortBy = value);
+                  SettingsStore.instance.setString(_k('worksSortBy'), value);
+                },
+                itemBuilder: (_) => [
+                  for (final (value, key) in const [
+                    ('smart', 'video.jp.worksSortSmart'),
+                    ('unwatched', 'video.jp.worksSortUnwatched'),
+                    ('rating', 'video.jp.worksSortRating'),
+                    ('year', 'video.jp.worksSortYear'),
+                    ('title', 'video.jp.worksSortTitle'),
+                  ])
+                    PopupMenuItem(value: value, child: Text(tr(key))),
+                ],
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.sort),
+                    const SizedBox(width: NasTokens.spaceXs),
+                    Text(tr('video.jp.worksSort')),
+                  ],
+                ),
+              ),
+              const Spacer(),
+              if (_filter.isNotEmpty)
+                Text(
+                  tr('video.jp.filterActiveCount', {
+                    'count': '${_filter.activeCount}',
+                  }),
+                  style: TextStyle(color: context.nasTextSecondary),
+                ),
+            ],
+          ),
+        ),
         _ActorHeader(actor: actor),
         Expanded(
           child: _worksLoading
@@ -1011,6 +1174,7 @@ class _VideoJpActorPageState extends State<VideoJpActorPage> {
   }
 
   Widget _buildWorksGrid() {
+    final works = _sortedWorks;
     return LayoutBuilder(
       builder: (context, cons) {
         const spacing = 12.0;
@@ -1025,6 +1189,7 @@ class _VideoJpActorPageState extends State<VideoJpActorPage> {
         final imgH = _showFanart ? cellW / (3 / 2) : cellW * 1.5;
         // 同演员网格：作品最多 200 条，Wrap 会全量构建，改成懒加载
         return GridView.builder(
+          key: PageStorageKey<String>(_worksStorageKey),
           padding: const EdgeInsets.fromLTRB(spacing, 8, spacing, 96),
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: cols,
@@ -1032,9 +1197,9 @@ class _VideoJpActorPageState extends State<VideoJpActorPage> {
             crossAxisSpacing: spacing,
             mainAxisExtent: imgH + 44,
           ),
-          itemCount: _works.length,
+          itemCount: works.length,
           itemBuilder: (context, i) {
-            final item = _works[i];
+            final item = works[i];
             Future<void> run(String action) async {
               final changed = await runVideoItemAction(context, action, item);
               if (!mounted || _selected == null) return;
@@ -1052,7 +1217,10 @@ class _VideoJpActorPageState extends State<VideoJpActorPage> {
                 ),
                 child: GestureDetector(
                   onLongPress: () async {
-                    final action = await showVideoItemActionSheet(context, item);
+                    final action = await showVideoItemActionSheet(
+                      context,
+                      item,
+                    );
                     if (action != null) await run(action);
                   },
                   child: VideoPosterCard(

@@ -15608,6 +15608,10 @@
             "description": "选第几条音轨转码（默认 0）",
             "type": "integer"
           },
+          "toneMap": {
+            "description": "是否对 HDR / DV / HLG 片源执行 HDR→SDR；不传时兼容旧客户端自动映射",
+            "type": "boolean"
+          },
           "forceSdr": {
             "description": "强制 HDR→SDR；不传时由服务端按片源标记自动判定",
             "type": "boolean"
@@ -15747,6 +15751,17 @@
           "audioIndex": {
             "description": "转码选用的音轨序号",
             "type": "integer"
+          },
+          "audioNormalize": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "audioNormalizeEffective": {
+            "type": "boolean"
+          },
+          "toneMap": {
+            "type": "boolean",
+            "nullable": true
           },
           "hdrToSdr": {
             "description": "是否做 HDR→SDR 转换",
@@ -35642,7 +35657,7 @@
     "/api/v1/sync/tasks": {
       "get": {
         "operationId": "syncTaskList",
-        "summary": "同步任务列表（当前用户）",
+        "summary": "同步任务列表（当前用户与当前机器）",
         "tags": [
           "sync"
         ],
@@ -37030,7 +37045,7 @@
     "/api/v1/sync/device/claimLegacy": {
       "post": {
         "operationId": "syncClaimLegacy",
-        "summary": "认领升级前的无主任务（uid 为空的同设备任务）",
+        "summary": "迁移当前机器的旧同步任务到当前客户端标识",
         "tags": [
           "sync"
         ],

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:nas_core/nas_core.dart';
@@ -20,6 +21,7 @@ import '../features/music/music_page.dart';
 import '../features/photo/backup/photo_backup_bootstrap.dart';
 import '../features/photo/photo_page.dart';
 import '../features/sync/sync_page.dart';
+import '../features/sync/sync_engine.dart';
 import '../features/sync/sync_scheduler.dart';
 import '../features/sync/sync_tray_bridge.dart';
 import '../features/tv/tv_shell.dart';
@@ -33,13 +35,33 @@ import 'desktop_tray.dart';
 /// 改主客户端，各端同步生效。
 enum AppLaunchMode { full, photo, music, sync }
 
-/// 客户端机器标识：桌面端用机器名（同机所有客户端算出同一个值），
-/// 移动端 / Web 机器名没有意义，改用本地持久化的随机 id。
+/// 客户端机器标识：PC 端与同步任务共用 SyncFs 的稳定设备 id；
+/// 移动端 / 普通 Web 使用本地持久化的随机 id。
 ///
 /// 同步任务按「用户 + 机器」隔离，这个 id 决定看得到哪一组任务；
 /// 独立同步客户端与主客户端共用这份代码，因而在同一台机器上得到同一个值。
 Future<void> _ensureClientId() async {
-  // 桌面端已经由 nas_core 按机器名算出来了，不用覆盖
+  final syncFs = SyncEngine.instance.fs;
+  final isNativeDesktop =
+      !kIsWeb &&
+      (defaultTargetPlatform == TargetPlatform.windows ||
+          defaultTargetPlatform == TargetPlatform.macOS ||
+          defaultTargetPlatform == TargetPlatform.linux);
+  // PC Electron 也是 Web runtime；只有注入了本地文件桥才将它视为桌面端。
+  if (isNativeDesktop || (kIsWeb && syncFs.canSync)) {
+    try {
+      final deviceId = await syncFs.resolveDeviceId();
+      if (deviceId.isNotEmpty) {
+        // 任务归属和请求隔离使用同一份机器 ID；避免 Web/Electron 的随机设置 ID
+        // 与任务里的 deviceId 分裂，造成同机客户端看不到任务或机器间误共享。
+        ColanasClientId.override = deviceId;
+        return;
+      }
+    } catch (e) {
+      debugPrint('[sync] resolve client identity failed: $e');
+    }
+  }
+  // 移动端 / 普通浏览器没有稳定的桌面设备 ID，继续使用本地持久化随机标识。
   if (ColanasClientId.value.isNotEmpty) return;
   final saved = SettingsStore.instance.getString('client.id');
   if (saved != null && saved.isNotEmpty) {

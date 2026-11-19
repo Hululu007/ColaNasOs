@@ -50,8 +50,10 @@ interface SessionRow {
   subtitle: string | null;
   /** 客户端级覆盖：1 = 响度归一 / 1 = 降混双声道；null = 跟随库级开关 */
   audio_normalize: number | null;
+  audio_normalize_effective: number | null;
   audio_downmix: number | null;
   audio_index: number | null;
+  tone_map: number | null;
   force_sdr: number | null;
   /** pump 按片源标记算出的最终 HDR→SDR 决策（供响应回显） */
   hdr_to_sdr: number | null;
@@ -171,6 +173,13 @@ const toItem = (
   createdAt: Number(r.created_at),
   updatedAt: Number(r.updated_at),
   audioIndex: Number(r.audio_index ?? 0),
+  audioNormalize:
+    r.audio_normalize == null ? null : Number(r.audio_normalize) === 1,
+  audioNormalizeEffective:
+    r.audio_normalize_effective == null
+      ? undefined
+      : Number(r.audio_normalize_effective) === 1,
+  toneMap: r.tone_map == null ? null : Number(r.tone_map) === 1,
   hdrToSdr: Number(r.hdr_to_sdr) === 1,
 });
 
@@ -472,10 +481,12 @@ async function runJob(k: KernelApi, job: SessionRow): Promise<void> {
       `.execute(k.db)
     ).rows[0];
     const normalize =
-      job.audio_normalize == null
-        ? Number(flag?.audio_normalize) === 1
-        : Number(job.audio_normalize) === 1;
-    // 片源标记：pump 据此自动判定 HDR→SDR；forceSdr 只是强制开
+      job.audio_normalize_effective == null
+        ? job.audio_normalize == null
+          ? Number(flag?.audio_normalize) === 1
+          : Number(job.audio_normalize) === 1
+        : Number(job.audio_normalize_effective) === 1;
+    // 新客户端显式选择 tone_map；旧会话 null 保持自动映射，兼容升级前的行为。
     const media = (
       await sql<{
         is_4k: number | null; hdr10: number | null; hdr10plus: number | null;
@@ -490,12 +501,20 @@ async function runJob(k: KernelApi, job: SessionRow): Promise<void> {
     const on = (v: unknown) => Number(v) === 1;
     // 「原画」档 = 原片原码：不做 HDR→SDR、不重编码视频，DV / HDR10+ 的元数据
     // 原样交给电视。色调映射只属于「降档播放」，用户选原画就是不要它。
-    const passthrough = String(job.preset) === 'original';
+    const toneMapEnabled =
+      job.tone_map == null || Number(job.tone_map) === 1;
+    const sourceHdr =
+      on(media?.dolby_vision) ||
+      on(media?.hdr10) ||
+      on(media?.hdr10plus) ||
+      on(media?.hlg);
+    const toneMapRequested = job.tone_map != null && Number(job.tone_map) === 1;
+    const passthrough =
+      String(job.preset) === 'original' && !(toneMapRequested && sourceHdr);
     const hdrToSdr =
       !passthrough &&
       (Number(job.force_sdr) === 1 ||
-        on(media?.dolby_vision) || on(media?.hdr10) ||
-        on(media?.hdr10plus) || on(media?.hlg));
+        (toneMapEnabled && sourceHdr));
     const requestedCodec = job.codec ?? 'h264';
     const effectiveCodec = requestedCodec;
     const audioIndex = Number(job.audio_index ?? 0);
@@ -528,6 +547,7 @@ async function runJob(k: KernelApi, job: SessionRow): Promise<void> {
       hwaccel: String(tconf.hwaccel || 'auto'),
       audioIndex,
       hdrToSdr,
+      toneMap: toneMapEnabled,
       passthrough,
       // 「原画」能否直接 copy 取决于片源：AV1/HEVC 复制进 TS 解不出来
       srcVideoCodec: media?.video_codec ?? undefined,
@@ -547,6 +567,13 @@ async function runJob(k: KernelApi, job: SessionRow): Promise<void> {
         dvProfile: res.source?.dvProfile ?? 0,
         hdrKind: res.source?.hdrKind ?? 'none',
         hi10p: res.source?.hi10p ?? false,
+        toneMapRequested: toneMapEnabled,
+        hdrToSdr,
+        audioNormalize: normalize,
+        audioFilter: filters.join(',') || 'none',
+        videoCopy: res.copyVideo ?? false,
+        audioCopy: res.audioCopy ?? false,
+        audioCodec: res.audioCopy ? media?.audio_codec ?? 'copy' : 'aac',
         codec: res.codec,
         ms: res.ms,
       },
@@ -982,6 +1009,24 @@ export const videoPlayer: ServerModule = {
         }
       },
     },
+    {
+      id: '186_player_output_policy',
+      async up(db) {
+        const cols = (
+          (await sql`pragma table_info(player_sessions)`.execute(db)).rows as Array<{
+            name: string;
+          }>
+        ).map((r) => r.name);
+        if (!cols.includes('audio_normalize_effective')) {
+          await sql`alter table player_sessions add column audio_normalize_effective integer`.execute(
+            db,
+          );
+        }
+        if (!cols.includes('tone_map')) {
+          await sql`alter table player_sessions add column tone_map integer`.execute(db);
+        }
+      },
+    },
   ],
 
   async register(app, k) {
@@ -1046,6 +1091,7 @@ export const videoPlayer: ServerModule = {
           audioNormalize?: boolean;
           audioDownmix?: boolean;
           audioIndex?: number;
+          toneMap?: boolean;
           forceSdr?: boolean;
           leadMinutes?: number;
           startMs?: number;
@@ -1098,8 +1144,23 @@ export const videoPlayer: ServerModule = {
         const audioNormalize =
           typeof body.audioNormalize === 'boolean' ? (body.audioNormalize ? 1 : 0) : null;
         const audioDownmix = typeof body.audioDownmix === 'boolean' ? (body.audioDownmix ? 1 : 0) : null;
+        const libraryFlags = (
+          await sql<{ audio_normalize: number | null }>`
+            select l.audio_normalize from video_items i
+              join video_libraries l on l.id = i.library_id
+             where i.id = ${body.id}
+          `.execute(k.db)
+        ).rows[0];
+        const audioNormalizeEffective =
+          audioNormalize == null
+            ? Number(libraryFlags?.audio_normalize) === 1
+              ? 1
+              : 0
+            : audioNormalize;
         const n = Number(body.audioIndex);
         const audioIndex = Number.isInteger(n) && n >= 0 ? n : 0;
+        const toneMap =
+          typeof body.toneMap === 'boolean' ? (body.toneMap ? 1 : 0) : null;
         const forceSdr = body.forceSdr === true ? 1 : 0;
         // 提前转码时长：分钟 → 毫秒。不传 / 非法值 / 0 / 负数 = 3 分钟（所有端统一默认）。
         // 2026-11-16 起取消「整片一次转完」：整片会话没有 `-t` 终点，响度归一
@@ -1126,6 +1187,10 @@ export const videoPlayer: ServerModule = {
             select * from player_sessions
              where item_id = ${body.id} and preset = ${preset} and codec = ${codec}
                and coalesce(audio_index, 0) = ${audioIndex}
+               and coalesce(audio_normalize, -1) = ${audioNormalize ?? -1}
+               and coalesce(audio_normalize_effective, -1) = ${audioNormalizeEffective}
+               and coalesce(audio_downmix, 0) = ${audioDownmix ?? 0}
+               and coalesce(tone_map, -1) = ${toneMap ?? -1}
                and coalesce(force_sdr, 0) = ${forceSdr}
                and coalesce(subtitle, '') = ${subtitle ?? ''}
                and coalesce(lead_ms, 0) = ${leadMs}
@@ -1156,12 +1221,32 @@ export const videoPlayer: ServerModule = {
         );
         await sql`
           insert into player_sessions
-            (id, item_id, preset, codec, subtitle, audio_normalize, audio_downmix,
-             audio_index, force_sdr, hdr_to_sdr, lead_ms, start_ms, status, created_at, updated_at)
+            (id, item_id, preset, codec, subtitle, audio_normalize,
+             audio_normalize_effective, audio_downmix, audio_index, tone_map,
+             force_sdr, hdr_to_sdr, lead_ms, start_ms, status, created_at, updated_at)
           values (${id}, ${body.id}, ${preset}, ${codec},
-                  ${subtitle}, ${audioNormalize}, ${audioDownmix},
-                  ${audioIndex}, ${forceSdr}, ${forceSdr}, ${leadMs}, ${startMs}, 'pending', ${ts}, ${ts})
+                  ${subtitle}, ${audioNormalize}, ${audioNormalizeEffective}, ${audioDownmix},
+                  ${audioIndex}, ${toneMap}, ${forceSdr}, ${forceSdr}, ${leadMs}, ${startMs},
+                  'pending', ${ts}, ${ts})
         `.execute(k.db);
+        k.log.info(
+          {
+            session: id,
+            item: body.id,
+            preset,
+            codec,
+            toneMap: toneMap == null ? 'legacy-auto' : toneMap === 1,
+            audioNormalize:
+              audioNormalize == null
+                ? 'inherit'
+                : audioNormalize === 1
+                  ? 'enabled'
+                  : 'disabled',
+            audioNormalizeEffective: audioNormalizeEffective === 1,
+            audioDownmix: audioDownmix === 1,
+          },
+          'player session created',
+        );
         // 旧流先不杀：等新会话首片落盘再收（新会话失败则保留旧流）
         if (handoff) {
           void cancelWhenReplacementReady(k, handoff, id).catch((err) =>

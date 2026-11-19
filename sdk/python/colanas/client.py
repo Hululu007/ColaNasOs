@@ -1308,7 +1308,7 @@ class ColanasClient:
         return self._request("POST", "/api/v1/security/ip/remove", params, "body")
 
     def sync_claim_legacy(self, **params):
-        """认领升级前的无主任务（uid 为空的同设备任务）"""
+        """迁移当前机器的旧同步任务到当前客户端标识"""
         return self._request("POST", "/api/v1/sync/device/claimLegacy", params, "body")
 
     def sync_conflicts(self, **params):
@@ -1368,7 +1368,7 @@ class ColanasClient:
         return self._request("POST", "/api/v1/sync/tasks/delete", params, "body")
 
     def sync_task_list(self, **params):
-        """同步任务列表（当前用户）"""
+        """同步任务列表（当前用户与当前机器）"""
         return self._request("GET", "/api/v1/sync/tasks", params, "query")
 
     def sync_task_upsert(self, **params):

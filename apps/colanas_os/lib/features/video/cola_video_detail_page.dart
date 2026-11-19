@@ -355,8 +355,15 @@ class VideoDetailPageState extends State<VideoDetailPage> {
 
     // 编码按**当前端的真实解码能力**回落，不按平台一刀切：
     // 浏览器只要 MSE 认这个 codec（Chrome 早就认 AV1 / HEVC），就该让它转这个编码。
+    final transcodeCodecs = playableTranscodeCodecs();
+    if (transcodeCodecs.isEmpty) {
+      _toast(tr('video.client.codecUnavailable'));
+      return;
+    }
     var codec = PlayPreferences.codec;
-    if (!codecPlayable(codec)) codec = 'h264';
+    if (!transcodeCodecs.any((c) => c.key == codec)) {
+      codec = defaultTranscodeCodec();
+    }
     // 档位按片源收敛：片源只有 720p 时，4K / 2K / 1080P 这些档根本转不出来，
     // 列在菜单里既选不动也误导（选 1080P 只是把 720p 放大再压一遍，纯浪费 CPU）。
     final sourceHeight = _item.height ?? 0;
@@ -380,7 +387,9 @@ class VideoDetailPageState extends State<VideoDetailPage> {
                   labelText: tr('video.transcode.preset'),
                 ),
                 items: [
-                  for (final p in presetsForSource(sourceHeight))
+                  for (final p in presetsForSource(
+                    sourceHeight,
+                  ).where((p) => !p.copy))
                     DropdownMenuItem(
                       value: p.key,
                       child: Text(p.labelFor(codec)),
@@ -395,7 +404,7 @@ class VideoDetailPageState extends State<VideoDetailPage> {
                   labelText: tr('video.transcode.codec'),
                 ),
                 items: [
-                  for (final c in playableCodecs())
+                  for (final c in transcodeCodecs)
                     DropdownMenuItem(value: c.key, child: Text(c.label)),
                 ],
                 onChanged: (v) => setLocal(() => codec = v ?? codec),
@@ -446,8 +455,9 @@ class VideoDetailPageState extends State<VideoDetailPage> {
           preset: preset,
           codec: codec,
           subtitle: subtitle,
-          // 客户端音频偏好：只有显式打开才带（null = 不传 = 跟随库级 audio_normalize）
-          audioNormalize: PlayPreferences.audioNormalize ? true : null,
+          // null 归一覆盖 = 跟随库级 audio_normalize。
+          toneMap: PlayPreferences.toneMap,
+          audioNormalize: PlayPreferences.audioNormalizeOverride,
           audioDownmix: PlayPreferences.audioDownmix ? true : null,
           // 详情页「转码」也要走同一份默认提前转码时长，不能漏传后由服务端兜底成别的档
           leadMinutes: PlayPreferences.leadMinutes,
@@ -1282,24 +1292,24 @@ class VideoDetailPageState extends State<VideoDetailPage> {
             onPressed: ids.isEmpty
                 ? null
                 : () => markVideos(
-                      context,
-                      ids,
-                      watched: true,
-                      count: ids.length,
-                      onChanged: () => _reloadEpisodes(),
-                    ),
+                    context,
+                    ids,
+                    watched: true,
+                    count: ids.length,
+                    onChanged: () => _reloadEpisodes(),
+                  ),
             child: Text(tr('video.action.markWatched')),
           ),
           TextButton(
             onPressed: ids.isEmpty
                 ? null
                 : () => markVideos(
-                      context,
-                      ids,
-                      watched: false,
-                      count: ids.length,
-                      onChanged: () => _reloadEpisodes(),
-                    ),
+                    context,
+                    ids,
+                    watched: false,
+                    count: ids.length,
+                    onChanged: () => _reloadEpisodes(),
+                  ),
             child: Text(tr('video.action.markUnwatched')),
           ),
           IconButton(

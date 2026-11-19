@@ -1,7 +1,9 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:nas_core/nas_core.dart';
 import 'package:nas_ui/nas_ui.dart';
+
 import '../../shell/app_nav_shell.dart';
 import '../../shell/app_widgets.dart';
 
@@ -44,8 +46,7 @@ class _SyncPageState extends State<SyncPage> {
     _searchCtrl.addListener(_onSearch);
     // 按需同步（每任务 realtime）依赖调度器的目录监听，进入页面即启动
     SyncScheduler.instance.start();
-    _initDevice();
-    _load();
+    unawaited(_initializeAndLoad());
   }
 
   @override
@@ -67,6 +68,11 @@ class _SyncPageState extends State<SyncPage> {
     if (mounted) setState(() {});
   }
 
+  Future<void> _initializeAndLoad() async {
+    await _initDevice();
+    await _load();
+  }
+
   Future<void> _initDevice() async {
     try {
       final id = await _engine.fs.resolveDeviceId();
@@ -76,27 +82,31 @@ class _SyncPageState extends State<SyncPage> {
         _deviceId = id;
         _deviceName = name;
       });
-      await _claimLegacy(id);
+      await _claimMachineTasks(id);
     } catch (_) {
       // 设备标识解析失败不阻断页面：创建任务时再兜底
     }
   }
 
-  /// 升级用户的旧任务（uid 为空）归到当前账号；失败不影响页面
-  Future<void> _claimLegacy(String deviceId) async {
-    if (deviceId.isEmpty || !_engine.fs.canSync) return;
+  /// 将当前机器的旧客户端任务迁到统一机器 ID；失败不阻断列表加载
+  Future<void> _claimMachineTasks(String deviceId) async {
+    if (deviceId.isEmpty ||
+        !_engine.fs.canSync ||
+        ColanasClientId.value != deviceId) {
+      return;
+    }
     try {
-      final res = await ApiSession.instance.client.syncClaimLegacy(
+      await ApiSession.instance.client.syncClaimLegacy(
         body: <String, dynamic>{'deviceId': deviceId},
       );
-      final claimed = (res['claimed'] as num?)?.toInt() ?? 0;
-      if (claimed > 0 && mounted) await _load();
-    } catch (_) {
-      // 老服务端没有该接口 / 无权限：忽略
+    } catch (e) {
+      // 老服务端没有迁移接口时仍可加载当前 clientId 下的任务。
+      debugPrint('[sync] claim machine tasks failed: $e');
     }
   }
 
   Future<void> _load() async {
+    if (!mounted) return;
     setState(() {
       _loading = true;
       _error = null;
@@ -156,9 +166,7 @@ class _SyncPageState extends State<SyncPage> {
     );
     if (ok != true) return;
     try {
-      await ApiSession.instance.client.syncTaskDelete(
-        body: {'id': task.id},
-      );
+      await ApiSession.instance.client.syncTaskDelete(body: {'id': task.id});
       await _load();
     } catch (e) {
       if (!mounted) return;
@@ -170,19 +178,21 @@ class _SyncPageState extends State<SyncPage> {
     final messenger = ScaffoldMessenger.of(context);
     final result = await _engine.run(task);
     if (!mounted) return;
-    NasSnack.showOn(messenger, 
-          result.ok
-              ? tr('sync.run.ok', {
-                  'up': result.uploaded,
-                  'down': result.downloaded,
-                  'del': result.deleted,
-                  'skip': result.skipped,
-                })
-              : tr('sync.run.failed', {
-                  'error': result.error ??
-                      (result.errors.isEmpty ? '' : result.errors.first),
-                }),
-        );
+    NasSnack.showOn(
+      messenger,
+      result.ok
+          ? tr('sync.run.ok', {
+              'up': result.uploaded,
+              'down': result.downloaded,
+              'del': result.deleted,
+              'skip': result.skipped,
+            })
+          : tr('sync.run.failed', {
+              'error':
+                  result.error ??
+                  (result.errors.isEmpty ? '' : result.errors.first),
+            }),
+    );
     await _load();
   }
 

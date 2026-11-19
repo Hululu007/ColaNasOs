@@ -2344,7 +2344,7 @@ RSS 自动下载规则（按账号隔离） · `rssRuleList`
 
 #### `POST /api/v1/sync/device/claimLegacy`
 
-认领升级前的无主任务（uid 为空的同设备任务） · `syncClaimLegacy`
+迁移当前机器的旧同步任务到当前客户端标识 · `syncClaimLegacy`
 
 - 请求体：`deviceId` string · **必填**
 - 响应：200 object
@@ -2419,7 +2419,7 @@ RSS 自动下载规则（按账号隔离） · `rssRuleList`
 
 #### `GET /api/v1/sync/tasks`
 
-同步任务列表（当前用户） · `syncTaskList`
+同步任务列表（当前用户与当前机器） · `syncTaskList`
 
 - 响应：200 object
 

@@ -40,17 +40,9 @@ export function makeSyncHelpers(k: KernelApi) {
         await sql<SyncTaskRow>`
           select * from sync_tasks
            where id = ${id} and uid = ${uidOf(req)}
-             and (client_id = ${cid} or client_id = '')
+             and client_id = ${cid}
         `.execute(k.db)
       ).rows;
-      if (rows[0] && !rows[0].client_id && cid) {
-        // 老任务没有 client_id：谁先碰到就归谁（一次性认领），
-        // 之后别的机器上的同账号就看不到它了。
-        await sql`
-          update sync_tasks set client_id = ${cid} where id = ${id} and client_id = ''
-        `.execute(k.db);
-        rows[0].client_id = cid;
-      }
       return rows[0] ?? null;
     };
   return { now, roots, uidOf, clientIdOf, loadTask };

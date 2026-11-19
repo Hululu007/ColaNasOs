@@ -476,6 +476,7 @@ process.chdir(root);
           });
           const rNorm = await inject('POST', '/api/v1/player/sessions', admin, {
             id: itemId,
+            toneMap: false,
           });
           const idNorm = rNorm.json().id;
           let jobNorm = null;
@@ -489,6 +490,18 @@ process.chdir(root);
             'session_audio_normalize',
             Boolean(jobNorm) && jobNorm.status === 'done',
             `status=${jobNorm && jobNorm.status} err=${jobNorm && jobNorm.error}`,
+          );
+          check(
+            'session_audio_normalize_inherit_metadata',
+            jobNorm &&
+              jobNorm.audioNormalize === null &&
+              jobNorm.audioNormalizeEffective === true &&
+              jobNorm.toneMap === false,
+            JSON.stringify({
+              audioNormalize: jobNorm && jobNorm.audioNormalize,
+              effective: jobNorm && jobNorm.audioNormalizeEffective,
+              toneMap: jobNorm && jobNorm.toneMap,
+            }),
           );
           // 响度归一（dynaudnorm）会先扣住音频：在整片模式（无 `-t`）下曾经导致
           // **前两片只有视频、音频从 0 重来** → 浏览器播到 7 秒卡死、buffered 从 7.5 起。
@@ -505,6 +518,131 @@ process.chdir(root);
               : -1;
             check('h264_normalize_first_seg_av', tfdtN === 2, `tfdt数=${tfdtN} seg=${segN}`);
           }
+          const demoRows = await sql`
+            select id from video_items where rel_path like ${'%demo.mp4'} limit 1
+          `.execute(k.db);
+          const demoId = (demoRows.rows[0] || {}).id;
+          if (demoId) {
+            const rCopyAudio = await inject('POST', '/api/v1/player/sessions', admin, {
+              id: demoId,
+              preset: 'original',
+              codec: 'h264',
+              audioNormalize: true,
+              audioDownmix: false,
+              toneMap: false,
+            });
+            const idCopyAudio = rCopyAudio.json().id;
+            let jobCopyAudio = null;
+            for (let i = 0; i < 120; i += 1) {
+              const q = await inject(
+                'GET',
+                '/api/v1/player/sessions?id=' + idCopyAudio,
+                admin,
+              );
+              jobCopyAudio = q.json();
+              if (jobCopyAudio.status === 'done' || jobCopyAudio.status === 'failed') break;
+              await new Promise((res) => setTimeout(res, 300));
+            }
+            const argsPath = path.join(
+              dataDir,
+              'hls',
+              idCopyAudio,
+              'p0',
+              '.ffmpeg-args.json',
+            );
+            let copyArgs = null;
+            try {
+              copyArgs = JSON.parse(fs.readFileSync(argsPath, 'utf8'));
+            } catch {
+              /* failed or not yet produced */
+            }
+            const args = (copyArgs && copyArgs.args) || [];
+            check(
+              'session_original_audio_normalize_copy_video',
+              jobCopyAudio &&
+                jobCopyAudio.status === 'done' &&
+                copyArgs &&
+                copyArgs.copyVideo === true &&
+                args.includes('-c:v') &&
+                args[args.indexOf('-c:v') + 1] === 'copy' &&
+                args.includes('-af') &&
+                args[args.indexOf('-af') + 1].includes('dynaudnorm') &&
+                args[args.indexOf('-c:a') + 1] === 'aac',
+              `status=${jobCopyAudio && jobCopyAudio.status} ` +
+                `videoCopy=${copyArgs && copyArgs.copyVideo} args=${args.join(' ')}`,
+            );
+            if (jobCopyAudio && jobCopyAudio.status === 'done') {
+              const plCopyAudio = await inject('GET', jobCopyAudio.url);
+              const lines = String(plCopyAudio.body).split('\n');
+              const segment = lines.find((line) => line && !line.startsWith('#'));
+              const durations = [...String(plCopyAudio.body).matchAll(/#EXTINF:([\d.]+)/g)]
+                .map((match) => Number(match[1]));
+              const segCopyAudio = await inject(
+                'GET',
+                `/api/v1/player/hls/${idCopyAudio}/${segment}`,
+              );
+              const rawCopyAudio = segCopyAudio.rawPayload;
+              const tfdtCount = Buffer.isBuffer(rawCopyAudio)
+                ? rawCopyAudio.toString('latin1').split('tfdt').length - 1
+                : -1;
+              check(
+                'session_original_audio_playlist_timeline',
+                plCopyAudio.statusCode === 200 &&
+                  durations.length > 0 &&
+                  durations.every((duration) => duration > 0) &&
+                  tfdtCount === 2,
+                `status=${plCopyAudio.statusCode} durations=${durations.join(',')} ` +
+                  `tfdt=${tfdtCount}`,
+              );
+            }
+          }
+          const rOff = await inject('POST', '/api/v1/player/sessions', admin, {
+            id: itemId,
+            audioNormalize: false,
+            toneMap: false,
+          });
+          const jobOff = await inject(
+            'GET',
+            '/api/v1/player/sessions?id=' + rOff.json().id,
+            admin,
+          );
+          const rOffAgain = await inject('POST', '/api/v1/player/sessions', admin, {
+            id: itemId,
+            audioNormalize: false,
+            toneMap: false,
+          });
+          check(
+            'session_audio_override_fingerprint',
+            rOff.json().id !== idNorm &&
+              rOffAgain.json().id === rOff.json().id &&
+              jobOff.json().audioNormalize === false &&
+              jobOff.json().audioNormalizeEffective === false,
+            `inherit=${idNorm} forcedOff=${rOff.json().id}/${rOffAgain.json().id} ` +
+              `effective=${jobOff.json().audioNormalizeEffective}`,
+          );
+
+          const rTone = await inject('POST', '/api/v1/player/sessions', admin, {
+            id: itemId,
+            audioNormalize: false,
+            toneMap: true,
+          });
+          const toneId = rTone.json().id;
+          let jobTone = null;
+          for (let i = 0; i < 120; i += 1) {
+            const q = await inject('GET', '/api/v1/player/sessions?id=' + toneId, admin);
+            jobTone = q.json();
+            if (jobTone.status === 'done' || jobTone.status === 'failed') break;
+            await new Promise((res) => setTimeout(res, 300));
+          }
+          check(
+            'session_tonemap_skips_sdr',
+            jobTone &&
+              jobTone.status === 'done' &&
+              jobTone.toneMap === true &&
+              jobTone.hdrToSdr === false,
+            `status=${jobTone && jobTone.status} requested=${jobTone && jobTone.toneMap} ` +
+              `applied=${jobTone && jobTone.hdrToSdr}`,
+          );
           await inject('POST', '/api/v1/video/libraries/flags', admin, {
             id: libId,
             audioNormalize: false,

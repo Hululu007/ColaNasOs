@@ -38,11 +38,16 @@ class _TvProfileSectionState extends State<TvProfileSection> {
     return saved.isEmpty ? '-' : saved;
   }
 
-  /// 当前生效的默认档位：TV 没存过时是原画（与服务端 / 播放器同口径）。
-  String get _preset => PlayPreferences.savedPreset ?? 'original';
+  /// 当前生效的默认转码画质；原码策略不受这个档位影响。
+  String get _preset => PlayPreferences.savedPreset ?? PlayPreferences.preset;
 
   String get _presetLabel =>
-      playQualityPresetOf(_preset)?.labelFor(PlayPreferences.codec) ?? _preset;
+      playQualityPresetOf(_preset)?.labelFor(
+        PlayPreferences.codec == 'original'
+            ? defaultTranscodeCodec()
+            : PlayPreferences.codec,
+      ) ??
+      _preset;
 
   String get _codecLabel =>
       playCodecOf(PlayPreferences.codec)?.label ?? PlayPreferences.codec;
@@ -74,10 +79,14 @@ class _TvProfileSectionState extends State<TvProfileSection> {
       hint: tr('tv.profile.defaultPresetHint'),
       columns: 3,
       items: [
-        for (final p in playQualityPresets)
+        for (final p in playQualityPresets.where((p) => !p.copy))
           TvOptionItem(
             value: p.key,
-            label: p.labelFor(PlayPreferences.codec),
+            label: p.labelFor(
+              PlayPreferences.codec == 'original'
+                  ? defaultTranscodeCodec()
+                  : PlayPreferences.codec,
+            ),
             selected: _preset == p.key,
           ),
       ],
@@ -98,7 +107,7 @@ class _TvProfileSectionState extends State<TvProfileSection> {
           TvOptionItem(
             value: c.key,
             label: c.label,
-            subtitle: c.container.toUpperCase(),
+            subtitle: c.transcode ? c.container.toUpperCase() : '',
             selected: PlayPreferences.codec == c.key,
           ),
       ],

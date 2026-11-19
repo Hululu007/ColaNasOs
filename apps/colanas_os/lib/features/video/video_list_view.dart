@@ -84,8 +84,17 @@ class _VideoListViewState extends State<VideoListView> {
   String _q = '';
   int _total = 0;
   int _scraped = 0;
+
   /// itemId → 0..1 进度（继续观看画在卡片顶部）
   Map<String, double> _progress = const {};
+
+  String get _scrollStorageKey => [
+    'video.list',
+    widget.libraryId ?? 'all',
+    widget.jp ? 'jp' : 'regular',
+    widget.initialActor ?? '',
+    widget.initialDirector ?? '',
+  ].join('.');
 
   String _sortBy = 'name';
   String _sortOrder = 'asc';
@@ -191,7 +200,9 @@ class _VideoListViewState extends State<VideoListView> {
         director: widget.initialDirector,
         flag: widget.initialFlag,
         watched: _watched == null ? null : (_watched! ? 'true' : 'false'),
-        scraped: _scrapedFilter == null ? null : (_scrapedFilter! ? 'true' : 'false'),
+        scraped: _scrapedFilter == null
+            ? null
+            : (_scrapedFilter! ? 'true' : 'false'),
         resolution: _resolution.isEmpty ? null : _resolution,
         jpTag: _jpTag.isEmpty ? null : _jpTag,
         sourceId: _sourceId.isEmpty ? null : _sourceId,
@@ -290,8 +301,14 @@ class _VideoListViewState extends State<VideoListView> {
         title: Text(tr('video.home.scrapeAll')),
         content: Text(tr('video.scrape.batchConfirm', {'count': '$count'})),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(tr('common.cancel'))),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: Text(tr('common.ok'))),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(tr('common.cancel')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(tr('common.ok')),
+          ),
         ],
       ),
     );
@@ -339,7 +356,8 @@ class _VideoListViewState extends State<VideoListView> {
       child: LayoutBuilder(
         builder: (context, constraints) {
           final compact = constraints.maxWidth < 520;
-          final hasFilter = _years.isNotEmpty ||
+          final hasFilter =
+              _years.isNotEmpty ||
               _genres.isNotEmpty ||
               _regions.isNotEmpty ||
               _watched != null ||
@@ -458,7 +476,12 @@ class _VideoListViewState extends State<VideoListView> {
                 ],
               ),
               if (_selectionMode)
-                _iconBtn(context, Icons.close, tr('common.cancel'), _selection.exit),
+                _iconBtn(
+                  context,
+                  Icons.close,
+                  tr('common.cancel'),
+                  _selection.exit,
+                ),
             ],
           );
         },
@@ -480,7 +503,9 @@ class _VideoListViewState extends State<VideoListView> {
       iconSize: 19,
       visualDensity: VisualDensity.compact,
       style: active
-          ? IconButton.styleFrom(backgroundColor: scheme.primary.withValues(alpha: 0.14))
+          ? IconButton.styleFrom(
+              backgroundColor: scheme.primary.withValues(alpha: 0.14),
+            )
           : null,
       icon: Icon(icon, color: active ? scheme.primary : null),
     );
@@ -506,7 +531,9 @@ class _VideoListViewState extends State<VideoListView> {
     if (pending != null) return pending;
     final fut = () async {
       try {
-        final f = await ApiSession.instance.client.videoFacets(libraryId: widget.libraryId);
+        final f = await ApiSession.instance.client.videoFacets(
+          libraryId: widget.libraryId,
+        );
         if (mounted) setState(() => _facets = f);
         return f;
       } catch (_) {
@@ -551,7 +578,10 @@ class _VideoListViewState extends State<VideoListView> {
               ListTile(
                 dense: true,
                 leading: (_sortBy == by && _sortOrder == order)
-                    ? Icon(Icons.check, color: Theme.of(ctx).colorScheme.primary)
+                    ? Icon(
+                        Icons.check,
+                        color: Theme.of(ctx).colorScheme.primary,
+                      )
                     : const SizedBox(width: 24),
                 title: Text(tr(label)),
                 onTap: () => Navigator.pop(ctx, (by, order)),
@@ -629,7 +659,10 @@ class _VideoListViewState extends State<VideoListView> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(label, style: const TextStyle(fontWeight: FontWeight.w600)),
+                      Text(
+                        label,
+                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      ),
                       const SizedBox(height: 6),
                       Wrap(
                         spacing: 8,
@@ -642,7 +675,9 @@ class _VideoListViewState extends State<VideoListView> {
                           ),
                           for (final v in list)
                             NasChip(
-                              label: Text(labelBuilder == null ? v : labelBuilder(v)),
+                              label: Text(
+                                labelBuilder == null ? v : labelBuilder(v),
+                              ),
                               selected: target.contains(v),
                               onSelected: (on) => setLocal(() {
                                 if (on) {
@@ -685,8 +720,10 @@ class _VideoListViewState extends State<VideoListView> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(label,
-                          style: const TextStyle(fontWeight: FontWeight.w600)),
+                      Text(
+                        label,
+                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      ),
                       const SizedBox(height: 6),
                       Wrap(
                         spacing: 8,
@@ -730,8 +767,10 @@ class _VideoListViewState extends State<VideoListView> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(label,
-                          style: const TextStyle(fontWeight: FontWeight.w600)),
+                      Text(
+                        label,
+                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      ),
                       const SizedBox(height: 6),
                       Wrap(
                         spacing: 8,
@@ -796,24 +835,40 @@ class _VideoListViewState extends State<VideoListView> {
                     // 普通库大多只有分辨率：没数据的维度不摆出来，免得面板里
                     // 一水儿的「暂无可选项」。已选中的值要兜底显示，方便清掉。
                     if (resOpts.isNotEmpty || _resolution.isNotEmpty)
-                      facetChips(tr('video.filter.resolution'), resOpts,
-                          _resolution, (v) => _resolution = v),
+                      facetChips(
+                        tr('video.filter.resolution'),
+                        resOpts,
+                        _resolution,
+                        (v) => _resolution = v,
+                      ),
                     if (tagOpts.isNotEmpty || _jpTag.isNotEmpty)
-                      facetChips(tr('video.filter.tag'), tagOpts, _jpTag,
-                          (v) => _jpTag = v),
+                      facetChips(
+                        tr('video.filter.tag'),
+                        tagOpts,
+                        _jpTag,
+                        (v) => _jpTag = v,
+                      ),
                     if (sourceOpts.length > 1 || _sourceId.isNotEmpty)
-                      facetChips(tr('video.filter.source'), sourceOpts, _sourceId,
-                          (v) => _sourceId = v),
+                      facetChips(
+                        tr('video.filter.source'),
+                        sourceOpts,
+                        _sourceId,
+                        (v) => _sourceId = v,
+                      ),
                     // 普通库的「类型」由下面通用 chips 管（可多选）；
                     // 日本库的题材是单选，且口径要跟演员页一致，才单独列一组。
                     if (widget.jp &&
                         (genreOpts.isNotEmpty || _jpGenre.isNotEmpty))
-                      facetChips(tr('video.filter.genre'), genreOpts, _jpGenre,
-                          (v) {
-                        _genres
-                          ..clear()
-                          ..addAll(v.isEmpty ? const <String>[] : [v]);
-                      }),
+                      facetChips(
+                        tr('video.filter.genre'),
+                        genreOpts,
+                        _jpGenre,
+                        (v) {
+                          _genres
+                            ..clear()
+                            ..addAll(v.isEmpty ? const <String>[] : [v]);
+                        },
+                      ),
                     const SizedBox(height: NasTokens.spaceXs),
                   ],
                 );
@@ -836,7 +891,9 @@ class _VideoListViewState extends State<VideoListView> {
                         genres.isEmpty &&
                         regions.isEmpty)
                       Padding(
-                        padding: const EdgeInsets.only(bottom: NasTokens.spaceSm),
+                        padding: const EdgeInsets.only(
+                          bottom: NasTokens.spaceSm,
+                        ),
                         child: Text(
                           tr('video.list.filter.empty'),
                           style: TextStyle(
@@ -845,16 +902,20 @@ class _VideoListViewState extends State<VideoListView> {
                           ),
                         ),
                       ),
-                    chips(tr('video.list.filter.years'), yearsSorted, _years,
-                        emptyLabel: tr('video.list.filter.noYear')),
+                    chips(
+                      tr('video.list.filter.years'),
+                      yearsSorted,
+                      _years,
+                      emptyLabel: tr('video.list.filter.noYear'),
+                    ),
                     // 日本库的「类型」由顶栏那一行（按数量排序的前 30 个题材）负责，
                     // 这里再放一份 200 条样本抽出来的类型列表只会互相打架。
                     if (!widget.jp)
                       chips(
                         tr('video.list.filter.genres'),
-                        genres.toList()
-                          ..sort((a, b) =>
-                              genreLabel(a).compareTo(genreLabel(b))),
+                        genres.toList()..sort(
+                          (a, b) => genreLabel(a).compareTo(genreLabel(b)),
+                        ),
                         _genres,
                         labelBuilder: genreLabel,
                       ),
@@ -870,22 +931,27 @@ class _VideoListViewState extends State<VideoListView> {
                         NasChip(
                           label: Text(tr('video.list.filter.scraped')),
                           selected: _scrapedFilter == true,
-                          onSelected: (on) => setLocal(() => _scrapedFilter = on ? true : null),
+                          onSelected: (on) =>
+                              setLocal(() => _scrapedFilter = on ? true : null),
                         ),
                         NasChip(
                           label: Text(tr('video.list.filter.unscraped')),
                           selected: _scrapedFilter == false,
-                          onSelected: (on) => setLocal(() => _scrapedFilter = on ? false : null),
+                          onSelected: (on) => setLocal(
+                            () => _scrapedFilter = on ? false : null,
+                          ),
                         ),
                         NasChip(
                           label: Text(tr('video.list.filter.watched')),
                           selected: _watched == true,
-                          onSelected: (on) => setLocal(() => _watched = on ? true : null),
+                          onSelected: (on) =>
+                              setLocal(() => _watched = on ? true : null),
                         ),
                         NasChip(
                           label: Text(tr('video.list.filter.unwatched')),
                           selected: _watched == false,
-                          onSelected: (on) => setLocal(() => _watched = on ? false : null),
+                          onSelected: (on) =>
+                              setLocal(() => _watched = on ? false : null),
                         ),
                       ],
                     ),
@@ -979,7 +1045,10 @@ class _VideoListViewState extends State<VideoListView> {
                             tr('video.list.posterSize'),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                            style: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
                         ),
                         Text(
@@ -998,7 +1067,10 @@ class _VideoListViewState extends State<VideoListView> {
                             padding: const EdgeInsets.symmetric(horizontal: 8),
                             tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                           ),
-                          child: Text(tr('video.list.reset'), style: const TextStyle(fontSize: 12)),
+                          child: Text(
+                            tr('video.list.reset'),
+                            style: const TextStyle(fontSize: 12),
+                          ),
                         ),
                       ],
                     ),
@@ -1006,13 +1078,18 @@ class _VideoListViewState extends State<VideoListView> {
                     Expanded(
                       child: Row(
                         children: [
-                          Icon(Icons.photo_size_select_small,
-                              size: 18, color: Theme.of(ctx).colorScheme.onSurfaceVariant),
+                          Icon(
+                            Icons.photo_size_select_small,
+                            size: 18,
+                            color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                          ),
                           Expanded(
                             child: SliderTheme(
                               data: SliderTheme.of(ctx).copyWith(
                                 trackHeight: 3,
-                                overlayShape: const RoundSliderOverlayShape(overlayRadius: 12),
+                                overlayShape: const RoundSliderOverlayShape(
+                                  overlayRadius: 12,
+                                ),
                               ),
                               child: Slider(
                                 value: value,
@@ -1024,8 +1101,11 @@ class _VideoListViewState extends State<VideoListView> {
                               ),
                             ),
                           ),
-                          Icon(Icons.photo_size_select_large,
-                              size: 18, color: Theme.of(ctx).colorScheme.onSurfaceVariant),
+                          Icon(
+                            Icons.photo_size_select_large,
+                            size: 18,
+                            color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                          ),
                         ],
                       ),
                     ),
@@ -1076,15 +1156,20 @@ class _VideoListViewState extends State<VideoListView> {
         // 横版剧照（3:2）：**保持和竖版一样的格子高度**，靠变宽来换行数变少。
         // 之前两种模式都按「宽度优先」算列数，横版格子只有竖版的 2/3 高，
         // 一按「横版剧照」卡片反而变小、看不清 —— 这与用户预期正好相反。
-        final targetWidth = _fanart ? (posterTileHeight - textBlock) * (3 / 2) : baseWidth;
+        final targetWidth = _fanart
+            ? (posterTileHeight - textBlock) * (3 / 2)
+            : baseWidth;
 
         final columns = (maxWidth / targetWidth).floor().clamp(2, 9);
-        final itemWidth = ((maxWidth - spacing * (columns - 1) - spacing) / columns).floorToDouble();
+        final itemWidth =
+            ((maxWidth - spacing * (columns - 1) - spacing) / columns)
+                .floorToDouble();
         // 关键：图片区按真实比例预留，再加标题两行的高度。
         // 写死 0.72 会导致 2:3 海报被 BoxFit.cover 上下裁掉一截。
         final imageHeight = _fanart ? itemWidth / (3 / 2) : itemWidth * 1.5;
         final tileHeight = imageHeight + textBlock;
         return GridView.builder(
+          key: PageStorageKey<String>(_scrollStorageKey),
           controller: _scroll,
           padding: EdgeInsets.all(spacing),
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
@@ -1101,20 +1186,20 @@ class _VideoListViewState extends State<VideoListView> {
             return NasContextMenuRegion(
               entries: _videoMenuEntries(item),
               child: VideoPosterCard(
-              item: item,
-              width: itemWidth,
-              showFanart: _fanart,
-              progress: p[item.id],
-              selectionMode: _selectionMode,
-              selected: selected,
-              onTap: () {
-                if (_selectionMode) {
-                  _selection.toggle(item.id);
-                  return;
-                }
-                openVideoDetail(context, item);
-              },
-              onMore: () => _showCardMenu(item),
+                item: item,
+                width: itemWidth,
+                showFanart: _fanart,
+                progress: p[item.id],
+                selectionMode: _selectionMode,
+                selected: selected,
+                onTap: () {
+                  if (_selectionMode) {
+                    _selection.toggle(item.id);
+                    return;
+                  }
+                  openVideoDetail(context, item);
+                },
+                onMore: () => _showCardMenu(item),
               ),
             );
           },
@@ -1134,13 +1219,16 @@ class _VideoListViewState extends State<VideoListView> {
           shrinkWrap: true,
           children: [
             ListTile(
-              leading: Icon(item.watched ? Icons.remove_done : Icons.done_all, size: 22),
+              leading: Icon(
+                item.watched ? Icons.remove_done : Icons.done_all,
+                size: 22,
+              ),
               title: Text(
                 item.watched
                     ? tr('video.action.markUnwatched')
                     : (item.series != null
-                        ? tr('video.action.markTvWatched')
-                        : tr('video.action.markWatched')),
+                          ? tr('video.action.markTvWatched')
+                          : tr('video.action.markWatched')),
               ),
               onTap: () => Navigator.pop(ctx, 'watched'),
             ),
@@ -1221,9 +1309,7 @@ class _VideoListViewState extends State<VideoListView> {
         // 「下载到本机」：公共下载弹窗（分辨率 / 编码 / 字幕可选）。
         label: tr('video.offline.dialogTitle'),
         icon: Icons.download_outlined,
-        onSelected: () => unawaited(
-          openOfflineDownloadDialog(context, item),
-        ),
+        onSelected: () => unawaited(openOfflineDownloadDialog(context, item)),
       ),
     const NasMenuEntry.divider(),
     NasMenuEntry(
@@ -1328,10 +1414,8 @@ class _VideoListViewState extends State<VideoListView> {
           label: tr('video.collection.addTo'),
           icon: Icons.playlist_add,
           enabled: !empty,
-          onPressed: () => showAddToCollectionDialog(
-            context,
-            itemIds: _selected.toList(),
-          ),
+          onPressed: () =>
+              showAddToCollectionDialog(context, itemIds: _selected.toList()),
         ),
         NasSelectionAction(
           label: tr('video.action.markWatched'),
@@ -1360,20 +1444,20 @@ class _VideoListViewState extends State<VideoListView> {
           child: _loading
               ? const NasLoading()
               : _error != null
-                  ? NasErrorState(message: _error!, onRetry: () => _load())
-                  : _items.isEmpty
-                      ? ListView(
-                          children: [
-                            NasEmptyState(
-                              title: tr('common.empty'),
-                              icon: Icons.movie_outlined,
-                            ),
-                          ],
-                        )
-                      : RefreshIndicator(
-                          onRefresh: () => _load(),
-                          child: _grid(context),
-                        ),
+              ? NasErrorState(message: _error!, onRetry: () => _load())
+              : _items.isEmpty
+              ? ListView(
+                  children: [
+                    NasEmptyState(
+                      title: tr('common.empty'),
+                      icon: Icons.movie_outlined,
+                    ),
+                  ],
+                )
+              : RefreshIndicator(
+                  onRefresh: () => _load(),
+                  child: _grid(context),
+                ),
         ),
         if (_loadingMore)
           const Padding(
@@ -1459,7 +1543,6 @@ Future<void> openVideoListByPerson(
     );
     return Future<void>.value();
   }
-  return Navigator.of(context).push(
-    MaterialPageRoute<void>(builder: (_) => build(embedded: false)),
-  );
+  return Navigator.of(context)
+      .push(MaterialPageRoute<void>(builder: (_) => build(embedded: false)));
 }

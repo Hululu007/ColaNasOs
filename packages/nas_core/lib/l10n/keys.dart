@@ -1657,10 +1657,13 @@ class I18nKeys {
   static const playerAudioCodec = 'player.audioCodec';
   static const playerAudioDownmix = 'player.audioDownmix';
   static const playerAudioNormalize = 'player.audioNormalize';
+  static const playerToneMapRequiresTranscode = 'player.toneMapRequiresTranscode';
   static const playerAudioTrack = 'player.audioTrack';
   static const playerBack = 'player.back';
   static const playerBitrate = 'player.bitrate';
   static const playerCodecFallback = 'player.codecFallback';
+  static const playerCodecFallbackBlocked = 'player.codecFallbackBlocked';
+  static const playerCodecFallbackOriginal = 'player.codecFallbackOriginal';
   static const playerCodecHintDirect = 'player.codecHintDirect';
   static const playerWebTranscode = 'player.webTranscode';
   static const playerCodecToTranscode = 'player.codecToTranscode';
@@ -1699,6 +1702,8 @@ class I18nKeys {
   static const playerPause = 'player.pause';
   static const playerPlay = 'player.play';
   static const playerPlayFailed = 'player.playFailed';
+  static const playerOriginalAlsoUnsupported = 'player.originalAlsoUnsupported';
+  static const playerOriginalPlaybackFailed = 'player.originalPlaybackFailed';
   static const playerPlaybackSource = 'player.playbackSource';
   static const playerPlaylist = 'player.playlist';
   static const playerPreparing = 'player.preparing';
@@ -1728,6 +1733,8 @@ class I18nKeys {
   static const playerSeekingTarget = 'player.seekingTarget';
   static const playerSettings = 'player.settings';
   static const playerSourceDirect = 'player.sourceDirect';
+  static const playerSourceAudioProcessed = 'player.sourceAudioProcessed';
+  static const playerSourceAudioOriginal = 'player.sourceAudioOriginal';
   static const playerSourceTranscode = 'player.sourceTranscode';
   static const playerSpeed = 'player.speed';
   static const playerSpeedBoost = 'player.speedBoost';
@@ -2519,6 +2526,9 @@ class I18nKeys {
   static const videoCardWatched = 'video.card.watched';
   static const videoClientAudioNormalize = 'video.client.audioNormalize';
   static const videoClientAudioNormalizeHint = 'video.client.audioNormalizeHint';
+  static const videoClientAudioNormalizeInherit = 'video.client.audioNormalizeInherit';
+  static const videoClientAudioNormalizeForceOn = 'video.client.audioNormalizeForceOn';
+  static const videoClientAudioNormalizeForceOff = 'video.client.audioNormalizeForceOff';
   static const videoClientBitrateNow = 'video.client.bitrateNow';
   static const videoClientCodec = 'video.client.codec';
   static const videoClientCodecHint = 'video.client.codecHint';
@@ -2534,6 +2544,8 @@ class I18nKeys {
   static const videoClientLocalOnly = 'video.client.localOnly';
   static const videoClientPlayQuality = 'video.client.playQuality';
   static const videoClientPlayQualityHint = 'video.client.playQualityHint';
+  static const videoClientToneMap = 'video.client.toneMap';
+  static const videoClientToneMapHint = 'video.client.toneMapHint';
   static const videoCollectionAddTo = 'video.collection.addTo';
   static const videoCollectionAdded = 'video.collection.added';
   static const videoCollectionContinuePlay = 'video.collection.continuePlay';
@@ -2692,6 +2704,7 @@ class I18nKeys {
   static const videoJpFanart = 'video.jp.fanart';
   static const videoJpFavorite = 'video.jp.favorite';
   static const videoJpFavorites = 'video.jp.favorites';
+  static const videoJpFilterActiveCount = 'video.jp.filterActiveCount';
   static const videoJpHeight = 'video.jp.height';
   static const videoJpHips = 'video.jp.hips';
   static const videoJpInLibrary = 'video.jp.inLibrary';
@@ -2714,6 +2727,12 @@ class I18nKeys {
   static const videoJpWaist = 'video.jp.waist';
   static const videoJpWeekly = 'video.jp.weekly';
   static const videoJpWorks = 'video.jp.works';
+  static const videoJpWorksSort = 'video.jp.worksSort';
+  static const videoJpWorksSortRating = 'video.jp.worksSortRating';
+  static const videoJpWorksSortSmart = 'video.jp.worksSortSmart';
+  static const videoJpWorksSortTitle = 'video.jp.worksSortTitle';
+  static const videoJpWorksSortUnwatched = 'video.jp.worksSortUnwatched';
+  static const videoJpWorksSortYear = 'video.jp.worksSortYear';
   static const videoLibSummary = 'video.libSummary';
   static const videoLibraryAdd = 'video.library.add';
   static const videoLibraryAddSource = 'video.library.addSource';
@@ -3100,4 +3119,4 @@ class I18nKeys {
 }
 
 /// 契约键总数（生成时确定），供完整性自检使用。
-const int i18nKeyCount = 3049;
+const int i18nKeyCount = 3068;

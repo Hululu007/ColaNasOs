@@ -14,19 +14,19 @@ import 'offline/offline_preferences.dart';
 ///   - 影视设置 = 服务端级（TMDB、字幕抓取、所有客户端共享）
 ///   - 客户端设置 = 播放偏好（画质 / 编码 / 音频），存本地，不写库
 ///
-/// 音频两项是「覆盖」语义：关 = 不传参数 = 跟随库级 `audio_normalize` 开关，
-/// 打开才在本次会话强制生效。默认值与改动前完全一致。
+/// 响度归一可跟随库级设置，也可在客户端强制开启或关闭。
 ///
-/// 编码一项只列出**当前设备真能解**的编码。以前是按平台一刀切
+/// 编码一项只列出**当前设备真能解**的用户策略。以前是按平台一刀切
 /// （浏览器一律只剩 H.264），理由是「hls.js 建不出 AV1 / HEVC 的 SourceBuffer」——
 /// 2026-11-05 用真 Chrome + hls.js 1.4.10 复测推翻了这个前提，改成问
 /// `MediaSource.isTypeSupported`：浏览器说能解就给选，说不能解就不列。
-/// 已存的偏好若在本机解不了，**只影响显示**（回落成 H.264），不改写用户存的值。
+/// H.264 只作为内部兼容编码，不在用户选项中显示。
 class VideoClientSettingsPage extends StatefulWidget {
   const VideoClientSettingsPage({super.key});
 
   @override
-  State<VideoClientSettingsPage> createState() => _VideoClientSettingsPageState();
+  State<VideoClientSettingsPage> createState() =>
+      _VideoClientSettingsPageState();
 }
 
 class _VideoClientSettingsPageState extends State<VideoClientSettingsPage> {
@@ -39,14 +39,18 @@ class _VideoClientSettingsPageState extends State<VideoClientSettingsPage> {
 
   late String _preset = PlayPreferences.preset;
 
-  /// 存的值在本机解不出来时显示成 H.264，避免下拉框的 value 不在 items 里。
+  /// 旧编码偏好在本机不可用时显示第一个可选策略，避免下拉值不在 items 里。
   late String _codec = _playableOrDefault(PlayPreferences.codec);
 
-  static String _playableOrDefault(String codec) =>
-      codecPlayable(codec) ? codec : 'h264';
+  static String _playableOrDefault(String codec) {
+    final spec = playCodecOf(codec);
+    if (spec != null && spec.selectable && codecPlayable(codec)) return codec;
+    return playableCodecs().first.key;
+  }
 
-  late bool _normalize = PlayPreferences.audioNormalize;
+  late AudioNormalizeMode _normalize = PlayPreferences.audioNormalizeMode;
   late bool _downmix = PlayPreferences.audioDownmix;
+  late bool _toneMap = PlayPreferences.toneMap;
   late int _lead = PlayPreferences.leadMinutes;
 
   String? _offlinePath;
@@ -63,11 +67,20 @@ class _VideoClientSettingsPageState extends State<VideoClientSettingsPage> {
   static const _leadOptions = [1, 3, 5, 10, 20];
 
   /// 本机有编码被砍掉时才提示原因，全都支持就别啰嗦。
-  bool get _hasUnplayableCodec => playableCodecs().length < playCodecs.length;
+  bool get _hasUnplayableCodec =>
+      playableCodecs().length < playCodecs.where((c) => c.selectable).length;
 
   /// 当前档位规格（height / 各编码码率 / 是否原画）
   PlayQualityPreset get _presetSpec =>
       playQualityPresetOf(_preset) ?? playQualityPresets.first;
+  String get _qualityCodec =>
+      _codec == 'original' ? defaultTranscodeCodec() : _codec;
+
+  String _normalizeLabel(AudioNormalizeMode mode) => switch (mode) {
+    AudioNormalizeMode.inherit => tr('video.client.audioNormalizeInherit'),
+    AudioNormalizeMode.enabled => tr('video.client.audioNormalizeForceOn'),
+    AudioNormalizeMode.disabled => tr('video.client.audioNormalizeForceOff'),
+  };
 
   @override
   Widget build(BuildContext context) {
@@ -86,7 +99,10 @@ class _VideoClientSettingsPageState extends State<VideoClientSettingsPage> {
             Expanded(
               child: Text(
                 tr('video.client.localOnly'),
-                style: TextStyle(fontSize: NasTokens.fontCaption, color: context.nasTextSecondary),
+                style: TextStyle(
+                  fontSize: NasTokens.fontCaption,
+                  color: context.nasTextSecondary,
+                ),
               ),
             ),
           ],
@@ -104,14 +120,14 @@ class _VideoClientSettingsPageState extends State<VideoClientSettingsPage> {
             isDense: true,
             underline: const SizedBox.shrink(),
             items: [
-              for (final p in playQualityPresets)
+              for (final p in playQualityPresets.where((p) => !p.copy))
                 DropdownMenuItem<String>(
                   value: p.key,
                   // 一档一行：`1080P 1.4Mbps`。
                   // 以前是「label · bitrateLabelFor」两段（1080P 3M · 1.4 Mbps），
                   // 同一档位并排两个码率，看着像重复，用户 2026-11-05 明确要求只留
                   // 当前编码下真正生效的那个；H.264 的旧数字已从 label 里去掉。
-                  child: Text(p.labelFor(_codec)),
+                  child: Text(p.labelFor(_qualityCodec)),
                 ),
             ],
             onChanged: (v) async {
@@ -147,7 +163,9 @@ class _VideoClientSettingsPageState extends State<VideoClientSettingsPage> {
           title: tr('video.client.leadMinutes'),
           hint: tr('video.client.leadMinutesHint'),
           trailing: NasDropdown<int>(
-            value: _leadOptions.contains(_lead) ? _lead : PlayPreferences.defaultLeadMinutes,
+            value: _leadOptions.contains(_lead)
+                ? _lead
+                : PlayPreferences.defaultLeadMinutes,
             isDense: true,
             underline: const SizedBox.shrink(),
             items: [
@@ -166,18 +184,42 @@ class _VideoClientSettingsPageState extends State<VideoClientSettingsPage> {
         ),
 
         _section(tr('video.client.group.audio')),
+        _setting(
+          title: tr('video.client.audioNormalize'),
+          hint: tr('video.client.audioNormalizeHint'),
+          trailing: NasDropdown<AudioNormalizeMode>(
+            value: _normalize,
+            isDense: true,
+            underline: const SizedBox.shrink(),
+            items: [
+              for (final mode in AudioNormalizeMode.values)
+                DropdownMenuItem<AudioNormalizeMode>(
+                  value: mode,
+                  child: Text(_normalizeLabel(mode)),
+                ),
+            ],
+            onChanged: (mode) async {
+              if (mode == null) return;
+              setState(() => _normalize = mode);
+              await PlayPreferences.saveAudio(normalizeMode: mode);
+            },
+          ),
+        ),
         SwitchListTile(
           contentPadding: EdgeInsets.zero,
           dense: true,
-          value: _normalize,
-          title: Text(tr('video.client.audioNormalize')),
+          value: _toneMap,
+          title: Text(tr('video.client.toneMap')),
           subtitle: Text(
-            tr('video.client.audioNormalizeHint'),
-            style: TextStyle(fontSize: NasTokens.fontCaption, color: context.nasTextSecondary),
+            tr('video.client.toneMapHint'),
+            style: TextStyle(
+              fontSize: NasTokens.fontCaption,
+              color: context.nasTextSecondary,
+            ),
           ),
           onChanged: (v) async {
-            setState(() => _normalize = v);
-            await PlayPreferences.saveAudio(normalize: v);
+            setState(() => _toneMap = v);
+            await PlayPreferences.saveToneMap(v);
           },
         ),
         SwitchListTile(
@@ -187,7 +229,10 @@ class _VideoClientSettingsPageState extends State<VideoClientSettingsPage> {
           title: Text(tr('video.client.downmix')),
           subtitle: Text(
             tr('video.client.downmixHint'),
-            style: TextStyle(fontSize: NasTokens.fontCaption, color: context.nasTextSecondary),
+            style: TextStyle(
+              fontSize: NasTokens.fontCaption,
+              color: context.nasTextSecondary,
+            ),
           ),
           onChanged: (v) async {
             setState(() => _downmix = v);
@@ -206,8 +251,7 @@ class _VideoClientSettingsPageState extends State<VideoClientSettingsPage> {
   /// 给一个半成品按钮比不给更糟。
   List<Widget> _offlineSection() {
     final path = _offlinePath;
-    final canChangeRoot =
-        defaultTargetPlatform != TargetPlatform.android;
+    final canChangeRoot = defaultTargetPlatform != TargetPlatform.android;
     return [
       _section(tr('video.offline.title')),
       _setting(
@@ -259,9 +303,15 @@ class _VideoClientSettingsPageState extends State<VideoClientSettingsPage> {
           isDense: true,
           underline: const SizedBox.shrink(),
           items: [
-            DropdownMenuItem(value: 0, child: Text(tr('video.offline.speedUnlimited'))),
+            DropdownMenuItem(
+              value: 0,
+              child: Text(tr('video.offline.speedUnlimited')),
+            ),
             for (final kbps in <int>[2000, 5000, 10000, 20000])
-              DropdownMenuItem(value: kbps, child: Text('${kbps ~/ 1000} Mbps')),
+              DropdownMenuItem(
+                value: kbps,
+                child: Text('${kbps ~/ 1000} Mbps'),
+              ),
           ],
           onChanged: (v) async {
             if (v == null) return;
@@ -379,19 +429,26 @@ class _VideoClientSettingsPageState extends State<VideoClientSettingsPage> {
   }
 
   Widget _section(String title) => Padding(
-        padding: const EdgeInsets.only(top: NasTokens.spaceLg, bottom: NasTokens.spaceXs),
-        child: Text(
-          title,
-          style: TextStyle(
-            fontSize: NasTokens.fontCaption,
-            fontWeight: FontWeight.w600,
-            color: context.nasTextSecondary,
-          ),
-        ),
-      );
+    padding: const EdgeInsets.only(
+      top: NasTokens.spaceLg,
+      bottom: NasTokens.spaceXs,
+    ),
+    child: Text(
+      title,
+      style: TextStyle(
+        fontSize: NasTokens.fontCaption,
+        fontWeight: FontWeight.w600,
+        color: context.nasTextSecondary,
+      ),
+    ),
+  );
 
   /// 一行设置：左标题 + 提示，右控件（下拉 / 开关）。窄屏也不挤，提示可换行。
-  Widget _setting({required String title, required String hint, required Widget trailing}) {
+  Widget _setting({
+    required String title,
+    required String hint,
+    required Widget trailing,
+  }) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
       child: Row(
@@ -401,11 +458,17 @@ class _VideoClientSettingsPageState extends State<VideoClientSettingsPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(title, style: const TextStyle(fontWeight: FontWeight.w500)),
+                Text(
+                  title,
+                  style: const TextStyle(fontWeight: FontWeight.w500),
+                ),
                 const SizedBox(height: 2),
                 Text(
                   hint,
-                  style: TextStyle(fontSize: NasTokens.fontCaption, color: context.nasTextSecondary),
+                  style: TextStyle(
+                    fontSize: NasTokens.fontCaption,
+                    color: context.nasTextSecondary,
+                  ),
                 ),
               ],
             ),

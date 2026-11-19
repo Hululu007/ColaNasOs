@@ -12,10 +12,10 @@ const Map<String, String> _probeTypes = {
   'h265': 'video/mp4; codecs="hvc1.1.6.L120.90"',
 };
 
-/// 问浏览器自己能不能解。H.264 是 MSE 的底线，不必问。
+/// 问浏览器自己能不能解。H.264 是内部兼容编码，不必探测。
 ///
 /// 拿不到 `MediaSource`（极老的浏览器 / 被策略禁用）时按不支持处理：
-/// 这时候连 MSE 都没有，hls.js 本来就放不了，回落 H.264 也不会更差。
+/// 这时候连 MSE 都没有，hls.js 本来就放不了。
 bool codecPlayable(String codecKey) {
   if (codecKey == 'h264') return true;
   final type = _probeTypes[codecKey];

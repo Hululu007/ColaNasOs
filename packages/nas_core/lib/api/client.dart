@@ -2458,7 +2458,7 @@ class ApiClient {
     return _asMap(_decode(res));
   }
 
-  /// 同步任务列表（当前用户）
+  /// 同步任务列表（当前用户与当前机器）
   Future<Map<String, dynamic>> syncTaskList() async {
     final res = await transport.send('GET', _uri('/api/v1/sync/tasks'), headers: await _headers());
     return _asMap(_decode(res));
@@ -2522,7 +2522,7 @@ class ApiClient {
     return _asMap(_decode(res));
   }
 
-  /// 认领升级前的无主任务（uid 为空的同设备任务）
+  /// 迁移当前机器的旧同步任务到当前客户端标识
   Future<Map<String, dynamic>> syncClaimLegacy({required Map<String, dynamic> body}) async {
     final res = await transport.send('POST', _uri('/api/v1/sync/device/claimLegacy'), headers: await _headers(jsonBody: true), body: utf8.encode(jsonEncode(body)));
     return _asMap(_decode(res));

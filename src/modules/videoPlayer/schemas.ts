@@ -43,6 +43,11 @@ export const SessionCreateBody = Type.Object(
     audioIndex: Type.Optional(
       Type.Integer({ minimum: 0, description: '选第几条音轨转码（默认 0）' }),
     ),
+    toneMap: Type.Optional(
+      Type.Boolean({
+        description: '是否对 HDR / DV / HLG 片源执行 HDR→SDR；不传时兼容旧客户端自动映射',
+      }),
+    ),
     forceSdr: Type.Optional(
       Type.Boolean({ description: '强制 HDR→SDR；不传时由服务端按片源标记自动判定' }),
     ),
@@ -116,6 +121,9 @@ export const SessionItem = Type.Object(
     createdAt: Type.Integer(),
     updatedAt: Type.Integer(),
     audioIndex: Type.Optional(Type.Integer({ description: '转码选用的音轨序号' })),
+    audioNormalize: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+    audioNormalizeEffective: Type.Optional(Type.Boolean()),
+    toneMap: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
     hdrToSdr: Type.Optional(Type.Boolean({ description: '是否做 HDR→SDR 转换' })),
   },
   { $id: 'PlayerSessionItem' },

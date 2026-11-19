@@ -44,7 +44,8 @@ Future<void> openOfflineDownloadDialog(
     totalEpisodes: totalEpisodes,
     existing: existing,
   );
-  if (defaultTargetPlatform == TargetPlatform.android || defaultTargetPlatform == TargetPlatform.iOS) {
+  if (defaultTargetPlatform == TargetPlatform.android ||
+      defaultTargetPlatform == TargetPlatform.iOS) {
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -66,7 +67,8 @@ Future<void> openOfflineDownloadDialog(
 }
 
 void _toast(BuildContext context, String text) {
-  ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(content: Text(text)));
+  ScaffoldMessenger.maybeOf(context)
+      ?.showSnackBar(SnackBar(content: Text(text)));
 }
 
 class _DownloadSheet extends StatefulWidget {
@@ -177,9 +179,9 @@ class _DownloadSheetState extends State<_DownloadSheet> {
 
   Future<void> _fetchSubtitleAndReprobe() async {
     try {
-      await ApiSession.instance.client.videoSubtitleFetch(body: <String, dynamic>{
-        'id': widget.item.id,
-      });
+      await ApiSession.instance.client.videoSubtitleFetch(
+        body: <String, dynamic>{'id': widget.item.id},
+      );
     } catch (_) {
       // 没权限 / 网络失败：抓不到就算了，不该挡住下载
       return;
@@ -215,7 +217,9 @@ class _DownloadSheetState extends State<_DownloadSheet> {
           height: _height,
           qualityMode: _quality,
           subtitleMode: _subtitleMode,
-          videoKbps: _manualKbps ? (int.tryParse(_kbps.text.trim()) ?? 0) : null,
+          videoKbps: _manualKbps
+              ? (int.tryParse(_kbps.text.trim()) ?? 0)
+              : null,
         ),
       );
       if (!mounted) return;
@@ -242,9 +246,10 @@ class _DownloadSheetState extends State<_DownloadSheet> {
   }
 
   List<int> get _heights {
-    final raw = (_quote?.capabilities['heights'] as List<dynamic>? ?? const <dynamic>[])
-        .map((e) => (e as num).toInt())
-        .toList();
+    final raw =
+        (_quote?.capabilities['heights'] as List<dynamic>? ?? const <dynamic>[])
+            .map((e) => (e as num).toInt())
+            .toList();
     return raw;
   }
 
@@ -260,7 +265,9 @@ class _DownloadSheetState extends State<_DownloadSheet> {
     if (codec == 'original') return tr('video.offline.original');
     final heightText = height > 0 ? '${height}P' : '—';
     final codecText = _codecLabel(codec);
-    final kbpsText = kbps > 0 ? '$kbps ${tr('video.offline.bitrateUnit')}' : '—';
+    final kbpsText = kbps > 0
+        ? '$kbps ${tr('video.offline.bitrateUnit')}'
+        : '—';
     return tr('video.offline.spec', {
       'height': heightText,
       'codec': codecText,
@@ -281,7 +288,9 @@ class _DownloadSheetState extends State<_DownloadSheet> {
           title: Text(tr('video.offline.replaceTitle')),
           content: Text(
             tr('video.offline.replaceBody', {
-              'old': existing.specLabel.isEmpty ? existing.container : existing.specLabel,
+              'old': existing.specLabel.isEmpty
+                  ? existing.container
+                  : existing.specLabel,
               'new': _specText(quote.target),
             }),
           ),
@@ -315,20 +324,24 @@ class _DownloadSheetState extends State<_DownloadSheet> {
       );
       // 右键菜单进来的调用方不带剧名：用条目自己的 `series` 兜底，
       // 否则整剧卡片会以「第 3 集」为标题。
-      final seriesName = (widget.seriesTitle ?? widget.item.series ?? '').trim();
+      final seriesName = (widget.seriesTitle ?? widget.item.series ?? '')
+          .trim();
       final hasSeries = seriesName.isNotEmpty;
       await OfflineDownloadManager.instance.start(
         OfflineRequest(
           itemId: widget.item.id,
           libraryId: widget.item.libraryId,
           libraryName: widget.libraryName,
-          title: hasSeries ? '$seriesName · ${_episodeLabel()}' : widget.item.title,
+          title: hasSeries
+              ? '$seriesName · ${_episodeLabel()}'
+              : widget.item.title,
           spec: spec,
           seriesKey: _seriesKey(),
           seriesTitle: hasSeries ? seriesName : null,
           season: widget.item.season,
           episode: widget.item.episode,
-          totalEpisodes: widget.totalEpisodes ?? (widget.item.seriesInfo?.episodes ?? 0),
+          totalEpisodes:
+              widget.totalEpisodes ?? (widget.item.seriesInfo?.episodes ?? 0),
           posterUrl: _posterUrl(series: hasSeries),
           fallbackPosterUrl: videoPosterUrl(widget.item),
           replace: existing != null,
@@ -391,16 +404,18 @@ class _DownloadSheetState extends State<_DownloadSheet> {
         children: [
           Text(
             tr('video.offline.dialogTitle'),
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-              fontWeight: FontWeight.w700,
-            ),
+            style: Theme.of(context).textTheme.titleMedium
+                ?.copyWith(fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 4),
           Text(
             widget.item.title,
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
-            style: TextStyle(fontSize: NasTokens.fontBody, color: context.nasTextSecondary),
+            style: TextStyle(
+              fontSize: NasTokens.fontBody,
+              color: context.nasTextSecondary,
+            ),
           ),
           const SizedBox(height: 12),
           if (source != null) _sourceLine(source),
@@ -417,7 +432,10 @@ class _DownloadSheetState extends State<_DownloadSheet> {
           ] else
             Text(
               tr('video.offline.originalHint'),
-              style: TextStyle(fontSize: NasTokens.fontCaption, color: context.nasTextSecondary),
+              style: TextStyle(
+                fontSize: NasTokens.fontCaption,
+                color: context.nasTextSecondary,
+              ),
             ),
           const SizedBox(height: 6),
           _subtitleField(),
@@ -427,7 +445,8 @@ class _DownloadSheetState extends State<_DownloadSheet> {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.06),
+              color: Theme.of(context).colorScheme.primary
+                  .withValues(alpha: 0.06),
               borderRadius: BorderRadius.circular(NasTokens.radiusSm),
             ),
             child: Row(
@@ -441,7 +460,9 @@ class _DownloadSheetState extends State<_DownloadSheet> {
                 Text(
                   quote == null
                       ? '—'
-                      : formatBytes((quote.estimate['bytes'] as num?)?.toInt() ?? 0),
+                      : formatBytes(
+                          (quote.estimate['bytes'] as num?)?.toInt() ?? 0,
+                        ),
                   style: const TextStyle(
                     fontSize: NasTokens.fontTitle,
                     fontWeight: FontWeight.w700,
@@ -477,12 +498,16 @@ class _DownloadSheetState extends State<_DownloadSheet> {
             mainAxisAlignment: MainAxisAlignment.end,
             children: [
               TextButton(
-                onPressed: _submitting ? null : () => Navigator.of(context).pop(),
+                onPressed: _submitting
+                    ? null
+                    : () => Navigator.of(context).pop(),
                 child: Text(tr('common.cancel')),
               ),
               const SizedBox(width: 8),
               FilledButton.icon(
-                onPressed: (_loading || _submitting || quote == null) ? null : _submit,
+                onPressed: (_loading || _submitting || quote == null)
+                    ? null
+                    : _submit,
                 icon: _submitting
                     ? const SizedBox(
                         width: 16,
@@ -513,7 +538,10 @@ class _DownloadSheetState extends State<_DownloadSheet> {
     ];
     return Text(
       '${tr('video.offline.sourceInfo')}：${parts.join(' · ')}',
-      style: TextStyle(fontSize: NasTokens.fontCaption, color: context.nasTextSecondary),
+      style: TextStyle(
+        fontSize: NasTokens.fontCaption,
+        color: context.nasTextSecondary,
+      ),
     );
   }
 
@@ -528,7 +556,10 @@ class _DownloadSheetState extends State<_DownloadSheet> {
   }
 
   Widget _codecField() {
-    final codecs = <String>['original', ...playableCodecs().map((c) => c.key)];
+    final codecs = <String>[
+      'original',
+      ...playableTranscodeCodecs().map((c) => c.key),
+    ];
     return NasDropdown<String>(
       initialValue: _codec,
       decoration: InputDecoration(labelText: tr('video.offline.codec')),
@@ -554,7 +585,9 @@ class _DownloadSheetState extends State<_DownloadSheet> {
   Widget _heightField() {
     final heights = _heights;
     return NasDropdown<int>(
-      initialValue: heights.contains(_height) ? _height : (heights.isEmpty ? null : heights.first),
+      initialValue: heights.contains(_height)
+          ? _height
+          : (heights.isEmpty ? null : heights.first),
       decoration: InputDecoration(labelText: tr('video.offline.resolution')),
       items: [
         for (final h in heights)

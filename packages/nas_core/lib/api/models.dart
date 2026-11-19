@@ -12942,6 +12942,7 @@ class PlayerSessionCreateBody {
   final bool? audioNormalize;
   final bool? audioDownmix;
   final int? audioIndex;
+  final bool? toneMap;
   final bool? forceSdr;
   final int? leadMinutes;
   final int? startMs;
@@ -12954,6 +12955,7 @@ class PlayerSessionCreateBody {
     this.audioNormalize,
     this.audioDownmix,
     this.audioIndex,
+    this.toneMap,
     this.forceSdr,
     this.leadMinutes,
     this.startMs,
@@ -12967,6 +12969,7 @@ class PlayerSessionCreateBody {
         audioNormalize: json['audioNormalize'] == null ? null : json['audioNormalize'] as bool,
         audioDownmix: json['audioDownmix'] == null ? null : json['audioDownmix'] as bool,
         audioIndex: json['audioIndex'] == null ? null : json['audioIndex'] as int,
+        toneMap: json['toneMap'] == null ? null : json['toneMap'] as bool,
         forceSdr: json['forceSdr'] == null ? null : json['forceSdr'] as bool,
         leadMinutes: json['leadMinutes'] == null ? null : json['leadMinutes'] as int,
         startMs: json['startMs'] == null ? null : json['startMs'] as int,
@@ -12980,6 +12983,7 @@ class PlayerSessionCreateBody {
         if (audioNormalize != null) 'audioNormalize': audioNormalize!,
         if (audioDownmix != null) 'audioDownmix': audioDownmix!,
         if (audioIndex != null) 'audioIndex': audioIndex!,
+        if (toneMap != null) 'toneMap': toneMap!,
         if (forceSdr != null) 'forceSdr': forceSdr!,
         if (leadMinutes != null) 'leadMinutes': leadMinutes!,
         if (startMs != null) 'startMs': startMs!,
@@ -13027,6 +13031,9 @@ class PlayerSessionItem {
   final int createdAt;
   final int updatedAt;
   final int? audioIndex;
+  final bool? audioNormalize;
+  final bool? audioNormalizeEffective;
+  final bool? toneMap;
   final bool? hdrToSdr;
 
   const PlayerSessionItem({
@@ -13046,6 +13053,9 @@ class PlayerSessionItem {
     required this.createdAt,
     required this.updatedAt,
     this.audioIndex,
+    this.audioNormalize,
+    this.audioNormalizeEffective,
+    this.toneMap,
     this.hdrToSdr,
   });
 
@@ -13066,6 +13076,9 @@ class PlayerSessionItem {
         createdAt: json['createdAt'] as int,
         updatedAt: json['updatedAt'] as int,
         audioIndex: json['audioIndex'] == null ? null : json['audioIndex'] as int,
+        audioNormalize: json['audioNormalize'] == null ? null : json['audioNormalize'] as bool?,
+        audioNormalizeEffective: json['audioNormalizeEffective'] == null ? null : json['audioNormalizeEffective'] as bool,
+        toneMap: json['toneMap'] == null ? null : json['toneMap'] as bool?,
         hdrToSdr: json['hdrToSdr'] == null ? null : json['hdrToSdr'] as bool,
       );
 
@@ -13086,6 +13099,9 @@ class PlayerSessionItem {
         'createdAt': createdAt,
         'updatedAt': updatedAt,
         if (audioIndex != null) 'audioIndex': audioIndex!,
+        if (audioNormalize != null) 'audioNormalize': audioNormalize!,
+        if (audioNormalizeEffective != null) 'audioNormalizeEffective': audioNormalizeEffective!,
+        if (toneMap != null) 'toneMap': toneMap!,
         if (hdrToSdr != null) 'hdrToSdr': hdrToSdr!,
       };
 }

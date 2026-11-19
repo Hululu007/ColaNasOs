@@ -449,6 +449,87 @@ process.chdir(root);
   });
   check('task_isolation_plan_404', r.statusCode === 404, 'status=' + r.statusCode);
 
+  // 机器隔离：同账号的不同 PC 只列出自己的任务，拿到另一台机器的 taskId 也不能执行。
+  const pcA = { ...bearer, 'x-colanas-client': 'machine-A' };
+  const pcB = { ...bearer, 'x-colanas-client': 'machine-B' };
+  const createTask = async (headers, deviceId, name) => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/v1/sync/tasks/upsert',
+      headers,
+      payload: {
+        name,
+        deviceId,
+        deviceName: name,
+        mode: 'bidirectional',
+        localDir: `/local/${name}`,
+        remoteDir: '/remote',
+      },
+    });
+    return response.json();
+  };
+  const machineTaskA = await createTask(pcA, 'machine-A', 'PC-A task');
+  const machineTaskB = await createTask(pcB, 'machine-B', 'PC-B task');
+  const machineTaskA2 = await createTask(pcA, 'machine-A', 'PC-A second task');
+  const listFor = async (headers) =>
+    app.inject({ method: 'GET', url: '/api/v1/sync/tasks', headers });
+  const tasksA = await listFor(pcA);
+  const tasksB = await listFor(pcB);
+  check(
+    'task_isolation_machine_list',
+    tasksA.json().items.some((item) => item.id === machineTaskA.id) &&
+      tasksA.json().items.some((item) => item.id === machineTaskA2.id) &&
+      !tasksA.json().items.some((item) => item.id === machineTaskB.id) &&
+      tasksB.json().items.some((item) => item.id === machineTaskB.id) &&
+      !tasksB.json().items.some((item) => item.id === machineTaskA.id),
+    `A=${tasksA.json().items.length} B=${tasksB.json().items.length}`,
+  );
+  r = await app.inject({
+    method: 'POST',
+    url: '/api/v1/sync/plan',
+    headers: pcA,
+    payload: { taskId: machineTaskB.id, local: [] },
+  });
+  check('task_isolation_machine_plan_404', r.statusCode === 404, 'status=' + r.statusCode);
+
+  // 迁移同一台 PC 上旧版本的 client_id；未认领的任务不能被另一个 PC 的首次列表请求抢走。
+  const oldClientTask = await createTask(
+    { ...bearer, 'x-colanas-client': 'old-app-id' },
+    'physical-machine-A',
+    'Old PC-A task',
+  );
+  const unclaimedTask = await createTask(
+    bearer,
+    'physical-machine-A',
+    'Unclaimed PC-A task',
+  );
+  const beforeClaim = await listFor(pcA);
+  const stillLegacy = await listFor(bearer);
+  check(
+    'task_isolation_no_global_legacy_claim',
+    !beforeClaim.json().items.some((item) => item.id === unclaimedTask.id) &&
+      stillLegacy.json().items.some((item) => item.id === unclaimedTask.id),
+    'legacy task remains in its unclaimed group',
+  );
+  r = await app.inject({
+    method: 'POST',
+    url: '/api/v1/sync/device/claimLegacy',
+    headers: { ...bearer, 'x-colanas-client': 'physical-machine-A' },
+    payload: { deviceId: 'physical-machine-A' },
+  });
+  const adoptedList = await listFor({
+    ...bearer,
+    'x-colanas-client': 'physical-machine-A',
+  });
+  check(
+    'task_isolation_migrate_same_machine',
+    r.statusCode === 200 &&
+      r.json().claimed >= 2 &&
+      adoptedList.json().items.some((item) => item.id === oldClientTask.id) &&
+      adoptedList.json().items.some((item) => item.id === unclaimedTask.id),
+    `claimed=${r.json().claimed}`,
+  );
+
   // 运行记录
   r = await app.inject({ method: 'GET', url: '/api/v1/sync/runs?taskId=' + task.id, headers: bearer });
   check('runs_list', r.statusCode === 200 && r.json().items.length >= 2, 'items=' + r.json().items.length);

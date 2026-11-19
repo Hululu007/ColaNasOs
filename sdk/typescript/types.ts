@@ -3924,6 +3924,7 @@ export type PlayerSessionCreateBody = {
   "audioNormalize"?: boolean;
   "audioDownmix"?: boolean;
   "audioIndex"?: number;
+  "toneMap"?: boolean;
   "forceSdr"?: boolean;
   "leadMinutes"?: number;
   "startMs"?: number;
@@ -3952,6 +3953,9 @@ export type PlayerSessionItem = {
   "createdAt": number;
   "updatedAt": number;
   "audioIndex"?: number;
+  "audioNormalize"?: boolean;
+  "audioNormalizeEffective"?: boolean;
+  "toneMap"?: boolean;
   "hdrToSdr"?: boolean;
 };
 

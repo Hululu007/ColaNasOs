@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:nas_core/nas_core.dart';
 
 import '../../core/session.dart';
 import '../../core/settings_store.dart';
@@ -23,6 +24,7 @@ class SyncScheduler {
   Timer? _timer;
   bool _busy = false;
   String? _deviceId;
+  String? _claimedScope;
   final _watch = createSyncWatcher();
 
   /// 调度是否由用户开启（默认关，避免悄悄读写磁盘）
@@ -91,12 +93,33 @@ class SyncScheduler {
 
   /// 拉一次任务列表（托盘要用它算「本机任务数」，界面也要用）
   Future<List<SyncTask>> _loadTasks() async {
+    final deviceId = _deviceId;
+    await _claimMachineTasks(deviceId);
     final res = await ApiSession.instance.client.syncTaskList();
     final raw = (res['items'] as List?) ?? const [];
     return raw
         .whereType<Map>()
         .map((e) => SyncTask.fromJson(Map<String, dynamic>.from(e)))
         .toList();
+  }
+
+  Future<void> _claimMachineTasks(String? deviceId) async {
+    if (deviceId == null ||
+        deviceId.isEmpty ||
+        ColanasClientId.value != deviceId) {
+      return;
+    }
+    final scope =
+        '${ApiSession.instance.baseUrl}|${ApiSession.instance.username}|$deviceId';
+    if (_claimedScope == scope) return;
+    try {
+      await ApiSession.instance.client.syncClaimLegacy(
+        body: <String, dynamic>{'deviceId': deviceId},
+      );
+      _claimedScope = scope;
+    } catch (e) {
+      debugPrint('[sync] claim machine tasks failed: $e');
+    }
   }
 
   /// 本机任务数：托盘的「立即同步」据此置灰（0 个任务时点了也没事可做）

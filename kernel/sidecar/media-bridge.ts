@@ -62,6 +62,10 @@ export interface HlsResult {
   codec?: string;
   /** mpegts | fmp4 */
   container?: string;
+  /** 是否保留源视频码流（音频可独立处理） */
+  copyVideo?: boolean;
+  /** 是否保留源音频码流 */
+  audioCopy?: boolean;
 }
 
 /** 单文件编码（离线下载）的入参 */
@@ -200,6 +204,8 @@ export class MediaBridge {
       audioIndex?: number;
       /** 强制/自动 HDR→SDR 色彩转换 */
       hdrToSdr?: boolean;
+      /** false 时即使片源带 HDR 标记也不应用色调映射 */
+      toneMap?: boolean;
       /** 原画直通：不 tonemap、视频 copy、DV/HDR 原样交给显示端 */
       passthrough?: boolean;
       /** 片源视频编码（h264 / hevc / av1）：决定「原画」能否直接 copy */
@@ -220,6 +226,8 @@ export class MediaBridge {
       durationMs: number;
       codec?: string;
       container?: string;
+      copyVideo?: boolean;
+      audioCopy?: boolean;
     }>('hls', { src, dir, ...opts }, timeoutMs);
     return {
       segments: res.segments,
@@ -227,6 +235,8 @@ export class MediaBridge {
       durationMs: Number(res.durationMs) || 0,
       codec: res.codec,
       container: res.container,
+      copyVideo: res.copyVideo,
+      audioCopy: res.audioCopy,
     };
   }
 

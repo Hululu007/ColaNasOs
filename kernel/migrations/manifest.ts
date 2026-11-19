@@ -229,6 +229,8 @@ export const MIGRATION_ORDER: readonly string[] = Object.freeze([
   '184_video_subtitle_reset_failed',
   // 人物列表支持「隐藏」：只影响可见性，不动人脸数据
   '185_photo_face_cluster_hidden',
+  // 播放器会话的有效响度归一值与显式色调映射选择
+  '186_player_output_policy',
 ]);
 
 export interface OrderCheck {
