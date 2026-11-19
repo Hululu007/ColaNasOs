@@ -410,10 +410,9 @@ class _PlayerPageState extends State<PlayerPage> {
     setState(() => _waitingTarget = t);
   }
 
-  /// 收尾时只清自己那个目标：用户连按时新的一轮已经写进 [_waitingTarget]，
-  /// 旧那轮的 finally 不能把它抹掉（否则新目标就没了提示）。
-  void _clearWaitingTarget(Duration t) {
-    if (_waitingTarget != t) return;
+  /// 收尾时只清当前 seek 的目标；旧请求的 finally 不能清掉新请求的提示。
+  void _clearWaitingTarget(Duration t, {required int seekGeneration}) {
+    if (seekGeneration != _seekGen || _waitingTarget != t) return;
     _markWaitingTarget(null);
   }
 
@@ -2492,11 +2491,8 @@ class _PlayerPageState extends State<PlayerPage> {
     );
     _seekByTimer?.cancel();
     _seekByTimer = Timer(const Duration(milliseconds: 260), () {
-      // soft：键盘 / 遥控器的 ±N 秒。等不到片就**放弃这次跳转**，
-      // 保持当前播放不动 —— 用户原话「没加载到，可以直接不跳这 30 秒，
-      // 或就当是我点了时间条，也行，怎么都不能卡住」。±30 秒这种小步
-      // 不值得为它重建一条会话（重建要重新等首片，反而像卡死）。
-      if (mounted) unawaited(_seekTo(_seekByTarget, soft: true));
+      // 未加载位置也必须完成跳转；等片超时后会从目标位置新建转码会话。
+      if (mounted) unawaited(_seekTo(_seekByTarget));
     });
   }
 
@@ -2504,7 +2500,7 @@ class _PlayerPageState extends State<PlayerPage> {
   ///
   /// 只有「播放器时间轴确实还属于当前会话」时才能用 position：
   ///   - 正在跳转（[_jumping]）或新会话还没 open（[_pendingStartMs] 非空）→
-  ///     position 还是上一条流的，用最近一次目标当基准；
+  ///     position 还是上一条流的；等转码追上未加载目标时也用最近一次目标；
   ///   - 其余情况 → 播放器当前位置，这是最准的。
   Duration get _seekBaseAbs {
     final ms = seekBaseMs(
@@ -2513,7 +2509,10 @@ class _PlayerPageState extends State<PlayerPage> {
       lastTargetMs: _lastSeekTarget.inMilliseconds,
       jumping: _jumping,
       streamPending:
-          _pendingJump != null || _pendingStartMs != null || _seeking,
+          _pendingJump != null ||
+          _pendingStartMs != null ||
+          _seeking ||
+          _waitingTarget != null,
     );
     return Duration(milliseconds: ms < 0 ? 0 : ms);
   }
@@ -2640,18 +2639,13 @@ class _PlayerPageState extends State<PlayerPage> {
     return end + _startOffset;
   }
 
-  /// [soft] = 这次跳转「可以不做」（键盘 / 遥控器的 ±N 秒）。
-  /// 等不到片就原地不动，宁可不跳也不要重建会话卡十几秒。
-  Future<void> _seekTo(
-    Duration target, {
-    bool allowJump = true,
-    bool soft = false,
-  }) async {
+  Future<void> _seekTo(Duration target, {bool allowJump = true}) async {
     _lastSeekAt = DateTime.now();
     // 连续按 → / 连续拖：只让最后一次真正落地。中间那次可能在
     // [_awaitProduced] 里等转码（最多 8 秒），等回来时用户早就换了目标 ——
     // 不拦的话就会「跳到最后一次，又被前一次的旧目标盖回去」。
     final gen = ++_seekGen;
+    if (_waitingTarget != null) _markWaitingTarget(null);
     if (_seeking) setState(() => _seeking = false);
     final total = _timelineDuration(_player.state.duration);
     var t = target;
@@ -2763,7 +2757,7 @@ class _PlayerPageState extends State<PlayerPage> {
       if (_seeking) setState(() => _seeking = false);
       _markWaitingTarget(t);
       try {
-        produced = await _awaitProduced(t, budget: budget);
+        produced = await _awaitProduced(t, budget: budget, seekGeneration: gen);
         // 等的这几秒里用户又按了 → 直接作废，别把旧目标盖到新目标上
         if (!mounted || gen != _seekGen) return;
         if (!produced) {
@@ -2773,11 +2767,12 @@ class _PlayerPageState extends State<PlayerPage> {
           produced = await _awaitProduced(
             t,
             budget: const Duration(seconds: 2),
+            seekGeneration: gen,
           );
           if (!mounted || gen != _seekGen) return;
         }
       } finally {
-        _clearWaitingTarget(t);
+        _clearWaitingTarget(t, seekGeneration: gen);
       }
       if (produced) {
         ClientLogger.instance.info(
@@ -2790,21 +2785,9 @@ class _PlayerPageState extends State<PlayerPage> {
       ClientLogger.instance.info(
         '等转码追上超时 ${t.inMilliseconds}ms'
         '（over=${over.inMilliseconds}ms produced=${_loadedEnd.inMilliseconds}ms）'
-        '${soft ? ' → 本次按键跳转作废，保持当前播放' : ''}',
+        ' → 从目标位置重建会话',
         route: 'player.seek/${_sessionId ?? 'direct'}',
       );
-      // 键盘 / 遥控器的 ±N 秒：等不到就**别跳了**。往下走去重建会话要重新
-      // 等首片（同机 1~10s、AV1 更久），用户看到的反而更像「卡死」。
-      // 保持原位置继续播 + 一条提示，是「怎么都不能卡住」最便宜的兑现。
-      if (soft) {
-        _lastSeekTarget = _absPosition(_player.state.position);
-        final messenger = ScaffoldMessenger.maybeOf(context);
-        if (messenger != null && mounted) {
-          NasSnack.showOn(messenger, tr('player.seekNotReady'));
-        }
-        if (_wantPlay) unawaited(_ensurePlayingAfterOpen());
-        return;
-      }
     }
     if (!mounted || gen != _seekGen) return;
     if (over > Duration.zero) {
@@ -3061,6 +3044,7 @@ class _PlayerPageState extends State<PlayerPage> {
   Future<bool> _awaitProduced(
     Duration t, {
     Duration budget = const Duration(seconds: 8),
+    required int seekGeneration,
   }) async {
     // 每一处「不等了」都要留一行：2026-11-17 日志里有一次 `over=9020ms` 只等了
     // 25ms 就去重建会话（25ms 连一次请求都不够），却看不出是哪个条件退的场，
@@ -3083,6 +3067,10 @@ class _PlayerPageState extends State<PlayerPage> {
         giveUp('页面已关闭');
         return false;
       }
+      if (seekGeneration != _seekGen) {
+        giveUp('目标已被更新的 seek 替代');
+        return false;
+      }
       // 只看 `_wantPlay` 太脆：一次误置（比如点画面唤出控件）就会把等待直接
       // 短路成「立刻重建会话」。真暂停了位置本来就不动，多等这一轮没损失。
       if (!_wantPlay && !_player.state.playing && !_player.state.buffering) {
@@ -3096,6 +3084,10 @@ class _PlayerPageState extends State<PlayerPage> {
           id: id,
           pos: t.inMilliseconds.toDouble(),
         );
+        if (!mounted || seekGeneration != _seekGen) {
+          giveUp('目标已被更新的 seek 替代');
+          return false;
+        }
         final transcoded = job.transcodedMs ?? 0;
         if (transcoded > _transcodedMs) _transcodedMs = transcoded;
         if (_loadedEnd >= t + const Duration(seconds: 1)) return true;
