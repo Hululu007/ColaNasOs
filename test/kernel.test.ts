@@ -16,7 +16,7 @@ import {
 import { buildPlan } from '../src/modules/sync/plan';
 import { WatchdogSupervisor } from '../kernel/watchdog-supervisor';
 import { buildUnc, normalizeScanPath, parseUnc } from '../src/modules/video/smb';
-import { parseJpTagsFromName } from '../src/modules/video/media-type';
+import { jpMetaOf, parseJpTagsFromName } from '../src/modules/video/media-type';
 import { looksJunkTmdbMatch, pickExactCodeLink } from '../src/modules/video/jp-scrape';
 import type { ServerModule } from '../kernel/types';
 import type { ConfigStore } from '../kernel/config';
@@ -402,6 +402,18 @@ test('jp: 结尾 -U/-C/-UC 标记优先于关键词', () => {
   assert.equal(parseJpTagsFromName('ABP-123-U.mp4').uncensored, 1);
   assert.equal(parseJpTagsFromName('ABP-123-C.mp4').chineseSub, 1);
   assert.equal(parseJpTagsFromName('ABP-123.mp4').uncensored, 0);
+});
+
+test('jp: 识别 U 标记后的 LTX / 画质后缀及 NFO 标题关键词', () => {
+  for (const name of [
+    'ABP-376-U.ltx.mp4',
+    'SNOS-250-U.ltx.4K.mp4',
+    'cawd-931-U-LTX.mp4',
+  ]) {
+    assert.equal(jpMetaOf(name).uncensored, 1, name);
+  }
+  assert.equal(jpMetaOf('ABP-123.mp4', 'ABP-123 無修正').uncensored, 1);
+  assert.equal(jpMetaOf('ABP-123-ULTRA.ltx.mp4').uncensored, 0);
 });
 
 test('jp-scrape: 只认番号精确匹配的详情链接', () => {

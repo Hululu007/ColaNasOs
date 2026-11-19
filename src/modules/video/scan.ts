@@ -507,7 +507,7 @@ async function scanOneSource(
         for (const p of chunk) {
           const m = p.meta;
           const ep = parseEpisode(p.rel);
-          const jp = jpMetaOf(p.rel);
+          const jp = jpMetaOf(p.rel, p.nfo.name, p.nfo.originalName);
           // 拼音键也进库：搜索时不用现算（一算就是每键一次的字典遍历）。
           // nfo 里的中文名一定要算进来 —— 文件名常是 `The.Odyssey.2026...mkv`
           // 这种，只有把「奥德赛」转成 `aodesai ads` 才搜得到。

@@ -90,7 +90,7 @@ export function parseJpCode(relPath: string): string | null {
 
 export function isUncensoredName(relPath: string): boolean {
   const text = relPath.toLowerCase();
-  return /无码|無碼|uncensored|leak|流出/.test(text);
+  return /无码|無碼|無修正|uncensored|uncut|leak|流出/.test(text);
 }
 
 export function hasChineseSubName(relPath: string): boolean {
@@ -99,7 +99,8 @@ export function hasChineseSubName(relPath: string): boolean {
 }
 
 /**
- * 文件名**结尾**的标记：`-U`（无码）/ `-C`（中字）/ `-UC`（两者）。
+ * 文件名后缀标记：`-U`（无码）/ `-C`（中字）/ `-UC`（两者）。
+ * 允许标记后继续带 `.ltx`、`.4K` 等已知发布后缀。
  * 标记优先于关键词判断：文件名里写死的标记是用户显式表达，不再靠猜。
  * 返回去掉标记后的名字（供 NFO 猜测 / 标题显示）。
  */
@@ -111,7 +112,8 @@ export function parseJpTagsFromName(relPath: string): {
   const base = path.basename(relPath);
   const ext = path.extname(base);
   const stem = ext ? base.slice(0, -ext.length) : base;
-  const m = /-(U|C|UC)$/i.exec(stem);
+  const m =
+    /-(UC|U|C)(?=$|(?:[._-](?:ltx|4k|2160p?|1080p?|720p?|chs|cht))*$)/i.exec(stem);
   if (!m) return { uncensored: 0, chineseSub: 0, cleaned: relPath };
   const tag = m[1].toUpperCase();
   const cleanedStem = stem.slice(0, stem.length - m[0].length);
@@ -128,15 +130,19 @@ export function normalizeNameForNfoGuess(relPath: string): string {
 }
 
 /** 日本库角标 + 番号（非日本库返回 code=null）；结尾标记与关键词取「或」 */
-export function jpMetaOf(relPath: string): {
+export function jpMetaOf(
+  relPath: string,
+  ...metadataNames: Array<string | null | undefined>
+): {
   code: string | null;
   uncensored: number;
   chineseSub: number;
 } {
   const tags = parseJpTagsFromName(relPath);
+  const nameText = [relPath, ...metadataNames].filter(Boolean).join(' ');
   return {
     code: parseJpCode(tags.cleaned),
-    uncensored: tags.uncensored || (isUncensoredName(relPath) ? 1 : 0),
+    uncensored: tags.uncensored || (isUncensoredName(nameText) ? 1 : 0),
     chineseSub: tags.chineseSub || (hasChineseSubName(relPath) ? 1 : 0),
   };
 }

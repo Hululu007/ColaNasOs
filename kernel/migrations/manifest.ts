@@ -231,6 +231,8 @@ export const MIGRATION_ORDER: readonly string[] = Object.freeze([
   '185_photo_face_cluster_hidden',
   // 播放器会话的有效响度归一值与显式色调映射选择
   '186_player_output_policy',
+  // 日本片无码标记识别扩展：回填 U + LTX / 画质后缀和 NFO 标题关键词
+  '187_video_jp_uncensored_tags',
 ]);
 
 export interface OrderCheck {

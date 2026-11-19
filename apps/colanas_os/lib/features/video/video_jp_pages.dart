@@ -284,6 +284,7 @@ class _VideoJpActorPageState extends State<VideoJpActorPage> {
 
   Map<String, dynamic>? _selected;
   bool _worksLoading = false;
+  int _worksRequestGeneration = 0;
   String? _worksError;
   List<VideoItem> _works = const [];
 
@@ -401,6 +402,8 @@ class _VideoJpActorPageState extends State<VideoJpActorPage> {
   }
 
   Future<void> _openActor(Map<String, dynamic> actor) async {
+    final generation = ++_worksRequestGeneration;
+    final filter = _filter;
     setState(() {
       _selected = actor;
       _worksLoading = true;
@@ -410,26 +413,22 @@ class _VideoJpActorPageState extends State<VideoJpActorPage> {
     try {
       // 作品必须和演员列表用同一份筛选：列表写着 1 部，进来就只有这 1 部。
       // libraryId 也要带 —— 不然同一个演员在别的库里的片会被算进来。
-      final res = await ApiSession.instance.client.videoJpActorWorks(
-        key: _str(actor['key']).isEmpty ? null : _str(actor['key']),
-        name: _str(actor['name']),
-        libraryId: widget.libraryId,
-        limit: '2000',
-        resolution: _filter.resolution.isEmpty ? null : _filter.resolution,
-        jpTag: _filter.jpTag.isEmpty ? null : _filter.jpTag,
-        genre: _filter.genre.isEmpty ? null : _filter.genre,
-        sourceId: _filter.sourceId.isEmpty ? null : _filter.sourceId,
-      );
-      if (!mounted || _selected != actor) return;
+      final works = await _fetchActorWorks(actor, filter);
+      if (!mounted ||
+          generation != _worksRequestGeneration ||
+          _selected != actor) {
+        return;
+      }
       setState(() {
-        _works = ((res['items'] as List?) ?? const [])
-            .whereType<Map>()
-            .map((e) => VideoItem.fromJson(Map<String, dynamic>.from(e)))
-            .toList();
+        _works = works;
         _worksLoading = false;
       });
     } catch (e) {
-      if (!mounted || _selected != actor) return;
+      if (!mounted ||
+          generation != _worksRequestGeneration ||
+          _selected != actor) {
+        return;
+      }
       setState(() {
         _worksError = '$e';
         _worksLoading = false;
@@ -437,7 +436,62 @@ class _VideoJpActorPageState extends State<VideoJpActorPage> {
     }
   }
 
+  Future<List<VideoItem>> _fetchActorWorks(
+    Map<String, dynamic> actor,
+    VideoJpFilter filter,
+  ) async {
+    final res = await ApiSession.instance.client.videoJpActorWorks(
+      key: _str(actor['key']).isEmpty ? null : _str(actor['key']),
+      name: _str(actor['name']),
+      libraryId: widget.libraryId,
+      limit: '2000',
+      resolution: filter.resolution.isEmpty ? null : filter.resolution,
+      jpTag: filter.jpTag.isEmpty ? null : filter.jpTag,
+      genre: filter.genre.isEmpty ? null : filter.genre,
+      sourceId: filter.sourceId.isEmpty ? null : filter.sourceId,
+    );
+    return ((res['items'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((e) => VideoItem.fromJson(Map<String, dynamic>.from(e)))
+        .toList();
+  }
+
+  bool _sameJpFilter(VideoJpFilter a, VideoJpFilter b) =>
+      a.resolution == b.resolution &&
+      a.jpTag == b.jpTag &&
+      a.sourceId == b.sourceId &&
+      a.genre == b.genre;
+
+  Future<List<VideoItem>?> _fetchGridActorWorks(
+    Map<String, dynamic> actor,
+  ) async {
+    final filter = _filter;
+    final onlyUnwatched = _onlyUnwatched;
+    final loadedWorks = await _fetchActorWorks(actor, filter);
+    if (!mounted) return null;
+    if (!_sameJpFilter(filter, _filter) || onlyUnwatched != _onlyUnwatched) {
+      NasSnack.show(context, tr('video.jp.actorScopeChanged'));
+      return null;
+    }
+    final works = onlyUnwatched
+        ? loadedWorks.where((work) => !work.watched).toList()
+        : loadedWorks;
+    if (works.length >= 2000) {
+      NasSnack.show(context, tr('video.jp.actorWorksTooMany'));
+      return null;
+    }
+    final expected = onlyUnwatched
+        ? _int(actor['unwatchedCount'])
+        : _int(actor['count'] ?? actor['items']);
+    if (works.length != expected) {
+      NasSnack.show(context, tr('video.jp.actorScopeChanged'));
+      return null;
+    }
+    return works;
+  }
+
   void _closeActor() {
+    _worksRequestGeneration++;
     setState(() {
       _selected = null;
       _works = const [];
@@ -550,12 +604,19 @@ class _VideoJpActorPageState extends State<VideoJpActorPage> {
   ///   · 名单就是作品接口按同一份筛选返回的 ids（触到上限就拒绝，避免「全部」名不副实）；
   ///   · 走回收站（permanent: false）；
   ///   · 服务端只删这些条目及其关联行，绝不 delete jp_actors。
-  Future<void> _deleteFilteredWorks(Map<String, dynamic> actor) async {
-    if (_filter.isEmpty) {
+  Future<void> _deleteFilteredWorks(
+    Map<String, dynamic> actor, {
+    List<VideoItem>? scopedWorks,
+  }) async {
+    if (_filter.isEmpty && !_onlyUnwatched) {
       NasSnack.show(context, tr('video.jp.deleteNeedFilter'));
       return;
     }
-    final ids = _works.map((e) => e.id).toList();
+    final candidates = scopedWorks ?? _works;
+    final filtered = _onlyUnwatched
+        ? candidates.where((work) => !work.watched)
+        : candidates;
+    final ids = filtered.map((e) => e.id).toSet().toList();
     if (ids.isEmpty) return;
     if (ids.length >= 2000) {
       NasSnack.show(
@@ -586,6 +647,7 @@ class _VideoJpActorPageState extends State<VideoJpActorPage> {
     if (ok != true || !mounted) return;
     // 提前拿 messenger：后面要 await 删除任务，别把 BuildContext 带过异步间隙
     final messenger = ScaffoldMessenger.of(context);
+    final actorWasOpen = _selected == actor;
     setState(() => _worksLoading = true);
     try {
       final res = await ApiSession.instance.client.videoItemsDeleteTask(
@@ -596,7 +658,7 @@ class _VideoJpActorPageState extends State<VideoJpActorPage> {
         final task = await waitTask(taskId);
         if (task != null && task['state'] != 'done') {
           NasSnack.showOn(messenger, '${task['error'] ?? task['state']}');
-          await _openActor(actor);
+          if (actorWasOpen) await _openActor(actor);
           await _load();
           return;
         }
@@ -607,13 +669,116 @@ class _VideoJpActorPageState extends State<VideoJpActorPage> {
       );
       // 删完这批，这个人在当前筛选下可能就不再出现 —— 但她的档案和不符合
       // 筛选的影片都还在，取消筛选立刻能再看到她。
-      await _openActor(actor);
+      if (actorWasOpen) await _openActor(actor);
       await _load();
     } catch (e) {
       NasSnack.showOn(messenger, '$e');
     } finally {
       if (mounted) setState(() => _worksLoading = false);
     }
+  }
+
+  Future<void> _deleteFilteredWorksFromGrid(Map<String, dynamic> actor) async {
+    if (_filter.isEmpty && !_onlyUnwatched) {
+      NasSnack.show(context, tr('video.jp.deleteNeedFilter'));
+      return;
+    }
+    try {
+      final works = await _fetchGridActorWorks(actor);
+      if (works == null) return;
+      await _deleteFilteredWorks(actor, scopedWorks: works);
+    } catch (e) {
+      if (mounted) NasSnack.show(context, '$e');
+    }
+  }
+
+  Future<void> _markFilteredWorksWatched(Map<String, dynamic> actor) async {
+    try {
+      final works = await _fetchGridActorWorks(actor);
+      if (works == null) return;
+      final ids = works
+          .where((work) => !work.watched)
+          .map((work) => work.id)
+          .toList();
+      if (ids.isEmpty) return;
+      await ApiSession.instance.client.videoWatchMark(
+        body: VideoWatchBody(ids: ids, watched: true),
+      );
+      if (!mounted) return;
+      NasSnack.show(
+        context,
+        tr('video.jp.markFilteredWatchedDone', {'count': '${ids.length}'}),
+      );
+      await _load();
+    } catch (e) {
+      if (mounted) NasSnack.show(context, '$e');
+    }
+  }
+
+  List<NasMenuEntry> _actorMenuEntries(Map<String, dynamic> actor) {
+    final count = _int(actor['count'] ?? actor['items']);
+    final unwatched = _int(actor['unwatchedCount']);
+    final deleteCount = _onlyUnwatched ? unwatched : count;
+    return [
+      NasMenuEntry(
+        label: tr('video.jp.markFilteredWatched', {'count': '$unwatched'}),
+        icon: Icons.done_all,
+        onSelected: unwatched == 0
+            ? null
+            : () => unawaited(_markFilteredWorksWatched(actor)),
+      ),
+      const NasMenuEntry.divider(),
+      NasMenuEntry(
+        label: tr('video.jp.deleteWorksCount', {'count': '$deleteCount'}),
+        icon: Icons.delete_outline,
+        danger: true,
+        onSelected: () => unawaited(_deleteFilteredWorksFromGrid(actor)),
+      ),
+    ];
+  }
+
+  Future<void> _showActorActionSheet(Map<String, dynamic> actor) async {
+    final entries = _actorMenuEntries(actor);
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) {
+        final scheme = Theme.of(ctx).colorScheme;
+        return SafeArea(
+          child: ListView(
+            shrinkWrap: true,
+            children: [
+              for (final entry in entries)
+                if (entry.isDivider)
+                  const Divider()
+                else
+                  ListTile(
+                    dense: true,
+                    leading: entry.icon == null
+                        ? null
+                        : Icon(
+                            entry.icon,
+                            size: 20,
+                            color: entry.danger ? scheme.error : null,
+                          ),
+                    title: Text(
+                      entry.label,
+                      style: TextStyle(
+                        color: entry.danger ? scheme.error : null,
+                      ),
+                    ),
+                    onTap: entry.enabled
+                        ? () {
+                            Navigator.pop(ctx);
+                            entry.onSelected?.call();
+                          }
+                        : null,
+                  ),
+            ],
+          ),
+        );
+      },
+    );
   }
 
   List<Map<String, dynamic>> get _visibleActors {
@@ -857,8 +1022,15 @@ class _VideoJpActorPageState extends State<VideoJpActorPage> {
             mainAxisExtent: imgH + 64,
           ),
           itemCount: list.length,
-          itemBuilder: (context, i) =>
-              RepaintBoundary(child: _actorCard(list[i], cellW)),
+          itemBuilder: (context, i) {
+            final actor = list[i];
+            return RepaintBoundary(
+              child: NasContextMenuRegion(
+                entries: _actorMenuEntries(actor),
+                child: _actorCard(actor, cellW),
+              ),
+            );
+          },
         );
       },
     );
@@ -885,6 +1057,7 @@ class _VideoJpActorPageState extends State<VideoJpActorPage> {
     return InkWell(
       borderRadius: BorderRadius.circular(NasTokens.radiusSm),
       onTap: () => _openActorFromGrid(actor),
+      onLongPress: () => unawaited(_showActorActionSheet(actor)),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [

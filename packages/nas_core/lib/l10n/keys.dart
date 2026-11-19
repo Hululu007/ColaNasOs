@@ -2685,6 +2685,11 @@ class I18nKeys {
   static const videoJpDeleteWorks = 'video.jp.deleteWorks';
   static const videoJpDeleteWorksBody = 'video.jp.deleteWorksBody';
   static const videoJpDeleteWorksDone = 'video.jp.deleteWorksDone';
+  static const videoJpDeleteWorksCount = 'video.jp.deleteWorksCount';
+  static const videoJpMarkFilteredWatched = 'video.jp.markFilteredWatched';
+  static const videoJpMarkFilteredWatchedDone = 'video.jp.markFilteredWatchedDone';
+  static const videoJpActorWorksTooMany = 'video.jp.actorWorksTooMany';
+  static const videoJpActorScopeChanged = 'video.jp.actorScopeChanged';
   static const videoJpEmpty = 'video.jp.empty';
   static const videoJpEmptyActors = 'video.jp.emptyActors';
   static const videoJpFanart = 'video.jp.fanart';
@@ -3105,4 +3110,4 @@ class I18nKeys {
 }
 
 /// 契约键总数（生成时确定），供完整性自检使用。
-const int i18nKeyCount = 3054;
+const int i18nKeyCount = 3059;

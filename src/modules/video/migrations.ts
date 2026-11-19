@@ -1,7 +1,37 @@
 import { sql } from 'kysely';
 import type { Migration } from '../../../kernel/migrator';
+import { jpMetaOf } from './media-type';
 
 export const VIDEO_MIGRATIONS: Migration[] = [
+  {
+    // 扫描器现在识别 `-U.ltx`、`-U.4K` 等组合后缀和 NFO 标题关键词。
+    // 一次性回填旧行，避免要求用户重新探测每个视频文件。
+    id: '187_video_jp_uncensored_tags',
+    async up(db) {
+      const rows = await sql<{
+        id: string;
+        rel_path: string;
+        nfo_name: string | null;
+        nfo_original_name: string | null;
+      }>`
+        select v.id, v.rel_path, v.nfo_name, v.nfo_original_name
+          from video_items v
+          join video_libraries l on l.id = v.library_id
+         where v.uncensored = 0
+           and (l.lib_type = 'jp_movie' or l.jp_movie = 1)
+      `.execute(db);
+      const ids = rows.rows
+        .filter((row) => jpMetaOf(row.rel_path, row.nfo_name, row.nfo_original_name).uncensored)
+        .map((row) => row.id);
+      for (let offset = 0; offset < ids.length; offset += 400) {
+        const batch = ids.slice(offset, offset + 400);
+        await sql`
+          update video_items set uncensored = 1
+           where id in (${sql.join(batch.map((id) => sql`${id}`), sql`, `)})
+        `.execute(db);
+      }
+    },
+  },
   {
     // 字幕链路修好后（301 跳转 / 会话 cookie / 倒计时），把此前被旧链路误判成
     // 「站点无 / 无中文 / 失败」的条目清回待抓，让修好的链路能重来一轮。

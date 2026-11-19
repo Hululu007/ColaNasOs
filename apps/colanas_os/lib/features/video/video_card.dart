@@ -101,7 +101,7 @@ List<String> videoFlagsOf(VideoItem item) {
 
 /// 封面右上角角标。
 ///
-/// 顺序：中（中字）/ 字（内嵌字幕）/ LTX 或 无码 / 4K。
+/// 顺序：中（中字）/ 字（内嵌字幕）/ 无码或 LTX / 4K。两者同时命中时优先显示无码。
 /// 4K 不再走 `videoFlagsOf` 的通用画质行，避免同一张卡出现两个「4K」。
 class VideoCornerBadges extends StatelessWidget {
   const VideoCornerBadges({
@@ -127,10 +127,9 @@ class VideoCornerBadges extends StatelessWidget {
       if (chineseSub) _chip(tr('video.badge.chinese'), const Color(0xFF2E7D32)),
       if (hasSubtitle && !chineseSub)
         _chip(tr('video.badge.subtitle'), const Color(0xFF1565C0)),
-      if (ltx)
-        _chip('LTX', const Color(0xFF6A1B9A))
-      else if (uncensored)
+      if (uncensored)
         _chip(tr('video.badge.uncensored'), const Color(0xFFC62828)),
+      if (ltx && !uncensored) _chip('LTX', const Color(0xFF6A1B9A)),
       if (is4k) _chip('4K', const Color(0xFFB8860B)),
     ];
     if (chips.isEmpty) return const SizedBox.shrink();
@@ -597,7 +596,8 @@ class VideoHeroCard extends StatelessWidget {
             fit: StackFit.expand,
             children: [
               NasCoverImage(
-                url: artUrl ??
+                url:
+                    artUrl ??
                     videoPosterUrl(
                       item,
                       kind: 'fanart',
@@ -626,8 +626,7 @@ class VideoHeroCard extends StatelessWidget {
                   ),
                 ),
               ),
-              if (badge != null)
-                Positioned(top: 6, left: 6, child: badge!),
+              if (badge != null) Positioned(top: 6, left: 6, child: badge!),
               if (onMore != null)
                 Positioned(
                   top: 6,

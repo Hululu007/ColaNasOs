@@ -3499,6 +3499,17 @@
     "video.jp.deleteWorksDone": {
       "count": {}
     },
+    "video.jp.deleteWorksCount": {
+      "count": {}
+    },
+    "video.jp.markFilteredWatched": {
+      "count": {}
+    },
+    "video.jp.markFilteredWatchedDone": {
+      "count": {}
+    },
+    "video.jp.actorWorksTooMany": {},
+    "video.jp.actorScopeChanged": {},
     "video.jp.empty": {},
     "video.jp.emptyActors": {},
     "video.jp.fanart": {},
