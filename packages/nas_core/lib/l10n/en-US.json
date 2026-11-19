@@ -1673,7 +1673,7 @@
     "player.originalPlaybackFailed": "Original playback could not be confirmed. Choose H.265/AV1 transcoding or check the network and retry.",
     "player.playbackSource": "Playback source",
     "player.playlist": "Playlist",
-    "player.preparing": "Transcoding the first segment…",
+    "player.preparing": "Loading…",
     "player.preparingHint": "Detected {reason}. Converting to a browser-friendly HLS stream (starts as soon as the first segment is ready).",
     "player.preparingSlow": "Waiting {seconds}s for the first segment — the queue may be busy",
     "player.prev": "Previous",

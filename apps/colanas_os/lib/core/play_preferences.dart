@@ -25,13 +25,23 @@ class PlayPreferences {
         SettingsStore.instance.getString(_presetKey) ??
         SettingsStore.instance.getString('video.preset');
     final preset = playQualityPresetOf(saved ?? '');
-    return preset == null || preset.copy ? defaultPlayPreset : preset.key;
+    return preset == null || preset.copy
+        ? defaultPresetForPlatform
+        : preset.key;
   }
+
+  static const defaultTvPlayPreset = '2160p_15m';
+
+  static String get defaultPresetForPlatform =>
+      defaultPresetFor(tvMode: AppSettings.instance.tvMode.value);
+
+  static String defaultPresetFor({required bool tvMode}) =>
+      tvMode ? defaultTvPlayPreset : defaultPlayPreset;
 
   /// 用户**显式保存过**的档位；没存过返回 null。
   ///
   /// 播放器要用它判断「是不是第一次用」：TV 端第一次进来默认原画（电视本来就
-  /// 该放原片，转码是降级），桌面 / Web 仍然默认 [defaultPlayPreset]。
+  /// 该放原片，转码是降级），PC / 手机默认 1080P，TV 转码档位默认 4K。
   /// 不能直接用 [preset] 判断 —— 它已经把默认值填进去了，分不出「没存过」。
   static String? get savedPreset {
     final saved =
@@ -59,16 +69,23 @@ class PlayPreferences {
 
   /// 没存过编码时 TV 优先原码，其它端默认 H.265。
   static String get defaultCodecForPlatform =>
-      AppSettings.instance.tvMode.value ? 'original' : defaultPlayCodec;
+      defaultCodecFor(tvMode: AppSettings.instance.tvMode.value);
+
+  static String defaultCodecFor({required bool tvMode}) =>
+      tvMode ? 'original' : defaultPlayCodec;
 
   static AudioNormalizeMode get audioNormalizeMode {
     final store = SettingsStore.instance;
     return audioNormalizeModeFrom(
       store.getString(_normalizeKey) ?? store.getBool(_normalizeKey),
+      tvMode: AppSettings.instance.tvMode.value,
     );
   }
 
-  static AudioNormalizeMode audioNormalizeModeFrom(Object? storedValue) {
+  static AudioNormalizeMode audioNormalizeModeFrom(
+    Object? storedValue, {
+    bool tvMode = false,
+  }) {
     switch (storedValue) {
       case 'enabled':
         return AudioNormalizeMode.enabled;
@@ -78,9 +95,9 @@ class PlayPreferences {
         return AudioNormalizeMode.inherit;
     }
     // Previous bool=false meant "do not override the library setting".
-    return storedValue == true
-        ? AudioNormalizeMode.enabled
-        : AudioNormalizeMode.inherit;
+    if (storedValue == true) return AudioNormalizeMode.enabled;
+    if (storedValue == false) return AudioNormalizeMode.inherit;
+    return tvMode ? AudioNormalizeMode.disabled : AudioNormalizeMode.inherit;
   }
 
   static bool? get audioNormalizeOverride => switch (audioNormalizeMode) {
@@ -135,7 +152,7 @@ class PlayPreferences {
   }) async {
     final storedPreset =
         codec != 'original' && playQualityPresetOf(preset)?.copy == true
-        ? defaultPlayPreset
+        ? defaultPresetForPlatform
         : preset;
     await SettingsStore.instance.setString(_presetKey, storedPreset);
     await SettingsStore.instance.setString(_codecKey, codec);
@@ -144,7 +161,9 @@ class PlayPreferences {
   static Future<void> savePreset(String preset) =>
       SettingsStore.instance.setString(
         _presetKey,
-        playQualityPresetOf(preset)?.copy == true ? defaultPlayPreset : preset,
+        playQualityPresetOf(preset)?.copy == true
+            ? defaultPresetForPlatform
+            : preset,
       );
 
   static Future<void> saveCodec(String codec) async {
@@ -153,7 +172,10 @@ class PlayPreferences {
         SettingsStore.instance.getString('video.preset');
     if (codec != 'original' &&
         playQualityPresetOf(savedPreset ?? '')?.copy == true) {
-      await SettingsStore.instance.setString(_presetKey, defaultPlayPreset);
+      await SettingsStore.instance.setString(
+        _presetKey,
+        defaultPresetForPlatform,
+      );
     }
     await SettingsStore.instance.setString(_codecKey, codec);
   }

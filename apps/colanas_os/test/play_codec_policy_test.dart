@@ -44,4 +44,39 @@ void main() {
       AudioNormalizeMode.disabled,
     );
   });
+
+  test('platform defaults use 1080p on clients and 4K on TV', () {
+    expect(PlayPreferences.defaultPresetFor(tvMode: false), '1080p_3m');
+    expect(PlayPreferences.defaultPresetFor(tvMode: true), '2160p_15m');
+    expect(playQualityPresetOf('1080p_3m')!.bitrateFor('h265'), 1800);
+    expect(PlayPreferences.defaultCodecFor(tvMode: false), 'h265');
+    expect(PlayPreferences.defaultCodecFor(tvMode: true), 'original');
+  });
+
+  test(
+    'TV defaults to normalization off but preserves explicit preferences',
+    () {
+      expect(
+        PlayPreferences.audioNormalizeModeFrom(null, tvMode: false),
+        AudioNormalizeMode.inherit,
+      );
+      expect(
+        PlayPreferences.audioNormalizeModeFrom(null, tvMode: true),
+        AudioNormalizeMode.disabled,
+      );
+      expect(
+        PlayPreferences.audioNormalizeModeFrom('inherit', tvMode: true),
+        AudioNormalizeMode.inherit,
+      );
+      expect(
+        PlayPreferences.audioNormalizeModeFrom(true, tvMode: true),
+        AudioNormalizeMode.enabled,
+      );
+    },
+  );
+
+  test('tone mapping and stereo downmix default to off', () {
+    expect(PlayPreferences.toneMap, isFalse);
+    expect(PlayPreferences.audioDownmix, isFalse);
+  });
 }

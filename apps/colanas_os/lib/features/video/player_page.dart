@@ -15,6 +15,7 @@ import '../../core/audio_track_label.dart';
 import '../../core/client_log.dart';
 import '../../core/codec_support.dart';
 import '../../core/display_caps.dart';
+import '../../core/latest_seek_queue.dart';
 import '../../core/play_preferences.dart';
 import '../../core/play_quality.dart';
 import '../../core/play_quality_scope.dart';
@@ -293,6 +294,19 @@ class _PlayerPageState extends State<PlayerPage> {
 
   /// 正在按目标位置重建会话（跳到未转码区），期间忽略再次拖动。
   bool _jumping = false;
+  bool _seeking = false;
+
+  late final LatestSeekQueue _seekQueue = LatestSeekQueue(
+    onError: (error, stackTrace) {
+      ClientLogger.instance.warn(
+        '播放器 seek 命令失败：${error.runtimeType}',
+        route: 'player.seek/${_sessionId ?? 'direct'}',
+        detail: 'target=${_lastSeekTarget.inMilliseconds}ms',
+      );
+    },
+  );
+
+  static const _seekCommandTimeout = Duration(seconds: 8);
 
   /// 用户「想让它播」的意图：true = 应该在播（含正在缓冲），false = 用户自己按了暂停。
   ///
@@ -684,26 +698,13 @@ class _PlayerPageState extends State<PlayerPage> {
     // 连带转码会话与 open() 全都不执行（黑屏）。统一推到首帧之后再启动。
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      // 「要不要走转码」有两个理由，以前只认前一个：
-      //   1. 结构上直连不行（MKV / HEVC / DV / 浏览器不认的容器）—— _needTranscode；
-      //   2. 用户自己存了转码档（比如 1080P 2.4M）—— 这时根本就不该碰直链。
-      // 只判 1 的后果（2026-11-17 实测）：片源是 MP4 + H.264，结构上「能直连」，
-      // 于是一进播放页就拿 4K 原片（55Mbps）去 open，外网根本喂不饱 →
-      // 8 秒只走 2.5 秒（0.3 倍速），用户看到「播几秒停十几秒」；同时直连守卫
-      // 十几秒后判定「原画无画面」，又弹一条「原画播放失败，已切到 1080P」——
-      // 明明用户从头到尾选的都是 1080P，界面却在演「自己改画质」。
-      //
-      // 只认「显式存过」的档位（savedPreset != null）：从没选过画质的桌面 / Web
-      // 用户保持原来的直连（4K 片不该因为一个默认值就被压成 1080P），
-      // 手机端首次进来仍由直连守卫按实测速度兜底。
+      // 请求转码的原因：源格式不适合直连，或所选策略是 H.265 / AV1。
+      // 原码策略保持直连优先；编码策略不能因为用户尚未保存过偏好就被忽略。
       //
       // 注意 initialPreset != null 时调用方已经建好会话（详情页「转码」对话框），
       // 那个地址本身就是目标档位，必须直接 open，不能再自己建一遍会话。
-      final savedPreset = PlayPreferences.savedPreset;
       final wantsTranscode =
-          widget.initialPreset == null &&
-          savedPreset != null &&
-          savedPreset != 'original';
+          widget.initialPreset == null && _codec != 'original';
       if ((_needTranscode || wantsTranscode) && widget.itemId != null) {
         // 以前这里会把「原画」直接改写成 1080P 3M —— 于是用户明明选了原画，
         // 播放器却自己降档（「过了一会儿变成 1080p 3m」的主因之一）。
@@ -910,6 +911,7 @@ class _PlayerPageState extends State<PlayerPage> {
     bool? autoPlay,
   }) async {
     _url = u;
+    _seekQueue.invalidate();
     _lastOpenAt = DateTime.now();
     // 音频处理由服务端 HLS 会话承担；每次换源都清掉播放器侧可能残留的滤镜。
     _applyDirectAudio();
@@ -962,7 +964,7 @@ class _PlayerPageState extends State<PlayerPage> {
       if (seekTo != null && seekTo > Duration.zero) {
         // HLS 首帧就绪前 seek 会被吞掉，等一小拍再跳
         await Future<void>.delayed(const Duration(milliseconds: 350));
-        await _player.seek(seekTo);
+        await _queuePlayerSeek(seekTo, _seekGen, showLoading: false);
       }
       // 良性错误重试链里不能清零，否则「报错→重开→成功清零→又报错」无限循环，
       // 永远走不到 _benignRetries >= 2，黑屏且不显示任何错误。
@@ -1721,9 +1723,7 @@ class _PlayerPageState extends State<PlayerPage> {
 
   /// 「原码」没法直连时退到哪一档。
   ///
-  /// 桌面端保片源分辨率（4K 片退 4K，不退 1080P）：用户选的就是原画，
-  /// 掉分辨率比多占一点转码算力更难受。TV 按方案退默认转码档，
-  /// 因为电视解码 / 网络更脆弱，1080P 3M 的起播和拖动都更稳。
+  /// 桌面端保片源分辨率；TV 按默认 4K 档回退，手机按默认 1080P 档回退。
   String _transcodeFallback({String? codec}) {
     final c = codec ?? _codec;
     // 手机 / 平板（安卓、iOS）：网络和解码都比桌面脆。实测 4K 源退到「保分辨率」
@@ -1737,7 +1737,7 @@ class _PlayerPageState extends State<PlayerPage> {
     if (kIsWeb || _tvMode || handheld) {
       final pref = PlayPreferences.savedPreset;
       final base = (pref == null || pref == 'original')
-          ? defaultPlayPreset
+          ? PlayPreferences.defaultPresetForPlatform
           : pref;
       return clampPresetForSource(base, _srcHeight, codec: c);
     }
@@ -1881,7 +1881,7 @@ class _PlayerPageState extends State<PlayerPage> {
       // 起播，别让用户对着「切换失败」自己找画质菜单。
       if (!toDirect && effective == 'original' && _tvMode) {
         final fallback = clampPresetForSource(
-          defaultPlayPreset,
+          PlayPreferences.defaultPresetForPlatform,
           _srcHeight,
           codec: transcodeCodec,
         );
@@ -2511,7 +2511,8 @@ class _PlayerPageState extends State<PlayerPage> {
       startMs: _startMs,
       lastTargetMs: _lastSeekTarget.inMilliseconds,
       jumping: _jumping,
-      streamPending: _pendingJump != null || _pendingStartMs != null,
+      streamPending:
+          _pendingJump != null || _pendingStartMs != null || _seeking,
     );
     return Duration(milliseconds: ms < 0 ? 0 : ms);
   }
@@ -2650,6 +2651,7 @@ class _PlayerPageState extends State<PlayerPage> {
     // [_awaitProduced] 里等转码（最多 8 秒），等回来时用户早就换了目标 ——
     // 不拦的话就会「跳到最后一次，又被前一次的旧目标盖回去」。
     final gen = ++_seekGen;
+    if (_seeking) setState(() => _seeking = false);
     final total = _timelineDuration(_player.state.duration);
     var t = target;
     if (t < Duration.zero) t = Duration.zero;
@@ -2662,9 +2664,16 @@ class _PlayerPageState extends State<PlayerPage> {
       final limit = _seekLimit(_player.state.duration);
       if (_isTranscode && limit > Duration.zero && t > limit) t = limit;
       if (allowJump) _beginSeekRecovery(t);
-      await _player.seek(t);
+      try {
+        final applied = await _queuePlayerSeek(t, gen, showLoading: allowJump);
+        if (!applied) return;
+      } catch (e) {
+        await _recoverFailedSeek(t, gen, e);
+        return;
+      }
       if (!mounted || gen != _seekGen) return;
       _poke();
+      _armStallWatch(target: t);
       // Web 上 seek 会把当前 play() 打断（"interrupted by a new load request"），
       // 浏览器不会自己续上；想让位置动起来只能显式再 play。仅当用户意图是播。
       if (_wantPlay) unawaited(_ensurePlayingAfterOpen());
@@ -2710,7 +2719,17 @@ class _PlayerPageState extends State<PlayerPage> {
 
     Future<void> seekHere() async {
       if (allowJump) _beginSeekRecovery(t);
-      await _player.seek(t - _startOffset);
+      try {
+        final applied = await _queuePlayerSeek(
+          t - _startOffset,
+          gen,
+          showLoading: allowJump,
+        );
+        if (!applied) return;
+      } catch (e) {
+        await _recoverFailedSeek(t, gen, e);
+        return;
+      }
       if (!mounted || gen != _seekGen) return;
       _poke();
       if (_wantPlay) unawaited(_ensurePlayingAfterOpen());
@@ -2740,6 +2759,7 @@ class _PlayerPageState extends State<PlayerPage> {
       // 不再是无声冻屏；等不到就按「点了时间条」重建会话。
       final budget = clampWaitBudget(over);
       bool produced;
+      if (_seeking) setState(() => _seeking = false);
       _markWaitingTarget(t);
       try {
         produced = await _awaitProduced(t, budget: budget);
@@ -2802,6 +2822,47 @@ class _PlayerPageState extends State<PlayerPage> {
     await _jumpTo(t);
   }
 
+  Future<bool> _queuePlayerSeek(
+    Duration position,
+    int gen, {
+    required bool showLoading,
+  }) async {
+    if (showLoading && mounted && !_seeking) {
+      setState(() => _seeking = true);
+    }
+    try {
+      return await _seekQueue.enqueue(() async {
+        if (!mounted || gen != _seekGen) return;
+        await _player.seek(position).timeout(_seekCommandTimeout);
+      });
+    } finally {
+      if (showLoading && mounted && gen == _seekGen && _seeking) {
+        setState(() => _seeking = false);
+      }
+    }
+  }
+
+  Future<void> _recoverFailedSeek(
+    Duration target,
+    int gen,
+    Object error,
+  ) async {
+    if (!mounted || gen != _seekGen) return;
+    ClientLogger.instance.warn(
+      'seek 失败，尝试恢复：${error.runtimeType}',
+      route: 'player.seek/${_sessionId ?? 'direct'}',
+      detail: 'target=${target.inMilliseconds}ms',
+    );
+    if (_isTranscode && widget.itemId != null) {
+      await _jumpTo(target);
+      return;
+    }
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    if (messenger != null && mounted) {
+      NasSnack.showOn(messenger, tr('player.seekFailed', {'error': '$error'}));
+    }
+  }
+
   /// 播放停滞看门狗：**每秒一拍盯着画面到底有没有往前走**，卡住就自己救回来。
   ///
   /// 用户原话：「如果加载了就自动播，如果没加载你就转码加载就行，为什么现在卡住了？」
@@ -2838,6 +2899,7 @@ class _PlayerPageState extends State<PlayerPage> {
     if (_preparing) return '首帧准备';
     if (_switching) return '换档中';
     if (_jumping) return '跳转中';
+    if (_seeking) return '播放器跳转中';
     if (_waitingTarget != null) return '等转码追上';
     if (!_wantPlay) return '用户暂停';
     if (_error != null) return '错误页';
@@ -2975,9 +3037,12 @@ class _PlayerPageState extends State<PlayerPage> {
     if (!mounted || !_wantPlay) return;
     _nudgeTranscode(at);
     try {
-      await _player.seek(at - _startOffset);
+      final applied = await _seekQueue.enqueue(() async {
+        await _player.seek(at - _startOffset).timeout(_seekCommandTimeout);
+      });
+      if (!applied) return;
     } catch (_) {
-      /* seek 失败不影响后面继续补救 */
+      /* seek 失败已记录，不影响后续补救 */
     }
     if (!mounted) return;
     // seek 会让 position 立刻回到 at，水位要跟着重置，否则下一拍就误判「涨了」
@@ -3070,11 +3135,15 @@ class _PlayerPageState extends State<PlayerPage> {
       _pendingJumpGen = _seekGen;
       return;
     }
+    _seekQueue.invalidate();
     final seekGen = _seekGen;
     final jumpRunGen = ++_jumpRunGen;
     _beginSeekRecovery(target);
     final messenger = ScaffoldMessenger.maybeOf(context);
-    setState(() => _jumping = true);
+    setState(() {
+      _jumping = true;
+      _seeking = false;
+    });
     _jumpingSince = DateTime.now();
     try {
       final sessionCodec = _codec == 'original'
@@ -4482,12 +4551,14 @@ class _PlayerPageState extends State<PlayerPage> {
         ),
       );
     }
-    if (_switching || _jumping || _waitingTarget != null) {
+    if (_switching || _jumping || _seeking || _waitingTarget != null) {
       final String label;
       if (_jumping) {
         label = tr('player.seekingTarget');
       } else if (_switching) {
         label = tr('player.switching');
+      } else if (_seeking) {
+        label = tr('common.loading');
       } else {
         // 目标还没转出来：明确告诉用户「在转，别走」，而不是让画面静静冻着
         label = tr('player.waitingTarget', {'time': _fmt(_waitingTarget!)});

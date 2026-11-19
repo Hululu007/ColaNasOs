@@ -1673,7 +1673,7 @@
     "player.originalPlaybackFailed": "无法确认原码直连可播放。可选择 H.265/AV1 转码，或检查网络后重试。",
     "player.playbackSource": "播放来源",
     "player.playlist": "播放列表",
-    "player.preparing": "首片转码中…",
+    "player.preparing": "加载中…",
     "player.preparingHint": "检测到 {reason}，正在转为浏览器可播的 HLS（边转边播，首片就绪即可开始）",
     "player.preparingSlow": "首片转码已等待 {seconds} 秒，任务可能在排队",
     "player.prev": "上一个",
