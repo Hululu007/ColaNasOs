@@ -46,7 +46,6 @@ enum _TvTabKind {
   profile,
 }
 
-
 class _TvTab {
   const _TvTab({
     required this.id,
@@ -77,11 +76,7 @@ class _TvShellState extends State<TvShell> {
 
   /// TV 版面暂不提供的分区：相册 / 文件 / 设置在遥控器上没有像样的入口，
   /// 挂上去只会把顶部 tab 挤满（实测 8 个 tab 就要横向滚）。
-  static const Set<String> _hiddenApps = <String>{
-    'photo',
-    'files',
-    'settings',
-  };
+  static const Set<String> _hiddenApps = <String>{'photo', 'files', 'settings'};
 
   final TvBackController _back = TvBackController();
 
@@ -95,6 +90,15 @@ class _TvShellState extends State<TvShell> {
   final Map<String, FocusNode> _tabNodes = <String, FocusNode>{};
   final Map<String, FocusNode> _contentNodes = <String, FocusNode>{};
   final List<Timer> _contentFocusRetries = <Timer>[];
+
+  /// 顶层「再按一次返回退出」的 armed 状态与倒计时。
+  /// 只有连着两次返回（中间没按别的键、没超时）才真的退出。
+  Timer? _exitTimer;
+  bool _exitArmed = false;
+
+  /// 同一次物理返回键可能同时走 PopScope（系统返回）和 KeyEvent（goBack），
+  /// 不去重就会被算成「连按两次」直接退出。150ms 内的第二次只当同一个事件。
+  DateTime? _lastBackAt;
 
   List<_TvTab> _tabs = const <_TvTab>[];
   String? _selectedTabId;
@@ -111,6 +115,7 @@ class _TvShellState extends State<TvShell> {
 
   @override
   void dispose() {
+    _exitTimer?.cancel();
     for (final timer in _contentFocusRetries) {
       timer.cancel();
     }
@@ -151,7 +156,8 @@ class _TvShellState extends State<TvShell> {
       // （合集本身是电影 / 剧集的集合，排在图片库后面没道理）。音乐紧跟其后。
       var hasCollections = false;
       try {
-        final collections = await ApiSession.instance.client.videoCollectionList();
+        final collections = await ApiSession.instance.client
+            .videoCollectionList();
         hasCollections = collections.items.isNotEmpty;
       } catch (_) {
         hasCollections = false;
@@ -199,9 +205,7 @@ class _TvShellState extends State<TvShell> {
           id: app.id,
           label: tr(app.nameKey),
           icon: AppVisuals.iconFor(app.icon),
-          kind: app.id == 'music'
-              ? _TvTabKind.music
-              : _TvTabKind.placeholder,
+          kind: app.id == 'music' ? _TvTabKind.music : _TvTabKind.placeholder,
           app: app,
         ),
       );
@@ -319,10 +323,8 @@ class _TvShellState extends State<TvShell> {
     app: app,
   );
 
-  FocusNode _tabNodeFor(String id) => _tabNodes.putIfAbsent(
-    id,
-    () => FocusNode(debugLabel: 'tv-tab-$id'),
-  );
+  FocusNode _tabNodeFor(String id) =>
+      _tabNodes.putIfAbsent(id, () => FocusNode(debugLabel: 'tv-tab-$id'));
 
   FocusNode _contentNodeFor(String id) => _contentNodes.putIfAbsent(
     id,
@@ -439,7 +441,11 @@ class _TvShellState extends State<TvShell> {
     final isDown = event is KeyDownEvent;
     final isRepeat = event is KeyRepeatEvent;
     if (!isDown && !isRepeat) return KeyEventResult.ignored;
-    switch (_resolve(event)) {
+    final key = _resolve(event);
+    // 「再按一次退出」的计数只对连续两次返回有效：其它任何键都清零，
+    // 包括方向键、OK、媒体键。长按返回（repeat）不重复计数。
+    if (key != _TvKey.back) _disarmExit();
+    switch (key) {
       case _TvKey.left:
         _onHorizontal(-1);
         return KeyEventResult.handled;
@@ -502,40 +508,58 @@ class _TvShellState extends State<TvShell> {
       if (id != null) _focusContent(id);
       return;
     }
-    _moveFocus(TraversalDirection.down);
+    // 内容区：↓ 就是往下一行，走到底部没有下一行就停住（不跳去别的地方）。
+    _moveContentRow(up: false);
   }
 
   void _onUp() {
     if (_tabsFocused) return;
-    final current = FocusManager.instance.primaryFocus;
-    // 详情 / 子页面里 ↑ 只在页面内部移动，不跳回 tab（返回键才回上一级）。
-    if (_back.hasOverlay) {
-      _moveFocus(TraversalDirection.up);
-      return;
-    }
-    // 内容区还有上一行 → 行内上移；已在首行 → 回顶部 tab。
-    // 不能直接交给方向遍历：tab 栏在内容上方，遍历可能随机落到某个 tab 上。
-    if (current != null && _hasContentNodeAbove(current)) {
-      _moveFocus(TraversalDirection.up);
-      return;
-    }
-    _focusTabs();
+    // ↑ 先往上一行；只有「这一页最顶上、确实没有上一行」才回顶部 tab。
+    // 详情 / 子页面同样按行移动，但顶上不跳 tab（回上一级由返回键负责）。
+    if (_moveContentRow(up: true)) return;
+    if (!_back.hasOverlay) _focusTabs();
   }
 
-  bool _hasContentNodeAbove(FocusNode current) {
+  /// 按**行**移动焦点，一次一行。
+  ///
+  /// 不用 `focusInDirection`：方向遍历按矩形打分，遇上泳道里横向可滚的卡片、
+  /// 网格里不同高度的卡片，经常斜着跳或者直接落到顶部 tab 上 —— 表现就是
+  /// 「一按上就回 tab」。这里自己按焦点矩形的中心算「上一行 / 下一行」：
+  /// 先取垂直距离最近的一行，再在这一行里挑水平位置最贴近当前列的卡片。
+  /// 返回 false 表示这个方向已经没有行了。
+  bool _moveContentRow({required bool up}) {
+    final current = FocusManager.instance.primaryFocus;
+    if (current == null || current.context == null) return false;
     final scope = current.nearestScope;
-    if (scope == null) return false;
+    final cur = current.rect;
+    if (scope == null || cur.isEmpty || cur.height <= 0) return false;
     final barBottom = _tabBarFocusNode.rect.bottom;
-    final top = current.rect.top;
+    final cx = cur.center.dx;
+    final cy = cur.center.dy;
+    FocusNode? best;
+    double bestDy = double.infinity;
+    double bestDx = double.infinity;
     for (final node in scope.traversalDescendants) {
-      if (node == current) continue;
-      final rect = node.rect;
-      if (rect.bottom > top + 1) continue;
-      // tab 栏里的节点不算「内容区的上一行」
-      if (rect.top < barBottom - 1) continue;
-      return true;
+      if (node == current || !node.canRequestFocus || node.context == null) {
+        continue;
+      }
+      final r = node.rect;
+      if (r.isEmpty || r.width <= 0 || r.height <= 0) continue;
+      // tab 栏 / 品牌行不在内容区，不能当「上一行」。
+      if (r.top < barBottom - 1) continue;
+      final dy = up ? cy - r.center.dy : r.center.dy - cy;
+      // 同一行的卡片（高度略有差异时中心也会错开几像素）不算下一行。
+      if (dy < cur.height * 0.4) continue;
+      final dx = (r.center.dx - cx).abs();
+      if (dy < bestDy - 1 || (dy <= bestDy + 1 && dx < bestDx)) {
+        best = node;
+        bestDy = dy;
+        bestDx = dx;
+      }
     }
-    return false;
+    if (best == null) return false;
+    best.requestFocus();
+    return true;
   }
 
   void _activateFocused() {
@@ -552,16 +576,42 @@ class _TvShellState extends State<TvShell> {
   }
 
   void _onBack() {
+    final now = DateTime.now();
+    final last = _lastBackAt;
+    if (last != null && now.difference(last).inMilliseconds < 150) return;
+    _lastBackAt = now;
     // 1) 详情 / 子页面 → 上一级列表（由当前分区消费）
-    if (_back.handle()) return;
-    // 2) 内容区 → 顶部 tab
+    if (_back.handle()) {
+      _disarmExit();
+      return;
+    }
+    // 2) 内容区 → 回到「刚刚选中的这个栏目」的 tab，而不是随便一个 tab。
     if (!_tabsFocused) {
+      _disarmExit();
       _focusTabs();
       return;
     }
-    // 3) 已在最顶层：Android TV 上退出应用；网页预览保持不动
-    if (kIsWeb) return;
-    SystemNavigator.pop();
+    // 3) 已经站在 tab 上：第一次给提示，超时前再按一次才退出。
+    //    网页预览没有「退出应用」这回事，只演示提示，不真的关页面。
+    if (_exitArmed) {
+      _disarmExit();
+      if (!kIsWeb) SystemNavigator.pop();
+      return;
+    }
+    _exitTimer?.cancel();
+    setState(() => _exitArmed = true);
+    _exitTimer = Timer(const Duration(seconds: 3), () {
+      if (mounted && _exitArmed) setState(() => _exitArmed = false);
+    });
+  }
+
+  /// 除了「连续第二次返回」以外的任何情况都把退出计数清零：按了别的键、
+  /// 回了上一级、切了分区、超时。
+  void _disarmExit() {
+    _exitTimer?.cancel();
+    _exitTimer = null;
+    if (_exitArmed && mounted) setState(() => _exitArmed = false);
+    _exitArmed = false;
   }
 
   void _focusTabs() {
@@ -646,28 +696,64 @@ class _TvShellState extends State<TvShell> {
         onKeyEvent: _onKey,
         child: Scaffold(
           backgroundColor: Colors.transparent,
-          body: SafeArea(
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final m = TvMetrics.of(constraints.maxWidth);
-                return TvMetricsScope(
-                  metrics: m,
-                  child: Padding(
-                    padding: EdgeInsets.all(m.px(18)),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        _buildBrandRow(context, m),
-                        SizedBox(height: m.px(10)),
-                        _buildTabBar(context, m),
-                        SizedBox(height: m.px(14)),
-                        Expanded(child: _buildContentPanel(context, m)),
-                        const TvNowPlayingBar(),
-                      ],
-                    ),
-                  ),
-                );
-              },
+          body: Stack(
+            children: [
+              SafeArea(
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final m = TvMetrics.of(constraints.maxWidth);
+                    return TvMetricsScope(
+                      metrics: m,
+                      child: Padding(
+                        padding: EdgeInsets.all(m.px(14)),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            _buildBrandRow(context, m),
+                            SizedBox(height: m.px(6)),
+                            _buildTabBar(context, m),
+                            SizedBox(height: m.px(10)),
+                            Expanded(child: _buildContentPanel(context, m)),
+                            const TvNowPlayingBar(),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+              if (_exitArmed) _buildExitPrompt(context),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 顶层返回提示：全屏时也能看见，3 秒后自动消失。
+  Widget _buildExitPrompt(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Positioned(
+      left: 0,
+      right: 0,
+      bottom: 48,
+      child: IgnorePointer(
+        child: Center(
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: scheme.inverseSurface.withValues(alpha: 0.92),
+              borderRadius: BorderRadius.circular(28),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
+              child: Text(
+                tr('tv.exit.hint'),
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                  color: scheme.onInverseSurface,
+                ),
+              ),
             ),
           ),
         ),
@@ -685,26 +771,23 @@ class _TvShellState extends State<TvShell> {
       children: [
         Image.asset(
           'assets/branding/app_icon.png',
-          width: m.px(34),
-          height: m.px(34),
+          width: m.px(26),
+          height: m.px(26),
           cacheWidth: 96,
           filterQuality: FilterQuality.medium,
         ),
-        SizedBox(width: m.px(10)),
+        SizedBox(width: m.px(8)),
         Text(
           'ColaNasOs',
           style: TextStyle(
-            fontSize: m.px(19),
+            fontSize: m.px(16),
             fontWeight: FontWeight.w800,
             color: scheme.onSurface,
           ),
         ),
-        SizedBox(width: m.px(8)),
+        SizedBox(width: m.px(7)),
         Container(
-          padding: EdgeInsets.symmetric(
-            horizontal: m.px(8),
-            vertical: m.px(2),
-          ),
+          padding: EdgeInsets.symmetric(horizontal: m.px(7), vertical: m.px(1)),
           decoration: BoxDecoration(
             color: scheme.primary.withValues(alpha: 0.16),
             borderRadius: BorderRadius.circular(m.px(99)),
@@ -712,14 +795,14 @@ class _TvShellState extends State<TvShell> {
           child: Text(
             'TV',
             style: TextStyle(
-              fontSize: m.px(12),
+              fontSize: m.px(10),
               fontWeight: FontWeight.w800,
-              letterSpacing: 1.1,
+              letterSpacing: 1.0,
               color: scheme.primary,
             ),
           ),
         ),
-        SizedBox(width: m.px(14)),
+        SizedBox(width: m.px(12)),
         Expanded(
           flex: 3,
           child: Text(
@@ -727,7 +810,7 @@ class _TvShellState extends State<TvShell> {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
-              fontSize: m.px(13),
+              fontSize: m.px(12),
               color: scheme.onSurfaceVariant,
             ),
           ),
@@ -741,7 +824,7 @@ class _TvShellState extends State<TvShell> {
             textAlign: TextAlign.right,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
-              fontSize: m.px(12),
+              fontSize: m.px(11),
               color: scheme.onSurfaceVariant,
             ),
           ),
@@ -753,7 +836,7 @@ class _TvShellState extends State<TvShell> {
   Widget _buildTabBar(BuildContext context, TvMetrics m) {
     if (_loadingTabs) {
       return SizedBox(
-        height: m.px(64),
+        height: m.px(48),
         child: const Center(child: CircularProgressIndicator()),
       );
     }
@@ -785,12 +868,12 @@ class _TvShellState extends State<TvShell> {
               scrollDirection: Axis.horizontal,
               padding: EdgeInsets.symmetric(
                 horizontal: m.px(2),
-                vertical: m.px(6),
+                vertical: m.px(4),
               ),
               child: Row(
                 children: [
                   for (var i = 0; i < scrollTabs.length; i += 1) ...[
-                    if (i > 0) SizedBox(width: m.px(12)),
+                    if (i > 0) SizedBox(width: m.px(9)),
                     _TvTabItem(
                       key: ValueKey<String>('tab-${scrollTabs[i].id}'),
                       tab: scrollTabs[i],
@@ -809,9 +892,9 @@ class _TvShellState extends State<TvShell> {
           ),
           // 「我的」贴最右边，不跟着中间 tab 一起横滑。
           for (final tab in pinned) ...[
-            SizedBox(width: m.px(12)),
+            SizedBox(width: m.px(9)),
             Padding(
-              padding: EdgeInsets.symmetric(vertical: m.px(6)),
+              padding: EdgeInsets.symmetric(vertical: m.px(4)),
               child: _TvTabItem(
                 key: ValueKey<String>('tab-${tab.id}'),
                 tab: tab,
@@ -833,14 +916,12 @@ class _TvShellState extends State<TvShell> {
   Widget _buildContentPanel(BuildContext context, TvMetrics m) {
     final tab = _selectedTab;
     return ClipRRect(
-      borderRadius: BorderRadius.circular(m.px(22)),
+      borderRadius: BorderRadius.circular(m.px(18)),
       child: ColoredBox(
         color: context.nasStyle.panelColor,
         child: Padding(
-          padding: EdgeInsets.all(m.px(18)),
-          child: tab == null
-              ? const SizedBox.shrink()
-              : _buildSection(tab),
+          padding: EdgeInsets.all(m.px(12)),
+          child: tab == null ? const SizedBox.shrink() : _buildSection(tab),
         ),
       ),
     );
@@ -912,19 +993,16 @@ class _TvTabItem extends StatelessWidget {
       focusNode: focusNode,
       onTap: onTap,
       onFocused: onFocused,
-      radius: m.px(16),
+      radius: m.px(14),
       focusScale: 1.04,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 160),
-        padding: EdgeInsets.symmetric(
-          horizontal: m.px(20),
-          vertical: m.px(12),
-        ),
+        padding: EdgeInsets.symmetric(horizontal: m.px(15), vertical: m.px(8)),
         decoration: BoxDecoration(
           color: selected
               ? scheme.primary.withValues(alpha: 0.2)
               : scheme.onSurface.withValues(alpha: 0.06),
-          borderRadius: BorderRadius.circular(m.px(16)),
+          borderRadius: BorderRadius.circular(m.px(14)),
           border: Border.all(
             color: selected
                 ? scheme.primary.withValues(alpha: 0.55)
@@ -936,18 +1014,18 @@ class _TvTabItem extends StatelessWidget {
           children: [
             Icon(
               tab.icon,
-              size: m.px(24),
+              size: m.px(19),
               color: selected ? scheme.primary : scheme.onSurfaceVariant,
             ),
-            SizedBox(width: m.px(10)),
+            SizedBox(width: m.px(8)),
             ConstrainedBox(
-              constraints: BoxConstraints(maxWidth: m.px(300)),
+              constraints: BoxConstraints(maxWidth: m.px(240)),
               child: Text(
                 tab.label,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                  fontSize: m.px(20),
+                  fontSize: m.px(17),
                   fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
                   color: selected ? scheme.onSurface : scheme.onSurfaceVariant,
                 ),

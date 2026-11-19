@@ -227,8 +227,7 @@ class _TvVideoLibrarySectionState extends State<TvVideoLibrarySection> {
       if (!mounted) return;
 
       final progressById = <String, VideoProgressItem>{
-        for (final entry
-            in progressRes?.items ?? const <VideoProgressItem>[])
+        for (final entry in progressRes?.items ?? const <VideoProgressItem>[])
           entry.itemId: entry,
       };
       final itemById = <String, VideoItem>{
@@ -349,15 +348,16 @@ class _TvVideoLibrarySectionState extends State<TvVideoLibrarySection> {
         for (final item in items) item.id: item,
       };
       final progressById = <String, VideoProgressItem>{
-        for (final entry
-            in progressRes?.items ?? const <VideoProgressItem>[])
+        for (final entry in progressRes?.items ?? const <VideoProgressItem>[])
           entry.itemId: entry,
       };
 
       // 用户合集：只保留当前库里真的有影片的，避免把别的库的合集混进来。
       final excluded = <String>{};
       final userCollections = <TvMovieCollection>[];
-      final rawCollections = (userRes?.items ?? const <VideoCollection>[]).take(12);
+      final rawCollections = (userRes?.items ?? const <VideoCollection>[]).take(
+        12,
+      );
       final fetched = await Future.wait(
         rawCollections.map((raw) async {
           final res = await _safe(client.videoCollectionItems(id: raw.id));
@@ -365,10 +365,11 @@ class _TvVideoLibrarySectionState extends State<TvVideoLibrarySection> {
         }),
       );
       for (final entry in fetched) {
-        final movies = (entry.res?.items ?? const <VideoItem>[])
-            .where((movie) => movie.libraryId == widget.library.id)
-            .toList()
-          ..sort((a, b) => (a.year ?? 0).compareTo(b.year ?? 0));
+        final movies =
+            (entry.res?.items ?? const <VideoItem>[])
+                .where((movie) => movie.libraryId == widget.library.id)
+                .toList()
+              ..sort((a, b) => (a.year ?? 0).compareTo(b.year ?? 0));
         if (movies.isEmpty) continue;
         userCollections.add(
           TvMovieCollection(
@@ -384,10 +385,7 @@ class _TvVideoLibrarySectionState extends State<TvVideoLibrarySection> {
 
       // 片名启发式合集（同基名 >= 2 部），用户合集里的影片不再重复参与。
       final heuristic = buildMovieCollections(items, excluded: excluded);
-      final collections = <TvMovieCollection>[
-        ...userCollections,
-        ...heuristic,
-      ];
+      final collections = <TvMovieCollection>[...userCollections, ...heuristic];
 
       // 全部影片：未看（含看到一半）在前，组内保持入库时间倒序。
       // 合集成员也在其中：合集是入口，不该让单部影片从列表里消失。
@@ -771,8 +769,8 @@ class _TvVideoLibrarySectionState extends State<TvVideoLibrarySection> {
     return SingleChildScrollView(
       padding: EdgeInsets.only(top: m.px(4), bottom: m.px(24)),
       child: Wrap(
-        spacing: m.px(24),
-        runSpacing: m.px(26),
+        spacing: m.px(14),
+        runSpacing: m.px(14),
         children: [
           for (var i = 0; i < _items.length; i += 1)
             _TvLibraryCard(
@@ -787,18 +785,20 @@ class _TvVideoLibrarySectionState extends State<TvVideoLibrarySection> {
 
   // ---------------------------------------------------------------- 网格工具
 
-  /// 一行 6 列的卡片网格（与剧集 / 电影列表同一口径）。
+  /// 卡片网格：列数按屏宽自适应（与剧集 / 电影列表同一口径）。
   Widget _sixColumns(TvMetrics m, List<Widget> Function(double width) cells) {
     return Padding(
-      padding: EdgeInsets.symmetric(horizontal: m.px(8)),
+      padding: EdgeInsets.symmetric(horizontal: m.px(6)),
       child: LayoutBuilder(
         builder: (context, constraints) {
-          final gap = m.px(18);
-          // 减 1px：浮点误差会让第 6 张掉到下一行
-          final width = (constraints.maxWidth - gap * 5) / 6 - 1;
+          final gap = m.px(14);
+          final columns = tvGridColumns(constraints.maxWidth, m);
+          // 减 1px：浮点误差会让最后一列掉到下一行
+          final width =
+              (constraints.maxWidth - gap * (columns - 1)) / columns - 1;
           return Wrap(
             spacing: gap,
-            runSpacing: m.px(20),
+            runSpacing: m.px(14),
             children: <Widget>[
               for (final cell in cells(width))
                 SizedBox(width: width, child: cell),
@@ -851,26 +851,31 @@ class _TvVideoLibrarySectionState extends State<TvVideoLibrarySection> {
             ),
           ),
           if (_folders.isNotEmpty)
-            _sixColumns(m, (w) => <Widget>[
-              for (var i = 0; i < _folders.length; i += 1)
-                _TvFolderCard(
-                  folder: _folders[i],
-                  focusNode: i == 0 ? _firstFocus : null,
-                  onTap: () => _enterFolder(_folders[i].path),
-                ),
-            ]),
+            _sixColumns(
+              m,
+              (w) => <Widget>[
+                for (var i = 0; i < _folders.length; i += 1)
+                  _TvFolderCard(
+                    folder: _folders[i],
+                    focusNode: i == 0 ? _firstFocus : null,
+                    onTap: () => _enterFolder(_folders[i].path),
+                  ),
+              ],
+            ),
           if (_folderItems.isNotEmpty) ...[
             SizedBox(height: m.px(18)),
-            _sixColumns(m, (w) => <Widget>[
-              for (var i = 0; i < _folderItems.length; i += 1)
-                _TvLibraryCard(
-                  item: _folderItems[i],
-                  width: w,
-                  focusNode:
-                      _folders.isEmpty && i == 0 ? _firstFocus : null,
-                  onTap: () => setState(() => _itemDetail = _folderItems[i]),
-                ),
-            ]),
+            _sixColumns(
+              m,
+              (w) => <Widget>[
+                for (var i = 0; i < _folderItems.length; i += 1)
+                  _TvLibraryCard(
+                    item: _folderItems[i],
+                    width: w,
+                    focusNode: _folders.isEmpty && i == 0 ? _firstFocus : null,
+                    onTap: () => setState(() => _itemDetail = _folderItems[i]),
+                  ),
+              ],
+            ),
           ],
         ],
       ),
@@ -914,14 +919,17 @@ class _TvVideoLibrarySectionState extends State<TvVideoLibrarySection> {
               ),
             ),
           ),
-          _sixColumns(m, (w) => <Widget>[
-            for (var i = 0; i < shown; i += 1)
-              _TvActorCard(
-                actor: _jpActors[i],
-                focusNode: i == 0 ? _firstFocus : null,
-                onTap: () => _openJpActor(_jpActors[i]),
-              ),
-          ]),
+          _sixColumns(
+            m,
+            (w) => <Widget>[
+              for (var i = 0; i < shown; i += 1)
+                _TvActorCard(
+                  actor: _jpActors[i],
+                  focusNode: i == 0 ? _firstFocus : null,
+                  onTap: () => _openJpActor(_jpActors[i]),
+                ),
+            ],
+          ),
           if (shown < _jpActors.length)
             Padding(
               padding: EdgeInsets.only(top: m.px(18)),
@@ -976,15 +984,18 @@ class _TvVideoLibrarySectionState extends State<TvVideoLibrarySection> {
               ),
             )
           else
-            _sixColumns(m, (w) => <Widget>[
-              for (var i = 0; i < _jpWorks.length; i += 1)
-                _TvLibraryCard(
-                  item: _jpWorks[i],
-                  width: w,
-                  focusNode: i == 0 ? _firstFocus : null,
-                  onTap: () => setState(() => _itemDetail = _jpWorks[i]),
-                ),
-            ]),
+            _sixColumns(
+              m,
+              (w) => <Widget>[
+                for (var i = 0; i < _jpWorks.length; i += 1)
+                  _TvLibraryCard(
+                    item: _jpWorks[i],
+                    width: w,
+                    focusNode: i == 0 ? _firstFocus : null,
+                    onTap: () => setState(() => _itemDetail = _jpWorks[i]),
+                  ),
+              ],
+            ),
         ],
       ),
     );
@@ -1052,24 +1063,24 @@ class _TvLibraryCard extends StatelessWidget {
               ),
             ),
           ),
-          SizedBox(height: m.px(10)),
+          SizedBox(height: m.px(7)),
           Text(
             item.title,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
-              fontSize: m.px(17),
+              fontSize: m.px(14),
               fontWeight: FontWeight.w600,
               color: scheme.onSurface,
             ),
           ),
-          SizedBox(height: m.px(3)),
+          SizedBox(height: m.px(2)),
           Text(
             videoMetaLine(item),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
-              fontSize: m.px(13),
+              fontSize: m.px(11),
               color: scheme.onSurfaceVariant,
             ),
           ),
@@ -1193,7 +1204,9 @@ class _TvActorCard extends StatelessWidget {
               // 卡片宽度 ~250 逻辑像素，360 足够清晰；别再按 480 拉
               // —— 日本库封面在 SMB 上，一次 36 张就是 36 次网盘读。
               cacheWidth: 360,
-              headers: cover != null ? videoArtHeaders : const <String, String>{},
+              headers: cover != null
+                  ? videoArtHeaders
+                  : const <String, String>{},
               borderRadius: m.px(14),
             ),
           ),
@@ -1240,10 +1253,7 @@ class _TvJpActorCache {
   _TvJpActorCache._();
 
   static const Duration _ttl = Duration(minutes: 10);
-  static final Map<
-    String,
-    ({List<Map<String, dynamic>> items, DateTime at})
-  >
+  static final Map<String, ({List<Map<String, dynamic>> items, DateTime at})>
   _map = <String, ({List<Map<String, dynamic>> items, DateTime at})>{};
 
   static List<Map<String, dynamic>>? get(String libraryId) {

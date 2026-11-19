@@ -1,14 +1,21 @@
 import 'package:flutter/material.dart';
 
-/// TV 版面尺寸：以 1920×1080 设计稿为基准等比缩放。
+/// TV 版面尺寸：以 1920×1080 设计稿为基准**等比**缩放。
 ///
-/// 浏览器预览窗口通常只有 1280~1600 宽，直接按 1920 排会显得空旷；
-/// 这里给一个下限 0.85，保证窗口小一点时仍然是「大卡片 + 大字号」的观感。
+/// 关键点是**不要给下限**。电视上报给 Flutter 的是逻辑像素，不是物理像素：
+/// 4K 屏 + 高 density 时可能只有 1280×720 甚至 960×540 的逻辑尺寸。
+/// 早前这里把下限夹在 0.85，等于在 720p 逻辑屏上按 1632×918 排 1920 的设计稿，
+/// 整块内容比屏幕大 27%，屏幕外的东西全被裁掉 —— 表现就是「字和卡片特别大、
+/// 列表只能看到一行」。
+///
+/// 现在按视口真正的宽度算：1280 → 0.67、1920 → 1.0、3840 → 2.0，
+/// 任何分辨率下排出来的**比例**都和设计稿一致，看到的内容行数也一致。
+/// 上下限只防极端情况（超宽副屏 / 极小预览窗）。
 class TvMetrics {
   const TvMetrics(this.scale);
 
   factory TvMetrics.of(double width) =>
-      TvMetrics((width / 1920).clamp(0.85, 1.5));
+      TvMetrics(width <= 0 ? 1 : (width / 1920).clamp(0.45, 2.4));
 
   final double scale;
 
@@ -29,8 +36,28 @@ class TvBackController {
   bool get hasOverlay => overlay?.call() ?? false;
 }
 
+/// 网格列数：按目标卡片宽度自适应，而不是固定 6 列。
+///
+/// 固定 6 列在宽屏上等于把每张海报拉到 300px 宽、450px 高，一屏只剩一行；
+/// 按 ~170 设计像素的目标宽算，宽屏能排到 10 列、看到三行以上。
+int tvGridColumns(
+  double maxWidth,
+  TvMetrics m, {
+  double target = 170,
+  double gap = 14,
+}) {
+  if (maxWidth <= 0) return 4;
+  final g = m.px(gap);
+  final t = m.px(target);
+  return ((maxWidth + g) / (t + g)).floor().clamp(4, 10);
+}
+
 class TvMetricsScope extends InheritedWidget {
-  const TvMetricsScope({super.key, required this.metrics, required super.child});
+  const TvMetricsScope({
+    super.key,
+    required this.metrics,
+    required super.child,
+  });
 
   final TvMetrics metrics;
 
@@ -179,25 +206,25 @@ class TvSectionHeader extends StatelessWidget {
     final m = TvMetricsScope.of(context);
     final scheme = Theme.of(context).colorScheme;
     return Padding(
-      padding: EdgeInsets.fromLTRB(m.px(8), 0, m.px(8), m.px(14)),
+      padding: EdgeInsets.fromLTRB(m.px(6), 0, m.px(6), m.px(9)),
       child: Row(
         children: [
           Container(
-            width: m.px(5),
-            height: m.px(26),
+            width: m.px(4),
+            height: m.px(20),
             decoration: BoxDecoration(
               color: scheme.primary,
               borderRadius: BorderRadius.circular(m.px(3)),
             ),
           ),
-          SizedBox(width: m.px(12)),
+          SizedBox(width: m.px(10)),
           Expanded(
             child: Text(
               title,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                fontSize: m.px(24),
+                fontSize: m.px(20),
                 fontWeight: FontWeight.w700,
                 color: scheme.onSurface,
               ),
@@ -234,12 +261,12 @@ class TvCardRow extends StatelessWidget {
         TvSectionHeader(title: title, trailing: trailing),
         SingleChildScrollView(
           scrollDirection: Axis.horizontal,
-          padding: EdgeInsets.symmetric(horizontal: m.px(8), vertical: m.px(6)),
+          padding: EdgeInsets.symmetric(horizontal: m.px(6), vertical: m.px(4)),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               for (var i = 0; i < children.length; i += 1) ...[
-                if (i > 0) SizedBox(width: m.px(24)),
+                if (i > 0) SizedBox(width: m.px(16)),
                 children[i],
               ],
             ],

@@ -39,9 +39,6 @@ class _TvSeriesHomeState extends State<TvSeriesHome> {
   static const String _recentLane = 'recent';
   static const String _allLane = 'all';
 
-  /// 「全部剧集」一行 6 列，往下排任意多行。
-  static const int _columns = 6;
-
   final Map<String, FocusNode> _nodes = <String, FocusNode>{};
   final Map<String, int> _lastIndex = <String, int>{};
   final FocusNode _ownedFirst = FocusNode(debugLabel: 'tv-series-first');
@@ -163,8 +160,7 @@ class _TvSeriesHomeState extends State<TvSeriesHome> {
     final showRecent = _showRecent;
     final showGrid = widget.all.isNotEmpty;
     _lanes = <({String id, int count})>[
-      if (showContinue)
-        (id: _continueLane, count: widget.continueItems.length),
+      if (showContinue) (id: _continueLane, count: widget.continueItems.length),
       if (showRecent) (id: _recentLane, count: widget.recent.length),
     ];
 
@@ -199,7 +195,7 @@ class _TvSeriesHomeState extends State<TvSeriesHome> {
                     ),
                 ],
               ),
-              SizedBox(height: m.px(22)),
+              SizedBox(height: m.px(14)),
             ],
             if (showRecent) ...[
               TvCardRow(
@@ -214,7 +210,7 @@ class _TvSeriesHomeState extends State<TvSeriesHome> {
                     ),
                 ],
               ),
-              SizedBox(height: m.px(22)),
+              SizedBox(height: m.px(14)),
             ],
             if (showGrid) _buildGrid(m),
           ],
@@ -223,7 +219,7 @@ class _TvSeriesHomeState extends State<TvSeriesHome> {
     );
   }
 
-  /// 全部剧集：一行 6 列、不限行数。
+  /// 全部剧集：列数按屏宽自适应、不限行数。
   ///
   /// 用 `Wrap` 而不是 `GridView`：方向键要先能走到还没构建的卡片上，
   /// 列表的懒加载会让遥控器走不到第二屏。
@@ -245,13 +241,14 @@ class _TvSeriesHomeState extends State<TvSeriesHome> {
           padding: EdgeInsets.symmetric(horizontal: m.px(8)),
           child: LayoutBuilder(
             builder: (context, constraints) {
-              final gap = m.px(20);
-              // 减 1px 余量：浮点误差会让第 6 张刚好溢出、掉到下一行。
+              final gap = m.px(14);
+              final columns = tvGridColumns(constraints.maxWidth, m);
+              // 减 1px 余量：浮点误差会让最后一列刚好溢出、掉到下一行。
               final width =
-                  (constraints.maxWidth - gap * (_columns - 1)) / _columns - 1;
+                  (constraints.maxWidth - gap * (columns - 1)) / columns - 1;
               return Wrap(
                 spacing: gap,
-                runSpacing: m.px(22),
+                runSpacing: m.px(14),
                 children: [
                   for (var i = 0; i < widget.all.length; i += 1)
                     _TvSeriesPosterCard(
@@ -291,7 +288,8 @@ class _TvContinueCard extends StatelessWidget {
     final width = m.px(340);
     final height = width * 9 / 16;
     // 剧名统一走展示名：服务端 series 列是英文发布名。
-    final title = SeriesDisplayStore.nameOf(entry.seriesName) ?? entry.seriesName;
+    final title =
+        SeriesDisplayStore.nameOf(entry.seriesName) ?? entry.seriesName;
     return SizedBox(
       width: width,
       child: Column(
@@ -310,11 +308,7 @@ class _TvContinueCard extends StatelessWidget {
                 children: [
                   TvMediaCover(
                     urls: <String?>[
-                      videoPosterUrl(
-                        entry.item,
-                        kind: 'fanart',
-                        size: 640,
-                      ),
+                      videoPosterUrl(entry.item, kind: 'fanart', size: 640),
                       episodeStillFallbackUrl(entry.item.id),
                     ],
                     fallbackText: title,

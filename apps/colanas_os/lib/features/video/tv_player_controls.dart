@@ -3,15 +3,17 @@ import 'package:flutter/services.dart';
 import 'package:nas_ui/nas_ui.dart';
 
 /// TV 版面缩放：与 `features/tv/tv_focus.dart#TvMetrics` 同一公式
-/// （1920×1080 设计稿，0.85~1.5 夹取）。
+/// （1920×1080 设计稿等比缩放，不设下限）。
 ///
 /// 播放器在 Web / 手机 / 桌面也会用到这份代码，所以不 import TV 外壳目录 ——
 /// TV 外壳是 TV 构建专属的，播放器不该被它绑住。
 class TvLayout {
   const TvLayout(this.scale);
 
-  factory TvLayout.of(BuildContext context) =>
-      TvLayout((MediaQuery.sizeOf(context).width / 1920).clamp(0.85, 1.5));
+  factory TvLayout.of(BuildContext context) {
+    final width = MediaQuery.sizeOf(context).width;
+    return TvLayout(width <= 0 ? 1 : (width / 1920).clamp(0.45, 2.4));
+  }
 
   final double scale;
 

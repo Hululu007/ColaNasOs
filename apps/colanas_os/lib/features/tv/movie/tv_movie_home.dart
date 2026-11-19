@@ -12,10 +12,10 @@ import 'tv_movie_models.dart';
 import 'tv_movie_widgets.dart';
 
 /// 电影库首页：顶部沉浸式剧照墙 + 继续观看 / 最近添加 / 系列电影泳道 +
-/// 「全部影片」网格（一行 6 列）。
+/// 「全部影片」网格（列数按屏宽自适应）。
 ///
 /// 全库影片不再一屏平铺、也不再按首字母分组：列表按「未看优先 + 添加时间倒序」
-/// 排列，一行 6 列、往下任意多行。
+/// 排列，列数按屏宽自适应、往下任意多行。
 class TvMovieHome extends StatefulWidget {
   const TvMovieHome({
     super.key,
@@ -52,9 +52,6 @@ class _TvMovieHomeState extends State<TvMovieHome> {
   static const String _recentLane = 'recent';
   static const String _collectionLane = 'collections';
 
-  /// 「全部影片」一行 6 列，往下排任意多行。
-  static const int _columns = 6;
-
   final Map<String, FocusNode> _nodes = <String, FocusNode>{};
   final Map<String, int> _lastLaneIndex = <String, int>{};
   final FocusNode _ownedFirst = FocusNode(debugLabel: 'tv-movie-first');
@@ -87,7 +84,10 @@ class _TvMovieHomeState extends State<TvMovieHome> {
 
   FocusNode _node(String key) {
     if (key == _firstKey) return _firstFocus;
-    return _nodes.putIfAbsent(key, () => FocusNode(debugLabel: 'tv-movie-$key'));
+    return _nodes.putIfAbsent(
+      key,
+      () => FocusNode(debugLabel: 'tv-movie-$key'),
+    );
   }
 
   @override
@@ -99,7 +99,9 @@ class _TvMovieHomeState extends State<TvMovieHome> {
   VideoItem? _initialHero() {
     if (widget.continueItems.isNotEmpty) return widget.continueItems.first.item;
     if (widget.recent.isNotEmpty) return widget.recent.first;
-    if (widget.collections.isNotEmpty) return widget.collections.first.firstMovie;
+    if (widget.collections.isNotEmpty) {
+      return widget.collections.first.firstMovie;
+    }
     if (widget.entries.isNotEmpty) return widget.entries.first.heroMovie;
     return null;
   }
@@ -203,8 +205,7 @@ class _TvMovieHomeState extends State<TvMovieHome> {
     final showGrid = widget.entries.isNotEmpty;
 
     _lanes = <({String id, int count})>[
-      if (showContinue)
-        (id: _continueLane, count: widget.continueItems.length),
+      if (showContinue) (id: _continueLane, count: widget.continueItems.length),
       if (showRecent) (id: _recentLane, count: widget.recent.length),
       if (showCollections)
         (id: _collectionLane, count: widget.collections.length),
@@ -256,7 +257,7 @@ class _TvMovieHomeState extends State<TvMovieHome> {
                           ),
                       ],
                     ),
-                    SizedBox(height: m.px(22)),
+                    SizedBox(height: m.px(14)),
                   ],
                   if (showRecent) ...[
                     TvCardRow(
@@ -269,17 +270,13 @@ class _TvMovieHomeState extends State<TvMovieHome> {
                             percent:
                                 widget.progressOf?.call(widget.recent[i].id) ??
                                 0,
-                            onFocused: () => _rememberLane(
-                              _recentLane,
-                              i,
-                              widget.recent[i],
-                            ),
-                            onTap: () =>
-                                widget.onOpenMovie(widget.recent[i]),
+                            onFocused: () =>
+                                _rememberLane(_recentLane, i, widget.recent[i]),
+                            onTap: () => widget.onOpenMovie(widget.recent[i]),
                           ),
                       ],
                     ),
-                    SizedBox(height: m.px(22)),
+                    SizedBox(height: m.px(14)),
                   ],
                   if (showCollections) ...[
                     TvCardRow(
@@ -294,13 +291,12 @@ class _TvMovieHomeState extends State<TvMovieHome> {
                               i,
                               widget.collections[i].firstMovie,
                             ),
-                            onTap: () => widget.onOpenCollection(
-                              widget.collections[i],
-                            ),
+                            onTap: () =>
+                                widget.onOpenCollection(widget.collections[i]),
                           ),
                       ],
                     ),
-                    SizedBox(height: m.px(22)),
+                    SizedBox(height: m.px(14)),
                   ],
                   if (showGrid) _buildGrid(m),
                 ],
@@ -375,7 +371,7 @@ class _TvMovieHomeState extends State<TvMovieHome> {
 
   Widget _buildHeroBlock(TvMetrics m) {
     return SizedBox(
-      height: m.px(230),
+      height: m.px(158),
       child: ValueListenableBuilder<VideoItem?>(
         valueListenable: _hero,
         builder: (context, item, _) {
@@ -403,7 +399,7 @@ class _TvMovieHomeState extends State<TvMovieHome> {
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    fontSize: m.px(40),
+                    fontSize: m.px(32),
                     height: 1.08,
                     fontWeight: FontWeight.w900,
                     color: Colors.white,
@@ -415,7 +411,7 @@ class _TvMovieHomeState extends State<TvMovieHome> {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    fontSize: m.px(16),
+                    fontSize: m.px(14),
                     fontWeight: FontWeight.w600,
                     color: Colors.white.withValues(alpha: 0.82),
                   ),
@@ -429,7 +425,7 @@ class _TvMovieHomeState extends State<TvMovieHome> {
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        fontSize: m.px(14),
+                        fontSize: m.px(12),
                         height: 1.45,
                         color: Colors.white.withValues(alpha: 0.7),
                       ),
@@ -444,7 +440,7 @@ class _TvMovieHomeState extends State<TvMovieHome> {
     );
   }
 
-  /// 全部影片：一行 6 列、不限行数。
+  /// 全部影片：列数按屏宽自适应、不限行数。
   ///
   /// 用 `Wrap` 而不是 `GridView`：方向键要能走到还没构建出来的卡片。
   Widget _buildGrid(TvMetrics m) {
@@ -465,13 +461,14 @@ class _TvMovieHomeState extends State<TvMovieHome> {
           padding: EdgeInsets.symmetric(horizontal: m.px(8)),
           child: LayoutBuilder(
             builder: (context, constraints) {
-              final gap = m.px(20);
-              // 减 1px 余量：浮点误差会让第 6 张刚好溢出、掉到下一行。
+              final gap = m.px(14);
+              final columns = tvGridColumns(constraints.maxWidth, m);
+              // 减 1px 余量：浮点误差会让最后一列刚好溢出、掉到下一行。
               final width =
-                  (constraints.maxWidth - gap * (_columns - 1)) / _columns - 1;
+                  (constraints.maxWidth - gap * (columns - 1)) / columns - 1;
               return Wrap(
                 spacing: gap,
-                runSpacing: m.px(22),
+                runSpacing: m.px(14),
                 children: [
                   for (final entry in widget.entries)
                     _buildEntryCard(entry, width),

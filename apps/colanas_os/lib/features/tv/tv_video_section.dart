@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:nas_core/nas_core.dart';
 import 'package:nas_ui/nas_ui.dart';
@@ -8,31 +7,15 @@ import '../video/player_page.dart';
 import '../video/video_card.dart';
 import 'tv_focus.dart';
 
-/// 浏览器 `<video>` 能直接吃的容器；其余（mkv/avi/ts…）必须靠服务端转码。
-const _webContainers = {'mp4', 'm4v', 'mov', 'webm', 'ogv', 'ogg'};
-
-/// 这条流在浏览器里是不是必须转码才能播。
-bool _webNeedsTranscode(Map<String, dynamic>? compat) {
-  if (compat == null) return false;
-  if (compat['needTranscode'] == true) return true;
-  final container = (compat['container'] as String? ?? '').toLowerCase();
-  return container.isNotEmpty && !_webContainers.contains(container);
-}
-
 /// 影视详情 / 影视库列表共用的播放动作：取流地址后推入现有播放器。
 ///
-/// Web 预览（TV 端网页版）额外做一次降级：需要转码的片源（HDR / HEVC / MKV）
-/// 在浏览器里只能播服务端转出的 HLS，而开发实例会跳过后台转码（503），
-/// 进去只会看到一个「切换失败」的错误页。这里直接给出明确提示，
-/// 不把用户丢进播放器再报错。原生 TV / 客户端不受影响（kIsWeb 为 false）。
+/// 浏览器解不了 MKV / HEVC / DV 时不再直接拦下：播放页会改用「原画直通」
+/// 会话（只把容器换成 fMP4，不重编码），DV / HDR 元数据原样送到显示端；
+/// 本机连源编码都解不了时才由播放页自己降一档重编码。
 Future<void> playTvVideo(BuildContext context, VideoItem item) async {
   final res = await ApiSession.instance.client.videoStreamUrl(id: item.id);
   final url = '${ApiSession.instance.baseUrl}${res.url}';
   if (!context.mounted) return;
-  if (kIsWeb && _webNeedsTranscode(res.compat)) {
-    NasSnack.show(context, tr('tv.preview.transcodeUnsupported'));
-    return;
-  }
   await Navigator.of(context).push(
     MaterialPageRoute<void>(
       builder: (_) => PlayerPage(
@@ -171,15 +154,14 @@ class _TvVideoSectionState extends State<TvVideoSection> {
       );
     }
 
-    final hero =
-        home.recommend.isNotEmpty
-            ? home.recommend.first
-            : home.recentPlay.isNotEmpty
-            ? home.recentPlay.first
-            : home.recentAdd
-                .expand((row) => row.items)
-                .cast<VideoItem?>()
-                .firstWhere((item) => item != null, orElse: () => null);
+    final hero = home.recommend.isNotEmpty
+        ? home.recommend.first
+        : home.recentPlay.isNotEmpty
+        ? home.recentPlay.first
+        : home.recentAdd
+              .expand((row) => row.items)
+              .cast<VideoItem?>()
+              .firstWhere((item) => item != null, orElse: () => null);
 
     // 首个卡片持有固定的焦点节点：详情关闭、返回列表时把焦点放回这里。
     var needsFirstFocus = hero == null;
@@ -500,7 +482,9 @@ class _TvPosterCard extends StatelessWidget {
                           child: LinearProgressIndicator(
                             value: progress,
                             minHeight: m.px(5),
-                            backgroundColor: Colors.black.withValues(alpha: 0.4),
+                            backgroundColor: Colors.black.withValues(
+                              alpha: 0.4,
+                            ),
                             valueColor: AlwaysStoppedAnimation<Color>(
                               scheme.primary,
                             ),
@@ -575,7 +559,11 @@ class TvVideoDetailView extends StatelessWidget {
               gradient: LinearGradient(
                 begin: Alignment.centerLeft,
                 end: Alignment.centerRight,
-                colors: [Color(0xF2000000), Color(0xB3000000), Color(0x33000000)],
+                colors: [
+                  Color(0xF2000000),
+                  Color(0xB3000000),
+                  Color(0x33000000),
+                ],
                 stops: [0, 0.5, 1],
               ),
             ),
