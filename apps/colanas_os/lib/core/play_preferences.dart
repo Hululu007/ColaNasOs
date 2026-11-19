@@ -17,6 +17,7 @@ class PlayPreferences {
   static const _normalizeKey = 'player.audioNormalize';
   static const _downmixKey = 'player.audioDownmix';
   static const _leadKey = 'player.leadMinutes';
+  static const _tvDirectKey = 'player.tvDirectOriginal';
 
   static String get preset {
     final saved =
@@ -58,6 +59,14 @@ class PlayPreferences {
 
   static bool get audioDownmix =>
       SettingsStore.instance.getBool(_downmixKey) == true;
+
+  /// 电视上 DV / HDR 片源直接走原片（不服务端色调映射）。默认开；
+  /// 某些盒子的解码器会把 DV 显示成紫绿色，用户可以在播放设置里关掉回落。
+  static bool get tvDirectOriginal =>
+      SettingsStore.instance.getBool(_tvDirectKey) != false;
+
+  static Future<void> saveTvDirectOriginal(bool value) =>
+      SettingsStore.instance.setBool(_tvDirectKey, value);
 
   /// 所有端统一的默认提前转码时长（分钟）。
   /// 服务端 API 有同样的兜底值（`DEFAULT_LEAD_MINUTES`），保证 SDK / 直接调用

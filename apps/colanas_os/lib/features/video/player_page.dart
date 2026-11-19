@@ -243,8 +243,6 @@ class _PlayerPageState extends State<PlayerPage> {
   /// 0 = 进度条，1 = 按钮行
   int _tvRow = 1;
   int _tvIndex = 0;
-  double _tvSeekMs = 0;
-  bool _tvSeeking = false;
 
   /// TV 的 `PopScope(canPop:)` 一次性放行标志：真正要退出播放时才置 true，
   /// 否则返回键会被「先收控制层」的逻辑永远拦住。
@@ -527,8 +525,14 @@ class _PlayerPageState extends State<PlayerPage> {
     // 所以这里用运行时动态调用 + kIsWeb 短路。
     if (!kIsWeb) {
       try {
+        // 电视上原片直连必须走系统硬解：4K HEVC / DV / HDR10+ 交给 MediaCodec。
+        // `auto-safe` 在部分盒子上会自己降级成软解或 mediacodec-copy，
+        // 结果是「有画面但几秒一卡」，还把 HDR 元数据在拷贝里丢掉。
+        final hwdec = defaultTargetPlatform == TargetPlatform.android && _tvMode
+            ? 'mediacodec'
+            : 'auto-safe';
         // ignore: avoid_dynamic_calls
-        (_player.platform as dynamic).setProperty('hwdec', 'auto-safe');
+        (_player.platform as dynamic).setProperty('hwdec', hwdec);
       } catch (_) {
         // 拿不到就算了，退回软解
       }
@@ -642,7 +646,9 @@ class _PlayerPageState extends State<PlayerPage> {
       // 那个地址本身就是目标档位，必须直接 open，不能再自己建一遍会话。
       final savedPreset = PlayPreferences.savedPreset;
       final wantsTranscode =
-          widget.initialPreset == null && savedPreset != null && savedPreset != 'original';
+          widget.initialPreset == null &&
+          savedPreset != null &&
+          savedPreset != 'original';
       if ((_needTranscode || wantsTranscode) && widget.itemId != null) {
         // 以前这里会把「原画」直接改写成 1080P 3M —— 于是用户明明选了原画，
         // 播放器却自己降档（「过了一会儿变成 1080p 3m」的主因之一）。
@@ -651,7 +657,10 @@ class _PlayerPageState extends State<PlayerPage> {
         _prepareCompatible();
       } else {
         // 本地续播：startAt 只在直连路径生效（转码流的 0 点是起转点，不能直接 seek）
-        _openUrl(_url, seekTo: widget.startAt).then((_) => _attachLocalSubtitles());
+        _openUrl(
+          _url,
+          seekTo: widget.startAt,
+        ).then((_) => _attachLocalSubtitles());
       }
       _loadSubtitles();
       _loadAudioTracks();
@@ -847,6 +856,8 @@ class _PlayerPageState extends State<PlayerPage> {
   }) async {
     _url = u;
     _lastOpenAt = DateTime.now();
+    // 直连 / 转码两条路径的音频处理不同，每次换源都要按当前路径重设。
+    _applyDirectAudio();
     // 换了播放源：位置不再连续，判定基准要挪到新流的起点。
     // ⛔ 只重置判定，**不取消看门狗** —— 以前这里 cancel，换流期间一旦出岔子
     // 看门狗就永久缺席（`c16e2aeb` 116 秒静默就是这么来的）。
@@ -921,7 +932,12 @@ class _PlayerPageState extends State<PlayerPage> {
       if (retries > 0 && _isTranscode && mounted) {
         await Future<void>.delayed(const Duration(milliseconds: 2000));
         if (!mounted) return;
-        return _openUrl(u, seekTo: seekTo, retries: retries - 1, autoPlay: want);
+        return _openUrl(
+          u,
+          seekTo: seekTo,
+          retries: retries - 1,
+          autoPlay: want,
+        );
       }
       // 彻底放弃了这条流：位置又回到「不可信」状态，别让 [_absPosition] 继续
       // 按新会话起点报位置（进度条会显示一个根本没播到的点）。
@@ -1015,7 +1031,8 @@ class _PlayerPageState extends State<PlayerPage> {
   Future<void> _resumeIfIdle(String why) async {
     final now = DateTime.now();
     final last = _lastResumeAt;
-    if (last != null && now.difference(last) < const Duration(milliseconds: 800)) {
+    if (last != null &&
+        now.difference(last) < const Duration(milliseconds: 800)) {
       return;
     }
     if (!mounted || _jumping || _switching || !_wantPlay) return;
@@ -1079,7 +1096,8 @@ class _PlayerPageState extends State<PlayerPage> {
   /// 良性中断 → 静默重开当前地址；重试四次仍没播起来才把错误显示出来。
   void _retryAfterBenignError(String message) {
     final young = _player.state.position <= const Duration(seconds: 2);
-    final fatalOpen = message.toLowerCase().contains('failed to open') ||
+    final fatalOpen =
+        message.toLowerCase().contains('failed to open') ||
         message.toLowerCase().contains('failed to recognize') ||
         message.toLowerCase().contains('404');
     // 「一次都还没播起来」就报「打不开」：这是首片还没落盘的 404（AV1 首片
@@ -1157,8 +1175,7 @@ class _PlayerPageState extends State<PlayerPage> {
       // 也不能只看「位置往前走了」：外网喂不饱 4K 原片时，8 秒能走 2.5 秒，
       // 旧判据把它当「直连正常」，用户那边就是「播几秒停十几秒」。
       // 所以要求位置**跟得上时间轴**（≥55% 实时速度）才算真的能播。
-      final keptUp =
-          advanced.inMilliseconds >= elapsed.inMilliseconds * 0.55;
+      final keptUp = advanced.inMilliseconds >= elapsed.inMilliseconds * 0.55;
       if (w > 0 && keptUp && advanced > const Duration(seconds: 2)) {
         ClientLogger.instance.info(
           '直连正常 width=$w advanced=${advanced.inMilliseconds}ms 用时${i + 1}s',
@@ -1231,7 +1248,8 @@ class _PlayerPageState extends State<PlayerPage> {
       tr('player.directFailed', {
         'actual': playQualityPresetOf(fallback)?.labelFor(_codec) ?? fallback,
       }),
-      log: '直连无画面：width=$w advanced=${advanced.inMilliseconds}ms '
+      log:
+          '直连无画面：width=$w advanced=${advanced.inMilliseconds}ms '
           '${reason.isEmpty ? '' : '($reason) '}→ $fallback',
     );
   }
@@ -1455,6 +1473,40 @@ class _PlayerPageState extends State<PlayerPage> {
 
   // ------------------------------------------------------------ 渲染 / 色调映射
 
+  /// 写 libmpv 属性。Web 没有 NativePlayer、桌面构建也不一定认某个属性，
+  /// 一律「设了就算」，不能因为一个可选滤镜把播放卡死。
+  void _setMpvProp(String key, String value) {
+    if (kIsWeb) return;
+    try {
+      // ignore: avoid_dynamic_calls
+      (_player.platform as dynamic).setProperty(key, value);
+    } catch (_) {
+      // 不支持就算了
+    }
+  }
+
+  /// 原片直连时补上客户端侧的音频处理。
+  ///
+  /// 转码流由服务端在 ffmpeg 里做响度归一 / 降混，这里再做一次会双重处理；
+  /// 直连是把原文件直接丢给 libmpv，服务端完全没碰音频，只能由播放器自己套
+  /// `dynaudnorm`（单遍、实时，适合电影里「对白小、爆炸响」的动态范围）。
+  /// 开关跟随库级设置，客户端「响度归一 / 降混」显式打开时也能单独覆盖。
+  void _applyDirectAudio() {
+    if (kIsWeb) return;
+    final direct = !_isTranscode;
+    final normalize =
+        PlayPreferences.audioNormalize ||
+        widget.compat?['audioNormalize'] == true;
+    _setMpvProp(
+      'af',
+      direct && normalize ? 'lavfi=[dynaudnorm=f=250:g=15]' : '',
+    );
+    _setMpvProp(
+      'audio-channels',
+      direct && PlayPreferences.audioDownmix ? 'stereo' : 'auto',
+    );
+  }
+
   /// 探测 libmpv 能力并下发色调映射参数；同时读一次显示端 HDR 能力。
   ///
   /// 失败一律吞掉：拿不到能力就按「未知」处理，不能让播放因为它卡住。
@@ -1479,18 +1531,25 @@ class _PlayerPageState extends State<PlayerPage> {
 
   /// 直连能不能保证**颜色是对的**。
   ///
-  /// - 杜比视界：一律不能。media_kit 的 libmpv 走 `vo=libmpv`（vo_gpu），
-  ///   没有 libplacebo / DV RPU 解析，P5 直连就是紫 / 荧光绿；服务端转码链
-  ///   （`tonemap_d3d11` / `tonemap_cuda`，`apply_dovi` 默认开）才是官方的正确做法。
-  /// - HDR10 / HLG：桌面端的 vo_gpu 有 bt.2390 + 动态峰值，可以直连；
-  ///   Web 交给浏览器，Android 交给系统解码器，都不在这里拦。
-  /// - TV：电视 HDR 能力低于片源等级时强制转码（服务端 hdrToSdr 即色调映射）。
+  /// - 电视（Android，且真的读到了 Display.HdrCapabilities）：屏幕报支持哪一档
+  ///   就直连哪一档，包括杜比视界。DV / HDR10+ 的动态元数据只有交给电视自己的
+  ///   解码器与显示管线才有意义；服务端一转就变成 SDR 了。能力低于片源等级
+  ///   （或明确报「一块 HDR 屏都没有」）才回落色调映射。
+  /// - 桌面 / Web：libmpv 的 vo=libmpv 没有 libplacebo / DV RPU 解析，
+  ///   DV 直连是紫 / 荧光绿，维持旧行为走服务端 HDR→SDR；HDR10/HLG 可直连。
   bool get _colorBlocksDirect {
     if (widget.compat == null) return false;
     final src = _srcHdr;
     if (!src.isHdr) return false;
+    final tv = _tvMode || (kIsWeb && AppSettings.instance.tvMode.value);
+    // 用户在播放设置里关掉电视原片直连时，HDR 一律回服务端色调映射。
+    if (tv && !PlayPreferences.tvDirectOriginal) return true;
+    // 电视：面板能力读到了具体类型才据此降级；空数组 / 读不到按「能显示」，
+    // 由电视自己的解码器和显示管线处理 DV / HDR10+ 的动态元数据。
+    if (!kIsWeb && _display.trustworthy) return !_display.supports(src);
+    if (tv) return false;
+    // 桌面 / 普通网页的 libmpv 没有 libplacebo / DV RPU 解析，DV 直连会偏色。
     if (src == HdrLevel.dolbyVision) return true;
-    if (!kIsWeb && _display.known && !_display.supports(src)) return true;
     return false;
   }
 
@@ -1501,6 +1560,19 @@ class _PlayerPageState extends State<PlayerPage> {
   /// 因为电视解码 / 网络更脆弱，1080P 3M 的起播和拖动都更稳。
   String _transcodeFallback({String? codec}) {
     final c = codec ?? _codec;
+    // 大屏选「原画」但直链用不了（MKV 进浏览器、或上次直连黑过）时，
+    // 不要偷偷降成 1080P：走 `original` 会话，服务端只换容器不重编码，
+    // DV / HDR10+ 元数据原样送到电视。只有本机真解不了片源编码才走下面的降档。
+    if ((_tvMode || (kIsWeb && AppSettings.instance.tvMode.value)) &&
+        !_colorBlocksDirect) {
+      final src = '${widget.compat?['videoCodec'] ?? ''}'.toLowerCase();
+      final key = src.contains('hevc') || src.contains('h265')
+          ? 'h265'
+          : src.contains('av1')
+          ? 'av1'
+          : 'h264';
+      if (codecPlayable(key)) return 'original';
+    }
     // 手机 / 平板（安卓、iOS）：网络和解码都比桌面脆。实测 4K 源退到「保分辨率」
     // 的 4K 7M，在移动网络里就是一直缓冲，而且 4K HEVC / AV1 软解根本跟不上
     // —— 用户看到的是「进度条加载完了还在卡、看几秒停一下，等一分钟再几秒」。
@@ -1541,6 +1613,10 @@ class _PlayerPageState extends State<PlayerPage> {
     // 显示能力探测（TV 走原生通道）要和渲染参数一起就绪，HDR 判定才不是猜的
     await _renderReady;
     if (!mounted) return;
+    // 提到 try 外：直通起不来时要在 catch 里知道「刚才走的是不是直通」，
+    // 才能自动降一档再试，而不是弹一个错误页了事。
+    bool toDirect = false;
+    String effective = _preset;
     try {
       final wantOriginal = _preset == 'original';
       // 直连条件：用户要原画 + 本机能保证颜色正确 + 真有直链可用。
@@ -1549,7 +1625,7 @@ class _PlayerPageState extends State<PlayerPage> {
       // 上一次同样特征的片源（编码 + 高度）直连就是「有尺寸、画面不走」：
       // 别再黑一遍再说同样的话，直接进转码档。
       final directBlocked = _directBlocked;
-      final toDirect =
+      toDirect =
           wantOriginal &&
           !colorBlocked &&
           !directBlocked &&
@@ -1558,12 +1634,16 @@ class _PlayerPageState extends State<PlayerPage> {
       // 档位按片源高度收敛：偏好 1080P 但片源只有 720P 时，按 720P 转，
       // 不做放大转码（放大只会更大更糊，还多占 GPU）。菜单同样只列 ≤720P 的档。
       // 「原画但必须转码」时退到「保分辨率」的兜底档，不再默默变成 1080P 3M。
-      final effective = toDirect
+      effective = toDirect
           ? 'original'
           : (wantOriginal
                 ? _transcodeFallback()
                 : clampPresetForSource(_preset, _srcHeight, codec: _codec));
-      if (kIsWeb && wantOriginal && !toDirect && !colorBlocked && !directBlocked) {
+      if (kIsWeb &&
+          wantOriginal &&
+          !toDirect &&
+          !colorBlocked &&
+          !directBlocked) {
         // 浏览器解不了 HEVC/10bit 时，「原画」实际是转码档；不说明的话
         // 用户会以为「我选了原片为什么还在转」。
         _showNotice(
@@ -1610,6 +1690,29 @@ class _PlayerPageState extends State<PlayerPage> {
       await _openUrl(u, retries: toDirect ? 0 : 5);
     } catch (e) {
       if (!mounted) return;
+      // 直通会话起不来（电视浏览器不支持源编码 / fMP4 解不出）：再降一档重编码
+      // 起播，别让用户对着「切换失败」自己找画质菜单。
+      if (!toDirect && effective == 'original' && _tvMode) {
+        final fallback = clampPresetForSource(
+          defaultPlayPreset,
+          _srcHeight,
+          codec: _codec,
+        );
+        try {
+          final u = await _ensureTranscode(fallback, _codec);
+          if (!mounted) return;
+          setState(() {
+            _preparing = false;
+            _isTranscode = true;
+            _preset = fallback;
+          });
+          _disarmTryOriginal();
+          await _openUrl(u, retries: 5);
+          return;
+        } catch (_) {
+          // 降档也失败：继续走下面的错误页，错误信息用最初那次
+        }
+      }
       // 不能退回直链：走到这里就说明片源直链本来解不了（HEVC / MKV / HDR），
       // 退回直链只会再报一次 DEMUXER_ERROR，把真正的失败原因盖掉。
       setState(() {
@@ -1772,7 +1875,9 @@ class _PlayerPageState extends State<PlayerPage> {
       // 只有用户自己点的档位才写进偏好。自动降级（原画黑屏兜底、编码回落）
       // 也存下来的话，下一次进播放页会直接从 4K 7M 起步 —— 手机上就是
       // 「明明设了 1080P 0.9M，一播又变 4K 7M」。
-      if (persist) await PlayPreferences.save(preset: preset, codec: targetCodec);
+      if (persist) {
+        await PlayPreferences.save(preset: preset, codec: targetCodec);
+      }
     } catch (e) {
       // 切换失败：把界面回滚到切换前的档位/编码，别让菜单显示一个没跑起来的档
       if (mounted) {
@@ -2065,7 +2170,7 @@ class _PlayerPageState extends State<PlayerPage> {
     // TV 用 6 秒：遥控器挪到想要的按钮要花时间，4 秒经常「刚按到就没了」。
     final seconds = _tvMode ? 6 : 4;
     _hideTimer = Timer(Duration(seconds: seconds), () {
-      if (mounted && !_locked && _error == null && !_preparing && !_tvSeeking) {
+      if (mounted && !_locked && _error == null && !_preparing) {
         setState(() => _controls = false);
       }
     });
@@ -2148,7 +2253,8 @@ class _PlayerPageState extends State<PlayerPage> {
     final base = _seekBaseAbs;
     final chained = _seekByTimer?.isActive ?? false;
     if (!chained) _seekByFrom = base;
-    _seekByTarget = (chained ? _seekByTarget : base) + Duration(seconds: seconds);
+    _seekByTarget =
+        (chained ? _seekByTarget : base) + Duration(seconds: seconds);
     final delta = _seekByTarget - _seekByFrom;
     // 提示立刻更新（累计值），别让人连按 4 次只看到最后一个「+30 秒」
     _flashSeek(
@@ -2412,7 +2518,10 @@ class _PlayerPageState extends State<PlayerPage> {
           // 会话可能刚才还是 paused（转完一段停手了）：明确催一次再给 2 秒。
           // `_awaitProduced` 里每拍都在报位置，但服务端要下一个 pump 周期才动。
           _nudgeTranscode(t);
-          produced = await _awaitProduced(t, budget: const Duration(seconds: 2));
+          produced = await _awaitProduced(
+            t,
+            budget: const Duration(seconds: 2),
+          );
           if (!mounted || gen != _seekGen) return;
         }
       } finally {
@@ -2518,7 +2627,8 @@ class _PlayerPageState extends State<PlayerPage> {
     ClientLogger.instance.info(
       '看门狗跳过（$why）',
       route: 'player.stall/${_sessionId ?? 'direct'}',
-      detail: 'pos=${_player.state.position.inMilliseconds}ms '
+      detail:
+          'pos=${_player.state.position.inMilliseconds}ms '
           'target=${_stallTarget?.inMilliseconds ?? '-'}ms '
           'produced=${_loadedEnd.inMilliseconds}ms '
           'buffering=${_player.state.buffering}',
@@ -2550,7 +2660,8 @@ class _PlayerPageState extends State<PlayerPage> {
       ClientLogger.instance.error(
         '跳转卡住 15s 未复位 → 强制复位并重跳',
         route: 'player.stall/${_sessionId ?? 'direct'}',
-        detail: 'target=${_lastSeekTarget.inMilliseconds}ms '
+        detail:
+            'target=${_lastSeekTarget.inMilliseconds}ms '
             'pos=${_player.state.position.inMilliseconds}ms',
       );
       if (mounted) setState(() => _jumping = false);
@@ -3428,6 +3539,18 @@ class _PlayerPageState extends State<PlayerPage> {
                   setLocal(() {});
                 },
               ),
+              if (_tvMode)
+                SwitchListTile(
+                  title: Text(
+                    tr('player.tvDirectOriginal'),
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                  value: PlayPreferences.tvDirectOriginal,
+                  onChanged: (v) async {
+                    await PlayPreferences.saveTvDirectOriginal(v);
+                    setLocal(() {});
+                  },
+                ),
               ListTile(
                 leading: const Icon(Icons.help_outline, color: Colors.white70),
                 title: Text(
@@ -4228,65 +4351,25 @@ class _PlayerPageState extends State<PlayerPage> {
     ];
   }
 
-  void _tvMove(int dx, int dy) {
+  /// 按钮行里左右移动焦点。进度行的左右是「直接跳时间」，不在这里处理。
+  void _tvMove(int dx) {
     final actions = _tvActions();
-    if (dy < 0) {
-      if (_tvRow == 1) {
-        setState(() {
-          _tvRow = 0;
-          _tvSeeking = false;
-        });
-      }
-      return;
-    }
-    if (dy > 0) {
-      if (_tvRow == 0) {
-        setState(() {
-          _tvRow = 1;
-          _tvSeeking = false;
-        });
-      }
-      return;
-    }
-    if (_tvRow == 0) {
-      // 进度条行：左右 = 调待跳转目标（10 秒一档，长按连续触发）
-      _tvSeekNudge(dx * 10);
-      return;
-    }
     final next = (_tvIndex + dx).clamp(0, actions.length - 1);
     if (next != _tvIndex) setState(() => _tvIndex = next);
   }
 
-  void _tvSeekNudge(int seconds) {
-    final total = _sourceDuration.inMilliseconds;
-    final cur = _tvSeeking
-        ? _tvSeekMs
-        : _absPosition(_player.state.position).inMilliseconds.toDouble();
-    final minMs = _startMs.toDouble();
-    final maxMs = total > 0 ? total.toDouble() : double.infinity;
-    setState(() {
-      _tvSeeking = true;
-      _tvSeekMs = (cur + seconds * 1000).clamp(minMs, maxMs);
-    });
-  }
-
-  Future<void> _tvSeekCommit() async {
-    final target = Duration(milliseconds: _tvSeekMs.round());
-    setState(() => _tvSeeking = false);
-    await _seekTo(target);
-    _poke();
-  }
-
-  /// 返回键语义（TV）：先收面板 / 取消 seek 预览 / 收控制层，最后才退出播放。
+  /// 返回键语义（TV）：直接退出播放页，回到刚才的栏目。
+  ///
+  /// 系统返回（PopScope）和 goBack 键事件可能同一次按键都送到这里，
+  /// 150ms 内只算一次，避免「按一下返回退出两页」。
   void _tvBack() {
-    if (_tvSeeking) {
-      setState(() => _tvSeeking = false);
-      return;
-    }
+    final now = DateTime.now();
+    final last = _lastTvBackAt;
+    if (last != null && now.difference(last).inMilliseconds < 150) return;
+    _lastTvBackAt = now;
+    _hideTimer?.cancel();
     if (_controls) {
-      _hideTimer?.cancel();
       setState(() => _controls = false);
-      return;
     }
     _allowPop = true;
     setState(() {});
@@ -4295,6 +4378,15 @@ class _PlayerPageState extends State<PlayerPage> {
     });
   }
 
+  DateTime? _lastTvBackAt;
+
+  /// TV 遥控器的五类键：
+  ///
+  /// - 没有操作栏时：OK = 暂停 / 继续，左右 = 直接跳时间，下 = 唤出操作栏；
+  /// - 操作栏显示时：默认落在进度行（左右依然是跳时间，OK 收起操作栏）；
+  ///   再按一次下进入按钮行，左右选字幕 / 音轨 / 画质等，OK 执行选中的按钮，
+  ///   上从按钮行回到进度行、进度行再往上收起操作栏；
+  /// - 返回：任何时候都退出播放页；选项面板自己处理返回，不会走到这里。
   KeyEventResult _onTvKey(KeyEvent event) {
     if (event is KeyUpEvent) return KeyEventResult.ignored;
     final k = event.logicalKey;
@@ -4308,7 +4400,8 @@ class _PlayerPageState extends State<PlayerPage> {
     final isBack =
         k == LogicalKeyboardKey.escape ||
         k == LogicalKeyboardKey.backspace ||
-        k == LogicalKeyboardKey.goBack;
+        k == LogicalKeyboardKey.goBack ||
+        k == LogicalKeyboardKey.browserBack;
 
     if (isBack) {
       _tvBack();
@@ -4323,70 +4416,77 @@ class _PlayerPageState extends State<PlayerPage> {
     }
     if (k == LogicalKeyboardKey.mediaFastForward) {
       _seekBy(30);
-      _poke();
       return KeyEventResult.handled;
     }
     if (k == LogicalKeyboardKey.mediaRewind) {
       _seekBy(-10);
-      _poke();
       return KeyEventResult.handled;
     }
 
+    final left = k == LogicalKeyboardKey.arrowLeft;
+    final right = k == LogicalKeyboardKey.arrowRight;
+    final up = k == LogicalKeyboardKey.arrowUp;
+    final down = k == LogicalKeyboardKey.arrowDown;
+
     if (!_controls) {
-      // 控制层收起时：左右直接快进快退，上下切集，OK 唤出控制层
-      if (k == LogicalKeyboardKey.arrowLeft) {
-        _seekBy(-10);
-        _poke();
+      if (left || right) {
+        // 左右就是跳时间：不唤出操作栏，用画面中央的快进/快退提示给反馈。
+        _seekBy(left ? -10 : 30);
         return KeyEventResult.handled;
       }
-      if (k == LogicalKeyboardKey.arrowRight) {
-        _seekBy(30);
-        _poke();
-        return KeyEventResult.handled;
-      }
-      if (k == LogicalKeyboardKey.arrowUp && _hasPlaylist) {
-        _playAdjacent(-1);
-        return KeyEventResult.handled;
-      }
-      if (k == LogicalKeyboardKey.arrowDown && _hasPlaylist) {
-        _playAdjacent(1);
-        return KeyEventResult.handled;
-      }
-      if (isOk) {
+      if (up || down) {
+        // 下唤出操作栏（上也可以），先落在进度行：左右仍然能跳时间。
         setState(() {
           _controls = true;
-          _tvRow = 1;
+          _tvRow = 0;
           _tvIndex = _tvPlayIndex;
         });
         _resetHideTimer();
         return KeyEventResult.handled;
       }
+      if (isOk) {
+        _togglePlay();
+        return KeyEventResult.handled;
+      }
       return KeyEventResult.ignored;
     }
 
-    if (k == LogicalKeyboardKey.arrowLeft) {
-      _tvMove(-1, 0);
+    if (left || right) {
+      if (_tvRow == 0) {
+        _seekBy(left ? -10 : 30);
+      } else {
+        _tvMove(left ? -1 : 1);
+      }
       return KeyEventResult.handled;
     }
-    if (k == LogicalKeyboardKey.arrowRight) {
-      _tvMove(1, 0);
+    if (down) {
+      // 进度行 → 按钮行；按钮行已经是最后一行。
+      if (_tvRow == 0) {
+        setState(() {
+          _tvRow = 1;
+          _tvIndex = _tvPlayIndex;
+        });
+      }
       return KeyEventResult.handled;
     }
-    if (k == LogicalKeyboardKey.arrowUp) {
-      _tvMove(0, -1);
-      return KeyEventResult.handled;
-    }
-    if (k == LogicalKeyboardKey.arrowDown) {
-      _tvMove(0, 1);
+    if (up) {
+      if (_tvRow == 1) {
+        setState(() {
+          _tvRow = 0;
+        });
+      } else {
+        _hideTimer?.cancel();
+        setState(() => _controls = false);
+      }
       return KeyEventResult.handled;
     }
     if (isOk) {
       if (_tvRow == 0) {
-        if (_tvSeeking) {
-          unawaited(_tvSeekCommit());
-        } else {
-          _tvSeekNudge(0);
-        }
+        // 进度行按确定：收起操作栏，继续沉浸观看。
+        _hideTimer?.cancel();
+        setState(() {
+          _controls = false;
+        });
       } else {
         final actions = _tvActions();
         if (_tvIndex >= 0 && _tvIndex < actions.length) {
@@ -4471,11 +4571,14 @@ class _PlayerPageState extends State<PlayerPage> {
               SizedBox(height: m.px(14)),
               TvPlayerBar(
                 focusedIndex: _tvRow == 1 ? _tvIndex : -1,
+                itemWidth: m.px(96),
+                gap: m.px(12),
                 buttons: [
                   for (var i = 0; i < actions.length; i += 1)
                     TvPlayerButton(
                       icon: actions[i].icon,
                       label: actions[i].label,
+                      size: m.px(96),
                       highlighted: _tvRow == 1 && _tvIndex == i,
                       onTap: () {
                         setState(() {
@@ -4504,15 +4607,10 @@ class _PlayerPageState extends State<PlayerPage> {
         double frac(Duration d) =>
             totalMs <= 0 ? 0 : (d.inMilliseconds / totalMs).clamp(0.0, 1.0);
         final abs = _absPosition(snap.data ?? Duration.zero);
-        final played = frac(
-          Duration(
-            milliseconds: _tvSeeking ? _tvSeekMs.round() : abs.inMilliseconds,
-          ),
-        );
+        final played = frac(abs);
         return TvPlayerProgress(
           progress: played,
           loaded: _isTranscode ? frac(_loadedEnd) : null,
-          seekTarget: _tvSeeking ? played : null,
           highlighted: _tvRow == 0,
           leftLabel: _fmt(abs),
           rightLabel: _fmt(total),
@@ -4797,7 +4895,7 @@ class _PlayerPageState extends State<PlayerPage> {
     final tv = TvScope.of(context);
     final wide = MediaQuery.sizeOf(context).width >= 720;
     return PopScope(
-      // TV：返回键先收控制层 / 取消 seek，再退出播放（见 _tvBack）
+      // TV：返回键直接退出播放页（见 _tvBack）
       canPop: _allowPop || !tv,
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop && tv) _tvBack();
@@ -4899,7 +4997,7 @@ class _PlayerPageState extends State<PlayerPage> {
                   ),
                 // 拖动进度时在画面正中显示目标时间；双击快进给一个 900ms 的短提示。
                 // 两者不同时出现（拖动中不会触发双击）。
-                if (_dragSeeking || _seekHint != null || _tvSeeking)
+                if (_dragSeeking || _seekHint != null)
                   Positioned.fill(
                     child: IgnorePointer(
                       child: Center(
@@ -4913,13 +5011,7 @@ class _PlayerPageState extends State<PlayerPage> {
                             borderRadius: BorderRadius.circular(8),
                           ),
                           child: Text(
-                            _tvSeeking
-                                ? '${_fmt(Duration(milliseconds: _tvSeekMs.round()))}'
-                                      '  (${_tvSeekMs >= _absPosition(_player.state.position).inMilliseconds ? '+' : ''}'
-                                      '${((_tvSeekMs - _absPosition(_player.state.position).inMilliseconds) / 1000).round()}s)'
-                                : _dragSeeking
-                                ? _seekPreviewText
-                                : (_seekHint ?? ''),
+                            _dragSeeking ? _seekPreviewText : (_seekHint ?? ''),
                             style: const TextStyle(
                               color: Colors.white,
                               fontSize: 20,

@@ -68,6 +68,14 @@ class DisplayCaps {
     return HdrLevel.none;
   }
 
+  /// 这份能力足以用来「拦下原片直连」吗。
+  ///
+  /// Android 的 `getSupportedHdrTypes()` 在不少电视上会返回空数组（和当前
+  /// HDMI 模式 / 系统版本有关），但屏幕本身是 DV / HDR10+ 的。拿空数组当
+  /// 「这块屏什么 HDR 都不支持」会把所有原片压成 SDR，损失比误判大得多；
+  /// 只有真的读到了具体类型才据此降级。
+  bool get trustworthy => known && hdrTypes.isNotEmpty;
+
   /// 电视能不能直接显示这个等级的片源。
   bool supports(HdrLevel source) => source.rank <= maxHdr.rank;
 }
