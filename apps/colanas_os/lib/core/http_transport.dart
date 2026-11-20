@@ -33,6 +33,12 @@ class HttpTransport implements Transport {
         !request.headers.containsKey('x-colanas-client')) {
       request.headers['x-colanas-client'] = clientId;
     }
+    // 同步 / 备份这类后台搬运：服务端据此把传输会话标成 background，
+    // 传输中心默认不列（否则一次同步几千个文件会把「传输中」刷满）。
+    final scope = ColanasTransferScope.current;
+    if (scope != null && !request.headers.containsKey('x-colanas-transfer-scope')) {
+      request.headers['x-colanas-transfer-scope'] = scope;
+    }
     if (body != null && body.isNotEmpty) request.bodyBytes = body;
 
     // 接口耗时/字节数：诊断开启时进报表；关闭时只在慢请求/大响应留一行日志。

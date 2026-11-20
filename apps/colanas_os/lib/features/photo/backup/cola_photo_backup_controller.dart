@@ -841,7 +841,11 @@ class PhotoBackupController extends ChangeNotifier {
         notifyListeners();
         final target = _targetPath(t, e);
         try {
-          await _withRetry(() => _uploadOne(e.file, target, e.size));
+          // 备份一轮几百上千张，标记成后台搬运 —— 服务端照旧落库，
+          // 但不往传输中心里堆（用户自己点的上传会被淹没）。
+          await ColanasTransferScope.runBackground(
+            () => _withRetry(() => _uploadOne(e.file, target, e.size)),
+          );
           rt.doneBytes += e.size;
           await _record(run, e, BackupFileStatus.success, '');
         } catch (err) {

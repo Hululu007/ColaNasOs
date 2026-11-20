@@ -53,6 +53,18 @@ function transferOrigin(req: { headers: Record<string, unknown> }): {
   return { origin: pick('x-colanas-client'), device: pick('x-colanas-device') };
 }
 
+/**
+ * 后台搬运标记（同步任务 / 照片备份）。
+ *
+ * 这类任务一次上千个文件，全进「传输中」会把用户自己点的那几个淹掉。
+ * 会话照旧落库，只是标成 `background`，面板默认不列。
+ */
+function transferScope(req: { headers: Record<string, unknown> }): 'user' | 'background' {
+  const raw = req.headers['x-colanas-transfer-scope'];
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  return value === 'background' ? 'background' : 'user';
+}
+
 export const files: ServerModule = {
   id: 'files',
   prefix: '/api/v1/files',
@@ -268,6 +280,7 @@ export const files: ServerModule = {
           totalChunks: size > 0 ? Math.ceil(size / chunkSize) : 0,
           origin,
           device,
+          scope: transferScope(req),
         });
 
         // 秒传：文件已在服务端，直接收口成「已完成」——面板上能看到这条，

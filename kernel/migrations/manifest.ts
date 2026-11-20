@@ -233,6 +233,8 @@ export const MIGRATION_ORDER: readonly string[] = Object.freeze([
   '186_player_output_policy',
   // 日本片无码标记识别扩展：回填 U + LTX / 画质后缀和 NFO 标题关键词
   '187_video_jp_uncensored_tags',
+  // 传输来源分层：同步 / 备份这类后台搬运不进传输中心的默认列表与统计
+  '188_transfer_scope',
 ]);
 
 export interface OrderCheck {

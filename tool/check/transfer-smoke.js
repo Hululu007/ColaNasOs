@@ -79,8 +79,11 @@ const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
     return { authorization: 'Bearer ' + r.json().token };
   };
 
-  const full = await tokenFor(['files:read', 'files:write'], 'u1');
-  const other = await tokenFor(['files:read', 'files:write'], 'u2');
+  // 全权令牌：文件接口的路径守卫要求「策略里有目录」或「账号全权」，
+  // 这里没有真实账号，只有 `*` 才是全权 —— 少了它每个上传都是 403，
+  // 这条 smoke 从引入起就一直红着（先前的红不是功能坏了，是令牌不对）。
+  const full = await tokenFor(['*'], 'u1');
+  const other = await tokenFor(['*'], 'u2');
   const readOnly = await tokenFor(['files:read'], 'u3');
 
   const content = Buffer.from('transfer-center-probe'.repeat(2048)); // ~40 KiB
@@ -177,6 +180,58 @@ const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
     payload: { id: sid },
   });
   check('readonly_cannot_control', r.statusCode === 403, 'status=' + r.statusCode);
+
+  // ---- 6.5 后台搬运（同步 / 照片备份）默认不进列表与统计 ----
+  // 一次同步上千个文件，全塞进「传输中」会把用户自己点的那几条淹掉；
+  // 会话照旧落库（详情能查到、进度和排错还要用），只是面板默认不列。
+  const userView = (await app.inject({
+    method: 'GET',
+    url: '/api/v1/transfer/sessions',
+    headers: full,
+  })).json();
+
+  r = await app.inject({
+    method: 'POST',
+    url: '/api/v1/files/check',
+    headers: { ...full, 'x-colanas-transfer-scope': 'background' },
+    payload: { path: 'sync/bg.bin', size: 2048 },
+  });
+  const bgId = r.json().sessionId;
+
+  const bgView = (await app.inject({
+    method: 'GET',
+    url: '/api/v1/transfer/sessions',
+    headers: full,
+  })).json();
+  check(
+    'background_hidden',
+    !!bgId &&
+      !(bgView.items || []).some((x) => x.id === bgId) &&
+      bgView.total === userView.total,
+    `total=${userView.total} -> ${bgView.total}`,
+  );
+  check(
+    'background_not_in_stats',
+    bgView.stats.active === userView.stats.active &&
+      bgView.stats.activeBytes === userView.stats.activeBytes,
+    `active=${userView.stats.active} -> ${bgView.stats.active}`,
+  );
+
+  // 直接按 id 取仍然看得到，且 scope 标记正确 —— 后台会话不是「丢了」，是默认不展示
+  r = await app.inject({ method: 'GET', url: `/api/v1/transfer/sessions/${bgId}`, headers: full });
+  const bgDetail = r.json();
+  check(
+    'background_persisted',
+    r.statusCode === 200 && bgDetail.scope === 'background' && bgDetail.state === 'active',
+    `scope=${bgDetail.scope} state=${bgDetail.state}`,
+  );
+
+  // 普通上传不带标记，仍是 user
+  check(
+    'foreground_scope_default',
+    (userView.items || []).some((x) => x.id === sid && x.scope === 'user'),
+    'sid=' + sid,
+  );
 
   // ---- 7. 下载：用户点下载记一条；内联预览 / 中段 Range 不记 ----
   const beforeDownloads = (await app.inject({

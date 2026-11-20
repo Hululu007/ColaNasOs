@@ -14,6 +14,15 @@ import { sql } from 'kysely';
 export type TransferDirection = 'upload' | 'download';
 export type TransferState = 'pending' | 'active' | 'paused' | 'done' | 'failed' | 'canceled';
 
+/**
+ * 传输来源分层。
+ *
+ * `background` 是同步任务 / 照片备份这类后台搬运：一次任务动辄上千个文件，
+ * 落库照旧（进度、排错要用），但传输中心默认不列、也不计入统计 ——
+ * 否则「传输中」会被它刷满，用户真正在等的那几个文件反而找不到。
+ */
+export type TransferScope = 'user' | 'background';
+
 export interface TransferSession {
   id: string;
   owner: string;
@@ -27,6 +36,7 @@ export interface TransferSession {
   state: TransferState;
   origin: string;
   device: string;
+  scope?: TransferScope;
   error: string | null;
   createdAt: number;
   updatedAt: number;
@@ -47,6 +57,7 @@ interface Row {
   state: string;
   origin: string;
   device: string;
+  scope: string;
   error: string | null;
   created_at: number;
   updated_at: number;
@@ -87,6 +98,7 @@ function toSession(row: Row): TransferSession {
     state: row.state as TransferState,
     origin: row.origin,
     device: row.device,
+    scope: row.scope === 'background' ? 'background' : 'user',
     error: row.error,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -104,6 +116,8 @@ export interface BeginInput {
   totalChunks?: number;
   origin?: string;
   device?: string;
+  /** 缺省 `user`：只有后台搬运（同步 / 备份）需要显式传 `background` */
+  scope?: TransferScope;
 }
 
 export class TransferStore {
@@ -119,6 +133,7 @@ export class TransferStore {
   async begin(input: BeginInput): Promise<TransferSession> {
     const at = nowSec();
     const path = String(input.path || '');
+    const scope: TransferScope = input.scope === 'background' ? 'background' : 'user';
     const existing = await sql<Row>`
       select * from transfer_sessions
       where owner = ${input.owner}
@@ -143,6 +158,7 @@ export class TransferStore {
             done_chunks = ${resized ? '[]' : row.done_chunks},
             origin = ${input.origin || row.origin},
             device = ${input.device || row.device},
+            scope = ${scope},
             error = null,
             updated_at = ${at},
             finished_at = null
@@ -156,11 +172,11 @@ export class TransferStore {
     await sql`
       insert into transfer_sessions (
         id, owner, direction, path, name, size, transferred, total_chunks, done_chunks,
-        state, origin, device, error, created_at, updated_at, finished_at
+        state, origin, device, scope, error, created_at, updated_at, finished_at
       ) values (
         ${id}, ${input.owner}, ${input.direction}, ${path}, ${baseNameOf(path)},
         ${Number(input.size) || 0}, 0, ${Number(input.totalChunks) || 0}, '[]',
-        'active', ${input.origin || ''}, ${input.device || ''}, null, ${at}, ${at}, null
+        'active', ${input.origin || ''}, ${input.device || ''}, ${scope}, null, ${at}, ${at}, null
       )
     `.execute(this.db);
 
@@ -177,6 +193,7 @@ export class TransferStore {
       state: 'active',
       origin: input.origin || '',
       device: input.device || '',
+      scope,
       error: null,
       createdAt: at,
       updatedAt: at,
@@ -328,6 +345,8 @@ export class TransferStore {
     direction?: string;
     owner?: string;
     q?: string;
+    /** 是否连后台搬运（同步 / 备份）一起列出来；缺省只列用户自己的传输 */
+    includeBackground?: boolean;
     limit?: number;
     offset?: number;
   }): Promise<{ items: TransferSession[]; total: number }> {
@@ -337,6 +356,7 @@ export class TransferStore {
     const filters: any[] = [];
     const where = sql`where 1 = 1`;
     const conds = [];
+    if (!opts.includeBackground) conds.push(sql`scope <> 'background'`);
     if (opts.state && opts.state !== 'all') conds.push(sql`state = ${opts.state}`);
     if (opts.direction) conds.push(sql`direction = ${opts.direction}`);
     if (opts.owner) conds.push(sql`owner = ${opts.owner}`);
@@ -367,7 +387,7 @@ export class TransferStore {
   }
 
   /** 面板顶部的小结：进行中 / 完成 / 失败各多少条，以及累计字节 */
-  async stats(): Promise<{
+  async stats(includeBackground = false): Promise<{
     active: number;
     done: number;
     failed: number;
@@ -376,9 +396,11 @@ export class TransferStore {
     speedBps: number;
   }> {
     const at = nowSec();
+    const scopeWhere = includeBackground ? sql`1 = 1` : sql`scope <> 'background'`;
     const res = await sql<{ state: string; c: number; bytes: number }>`
       select state, count(*) as c, coalesce(sum(transferred), 0) as bytes
       from transfer_sessions
+      where ${scopeWhere}
       group by state
     `.execute(this.db);
 
@@ -403,6 +425,7 @@ export class TransferStore {
       select coalesce(sum(transferred), 0) as bytes
       from transfer_sessions
       where state in ('active', 'pending') and updated_at >= ${at - 30}
+        and ${scopeWhere}
     `.execute(this.db);
     const speedBps = Math.round((Number(recent.rows[0]?.bytes ?? 0) || 0) / 30);
 

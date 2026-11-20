@@ -381,10 +381,14 @@ class SyncEngine {
           case 'upload':
             bump(SyncPhase.transferring, action.path);
             try {
-              final ok = await _upload(task, action, (delta) {
-                bytesDone += delta;
-                bump(SyncPhase.transferring, action.path);
-              });
+              // 整个上传在「后台搬运」标记下跑：服务端据此把这条传输会话
+              // 记成 background，不往传输中心里堆（一次同步上千个文件）。
+              final ok = await ColanasTransferScope.runBackground(
+                () => _upload(task, action, (delta) {
+                  bytesDone += delta;
+                  bump(SyncPhase.transferring, action.path);
+                }),
+              );
               if (ok) {
                 uploaded += 1;
                 bytes += action.size;

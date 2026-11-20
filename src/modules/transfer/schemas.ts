@@ -25,6 +25,9 @@ export const TransferSession = Type.Object(
     state: Type.String({ description: 'pending / active / paused / done / failed / canceled' }),
     origin: Type.String({ description: '发起端：desktop / web / android / ios / tv' }),
     device: Type.String({ description: '设备可读名（可空）' }),
+    scope: Type.String({
+      description: '传输来源：user（用户自己点的）/ background（同步、照片备份这类后台搬运，默认不进列表）',
+    }),
     error: Type.Union([Type.String(), Type.Null()]),
     createdAt: Type.Integer(),
     updatedAt: Type.Integer(),

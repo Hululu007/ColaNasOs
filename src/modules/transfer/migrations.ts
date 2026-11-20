@@ -50,4 +50,21 @@ export const TRANSFER_MIGRATIONS: Migration[] = [
       `.execute(db);
     },
   },
+  {
+    id: '188_transfer_scope',
+    async up(db) {
+      // 传输来源分层：
+      // - 'user'：用户自己点的上传 / 下载，传输中心要展示；
+      // - 'background'：同步任务、照片备份这类后台搬运，一次任务上千个文件，
+      //   全塞进「传输中」会把真正需要盯的那几条淹掉。它们照旧落库（进度 /
+      //   排错还要用），只是默认不进面板列表与统计。
+      await sql`
+        alter table transfer_sessions add column scope text not null default 'user'
+      `.execute(db);
+      await sql`
+        create index if not exists idx_transfer_scope_updated
+        on transfer_sessions (scope, updated_at desc)
+      `.execute(db);
+    },
+  },
 ];
