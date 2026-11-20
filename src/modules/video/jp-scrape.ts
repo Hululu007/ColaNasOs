@@ -49,7 +49,7 @@ const SOURCE_HEADERS: Record<JpSource, Record<string, string>> = {
 
 /** avsox 域名换得勤，主域挂了换镜像；连续失败两次就在本次进程内停用它 */
 const AVSOX_HOSTS = ['https://avsox.health', 'https://avsox.click', 'https://avsox.monster'];
-let avsoxHost = 0;
+const avsoxHost = 0;
 let avsoxFails = 0;
 
 export interface JpScrapeResult {

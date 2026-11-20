@@ -159,7 +159,7 @@ export async function loadIgnore(rootAbs: string): Promise<IgnoreRules> {
   if (prev && prev.file === picked && prev.mtimeMs === mtimeMs) {
     return { patterns: prev.rules, source: picked };
   }
-  let text = '';
+  let text: string;
   try {
     text = await fsp.readFile(picked, 'utf8');
   } catch {
