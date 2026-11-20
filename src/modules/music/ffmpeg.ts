@@ -63,8 +63,14 @@ function parseDuration(stderr: string): number | null {
   return Number.isFinite(ms) && ms > 0 ? Math.round(ms) : null;
 }
 
-/** 只取第一个 Metadata 块（容器级），后续流级 tags 不覆盖 */
-function parseContainerTags(stderr: string): Record<string, string> {
+/**
+ * 只取第一个 Metadata 块（容器级），后续流级 tags 不覆盖。
+ *
+ * 同一个块里同名 tag 可能出现多次：例如 wav 头部 ID3v2 是 UTF-8 正常值，尾部
+ * RIFF INFO 是 GBK 字节，经 stderr 的 UTF-8 解码后变成含 U+FFFD 的乱码，且排在
+ * 正常值之后。因此跳过乱码值、同名只保留第一个有效值，避免乱码覆盖正常中文。
+ */
+export function parseContainerTags(stderr: string): Record<string, string> {
   const tags: Record<string, string> = {};
   const lines = stderr.split('\n');
   let inBlock = false;
@@ -78,7 +84,11 @@ function parseContainerTags(stderr: string): Record<string, string> {
     if (!inBlock) continue;
     if (/^\S/.test(line)) break; // 块结束（Duration / Stream #）
     const m = /^\s{2,}([A-Za-z0-9_-]+)\s*:\s*(.*)$/.exec(line);
-    if (m) tags[m[1].toLowerCase()] = m[2].trim();
+    if (!m) continue;
+    const key = m[1].toLowerCase();
+    const value = m[2].trim();
+    if (value.includes('\ufffd')) continue; // 非 UTF-8 字节解码失败，跳过乱码值
+    if (!(key in tags)) tags[key] = value; // 同名取第一个有效值
   }
   return tags;
 }
