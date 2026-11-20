@@ -1,11 +1,13 @@
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { IGNORED_DIR_NAMES, IGNORED_FILE_NAMES } from '../../../kernel/fs-watch';
+import { ignoredBy, loadIgnore } from './ignore';
 
 /**
  * 媒体库目录遍历（photo / video / music / book 共用）：
  *   - 只返回普通文件，不跟随符号链接（防环）
  *   - 跳过系统垃圾目录 / 文件（`@eaDir`、`#recycle`、`Thumbs.db` 等），与文件监控同一份规则
+ *   - 额外跳过库根目录 `.colanasignore` 里声明的路径（用户自定义，语法同 gitignore）
  *   - 深度上限 32，结果数上限 `limit`（到量即停，避免超大库卡死）
  *   - 返回相对路径统一用 POSIX 分隔符
  */
@@ -17,6 +19,7 @@ export async function walkFiles(
   accept: (name: string) => boolean,
 ): Promise<string[]> {
   const out: string[] = [];
+  const { patterns } = await loadIgnore(rootAbs);
   const stack: Array<{ abs: string; rel: string; depth: number }> = [
     { abs: rootAbs, rel: '', depth: 0 },
   ];
@@ -36,10 +39,12 @@ export async function walkFiles(
       if (e.isSymbolicLink()) continue;
       if (e.isDirectory()) {
         if (IGNORED_DIR_NAMES.has(e.name.toLowerCase())) continue;
+        if (ignoredBy(patterns, rel, true)) continue;
         if (cur.depth + 1 <= MAX_DEPTH) {
           stack.push({ abs: path.join(cur.abs, e.name), rel, depth: cur.depth + 1 });
         }
       } else if (e.isFile() && !IGNORED_FILE_NAMES.has(e.name.toLowerCase()) && accept(e.name)) {
+        if (ignoredBy(patterns, rel, false)) continue;
         out.push(rel);
       }
     }
@@ -60,6 +65,7 @@ export async function walkFilesStream(
   accept: (name: string) => boolean,
   onFile: (rel: string) => Promise<boolean | void> | boolean | void,
 ): Promise<void> {
+  const { patterns } = await loadIgnore(rootAbs);
   const stack: Array<{ abs: string; rel: string; depth: number }> = [
     { abs: rootAbs, rel: '', depth: 0 },
   ];
@@ -78,10 +84,12 @@ export async function walkFilesStream(
       if (e.isSymbolicLink()) continue;
       if (e.isDirectory()) {
         if (IGNORED_DIR_NAMES.has(e.name.toLowerCase())) continue;
+        if (ignoredBy(patterns, rel, true)) continue;
         if (cur.depth + 1 <= MAX_DEPTH) {
           stack.push({ abs: path.join(cur.abs, e.name), rel, depth: cur.depth + 1 });
         }
       } else if (e.isFile() && !IGNORED_FILE_NAMES.has(e.name.toLowerCase()) && accept(e.name)) {
+        if (ignoredBy(patterns, rel, false)) continue;
         const go = await onFile(rel);
         if (go === false) return;
       }
