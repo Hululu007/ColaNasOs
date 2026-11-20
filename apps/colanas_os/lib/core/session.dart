@@ -355,6 +355,15 @@ class ApiSession {
   /// 访问令牌还要看签发账号是否全权，这一项由 `/me` 的 `isAdmin` 补上。
   bool get isAdmin => scopes.contains('*') || isAdminFromServer;
 
+  /// 这个账号能不能用同步。
+  ///
+  /// 权限是按账号发的（`auth_users.scopes`），没给就是没有 —— 界面入口早就按
+  /// [appVisibleToCurrentUser] 藏起来了，但后台调度器以前只看「平台支不支持
+  /// 同步」，于是这种账号照样每分钟 claim 一次、被服务端 403 打回来。
+  /// 这里的口径与内核 `secured('sync:read')` 对齐：管理员等同于全有。
+  bool get canSync =>
+      isAdmin || scopes.contains('sync:read') || scopes.contains('sync:write');
+
   /// 拉取当前账号的授权快照。失败不阻断登录：退回 scopes 推导。
   Future<void> refreshAccess() async {
     try {

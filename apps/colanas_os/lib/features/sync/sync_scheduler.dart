@@ -29,18 +29,40 @@ class SyncScheduler {
   /// 权限是按账号发的（`auth_users.scopes` 里没有 sync:read / sync:write），
   /// 重试一万次也不会自己好，收益为零。
   bool _scopeDenied = false;
+  bool _listeningAuth = false;
 
   void start() {
     if (!SyncEngine.instance.fs.canSync) return;
-    if (_timer != null) return;
-    _timer = Timer.periodic(const Duration(minutes: 1), (_) => _tick());
-    unawaited(_tick());
+    // 登录 / 换账号 / 登出都要重新过一次权限闸门，所以监听一次就够
+    if (!_listeningAuth) {
+      _listeningAuth = true;
+      ApiSession.instance.authState.addListener(_applyPermissionGate);
+    }
+    _applyPermissionGate();
   }
 
   void stop() {
     _timer?.cancel();
     _timer = null;
     _watch.stop();
+  }
+
+  /// 有同步权限才跑定时器。
+  ///
+  /// 以前这里只看「平台支不支持同步」（`fs.canSync`），而权限是按账号发的：
+  /// `cola` 的 scopes 里没有 `sync:read` / `sync:write`，可侧栏入口藏起来的同时
+  /// 定时器照跑，每分钟 claim 一次被 403 打回，客户端又当网络抖动接着重试 ——
+  /// 两小时刷出四百多条 403，日志里真正的问题全被淹掉。
+  /// 现在没权限直接不起表，账号换回来（重新登录）再自动恢复。
+  void _applyPermissionGate() {
+    final allowed = ApiSession.instance.authed && ApiSession.instance.canSync;
+    if (!allowed) {
+      if (_timer != null) stop();
+      return;
+    }
+    if (_timer != null) return;
+    _timer = Timer.periodic(const Duration(minutes: 1), (_) => _tick());
+    unawaited(_tick());
   }
 
   /// 立即同步：忽略每任务间隔，把本机所有任务跑一轮。
@@ -50,6 +72,7 @@ class SyncScheduler {
   /// 所以进度、冲突、记录都跟界面里点「同步」一致。
   Future<void> runAllNow() async {
     if (_busy || !ApiSession.instance.authed) return;
+    if (!ApiSession.instance.canSync) return;
     if (!SyncEngine.instance.fs.canSync) return;
     _busy = true;
     try {
@@ -114,7 +137,8 @@ class SyncScheduler {
 
   /// 本机任务数：托盘的「立即同步」据此置灰（0 个任务时点了也没事可做）
   Future<int> localTaskCount() async {
-    if (!ApiSession.instance.authed) return 0;
+    // 没同步权限就直接报 0：托盘启动时也会问一次，不能让它先打一条 403
+    if (!ApiSession.instance.authed || !ApiSession.instance.canSync) return 0;
     try {
       _deviceId ??= await SyncEngine.instance.fs.resolveDeviceId();
       final tasks = await _loadTasks();
@@ -129,6 +153,7 @@ class SyncScheduler {
 
   Future<void> _tick() async {
     if (_busy || !ApiSession.instance.authed) return;
+    if (!ApiSession.instance.canSync) return;
     if (!SyncEngine.instance.fs.canSync) return;
     _busy = true;
     try {
