@@ -240,19 +240,48 @@ export function parseScore(html: string): number {
   return Number.isFinite(n) && n > 0 && n <= 10 ? Math.round(n * 100) / 100 : 0;
 }
 
+/**
+ * javdb 需要先访问一次首页拿 `_jdb_session`，否则 `/search` 一律 403。
+ * 会话 cookie 有效期两周，拿到后在进程内一直复用。
+ */
+let javdbCookie = '';
+
+async function ensureJavdbCookie(fetchImpl: typeof fetch, timeoutMs: number): Promise<void> {
+  if (javdbCookie) return;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetchImpl('https://javdb.com/', {
+      signal: controller.signal,
+      headers: SOURCE_HEADERS.javdb,
+    });
+    const reader = (res.headers as unknown as { getSetCookie?: () => string[] }).getSetCookie;
+    const jar = typeof reader === 'function' ? reader.call(res.headers) : [];
+    const parts = jar.map((c) => c.split(';')[0].trim()).filter(Boolean);
+    if (parts.length > 0) javdbCookie = parts.join('; ');
+  } catch {
+    // 拿不到就直连再试一次，失败也只是跳过这个源
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function fetchText(
   url: string,
   fetchImpl: typeof fetch,
   timeoutMs: number,
   source: JpSource,
 ): Promise<string | null> {
+  const headers: Record<string, string> = { ...SOURCE_HEADERS[source] };
+  if (source === 'javdb') {
+    await ensureJavdbCookie(fetchImpl, timeoutMs);
+    headers.referer = 'https://javdb.com/';
+    if (javdbCookie) headers.cookie = `${javdbCookie}; over18=1; locale=zh`;
+  }
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetchImpl(url, {
-      signal: controller.signal,
-      headers: SOURCE_HEADERS[source],
-    });
+    const res = await fetchImpl(url, { signal: controller.signal, headers });
     if (!res.ok) return null;
     return await res.text();
   } catch {
