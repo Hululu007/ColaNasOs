@@ -434,7 +434,11 @@ class _DiscoverTab extends StatelessWidget {
                       item: item,
                       rating: c.ratingOf(item),
                       onTap: () => _showMediaDetail(ctx, c, item),
-                      onToggleFav: () {
+                      onToggleFav: () async {
+                        if (!await _confirmOwnedMaybe(
+                            ctx, item, 'discover_subscribe'.tr)) {
+                          return;
+                        }
                         if (catalog || searchMode) {
                           if (mediaId != null) c.toggleFavoriteByMediaId(mediaId);
                         } else {
@@ -445,13 +449,28 @@ class _DiscoverTab extends StatelessWidget {
                       subscribed: mediaId != null && c.isSubscribed(mediaId),
                       onSubscribe: mediaId == null
                           ? null
-                          : () {
+                          : () async {
                               final subId = c.subscriptionIdOf(mediaId);
-                              if (subId != null) {
-                                c.unsubscribe(subId);
-                              } else {
-                                c.subscribe(mediaId);
+                              if (subId == null) {
+                                // 本地已有就不再闷头建一条重复订阅，先问一句
+                                if (!await _confirmOwnedMaybe(
+                                    ctx, item, 'discover_sub_add'.tr)) {
+                                  return;
+                                }
+                                final ok = await c.subscribe(mediaId);
+                                if (!ctx.mounted) return;
+                                NasSnack.show(
+                                  ctx,
+                                  ok ? 'discover_saved'.tr : 'discover_save_failed'.tr,
+                                );
+                                return;
                               }
+                              final ok = await c.unsubscribe(subId);
+                              if (!ctx.mounted) return;
+                              NasSnack.show(
+                                ctx,
+                                ok ? 'discover_saved'.tr : 'discover_save_failed'.tr,
+                              );
                             },
                       onSearch:
                           mediaId == null ? null : () => _showPtResults(ctx, c, mediaId: mediaId),
@@ -864,6 +883,44 @@ class _BrowseCard extends StatelessWidget {
       child: Text(text, style: const TextStyle(color: Colors.white, fontSize: 10)),
     );
   }
+}
+
+/// 「本地已经有这部片了，还要继续订阅吗？」
+///
+/// 卡片和详情页都能触发订阅/收藏，统一走这里。`owned` 由服务端按
+/// `video_items.nfo_tmdb_id` 精确匹配得出（没刮削过不会瞎猜），
+/// 所以本地就能判断，不用为这一次点击再发一个请求。
+/// 返回 true 表示可以继续。
+Future<bool> _confirmOwnedMaybe(
+  BuildContext context,
+  Map<String, dynamic> item,
+  String action,
+) async {
+  if (item['owned'] != true) return true;
+  final title = (item['title'] ?? item['name'] ?? '').toString();
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: Text('discover_owned_confirm_title'.tr),
+      content: Text(
+        'discover_owned_confirm_body'
+            .tr
+            .replaceAll('{title}', title)
+            .replaceAll('{action}', action),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(ctx, false),
+          child: Text('cancel'.tr),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(ctx, true),
+          child: Text('discover_owned_confirm_ok'.tr),
+        ),
+      ],
+    ),
+  );
+  return ok == true;
 }
 
 Future<void> _showMediaDetail(
@@ -1778,17 +1835,21 @@ class _RssTabState extends State<_RssTab> {
                               ),
                               // 两个开关都是「改完立刻生效」：立刻开始还会把该源
                               // 已在下载器里、还没下完的种子一起 start / stop。
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: SwitchListTile(
-                                      dense: true,
-                                      visualDensity: VisualDensity.compact,
-                                      contentPadding: const EdgeInsets.only(left: 12),
-                                      title: Text('discover_rss_auto_download'.tr,
-                                          style: const TextStyle(fontSize: 13)),
-                                      subtitle: Text('discover_rss_auto_hint'.tr,
-                                          style: const TextStyle(fontSize: 11)),
+                              //
+                              // 一行一个：说明文字定宽 300，开关紧跟其后。两列并排时
+                              // 宽屏下文字贴最左、开关飘到屏幕中间，看着像是「左边文字
+                              // 配右边别人的开关」；分行后归属关系一眼可辨。
+                              Padding(
+                                padding: const EdgeInsets.only(
+                                  left: 12,
+                                  right: 8,
+                                  bottom: 4,
+                                ),
+                                child: Column(
+                                  children: [
+                                    _RssSwitchRow(
+                                      title: 'discover_rss_auto_download'.tr,
+                                      hint: 'discover_rss_auto_hint'.tr,
                                       value: auto,
                                       onChanged: fid == null
                                           ? null
@@ -1805,16 +1866,9 @@ class _RssTabState extends State<_RssTab> {
                                               );
                                             },
                                     ),
-                                  ),
-                                  Expanded(
-                                    child: SwitchListTile(
-                                      dense: true,
-                                      visualDensity: VisualDensity.compact,
-                                      contentPadding: const EdgeInsets.only(right: 8),
-                                      title: Text('discover_rss_immediate_short'.tr,
-                                          style: const TextStyle(fontSize: 13)),
-                                      subtitle: Text('discover_rss_immediate_short_hint'.tr,
-                                          style: const TextStyle(fontSize: 11)),
+                                    _RssSwitchRow(
+                                      title: 'discover_rss_immediate_short'.tr,
+                                      hint: 'discover_rss_immediate_short_hint'.tr,
                                       value: immediate,
                                       onChanged: fid == null
                                           ? null
@@ -1831,8 +1885,8 @@ class _RssTabState extends State<_RssTab> {
                                               );
                                             },
                                     ),
-                                  ),
-                                ],
+                                  ],
+                                ),
                               ),
                             ],
                           ),
@@ -1919,6 +1973,59 @@ class _RssTabState extends State<_RssTab> {
             }).toList(),
           );
         }),
+      ],
+    );
+  }
+}
+
+/// RSS 源设置的一行：左边说明（定宽 300，窄屏自动收），右边开关。
+class _RssSwitchRow extends StatelessWidget {
+  const _RssSwitchRow({
+    required this.title,
+    required this.hint,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final String title;
+  final String hint;
+  final bool value;
+  final ValueChanged<bool>? onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Flexible(
+          child: SizedBox(
+            width: 300,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 13),
+                ),
+                Text(
+                  hint,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: Theme.of(context).textTheme.bodySmall?.color,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        Switch(
+          value: value,
+          onChanged: onChanged,
+        ),
       ],
     );
   }
@@ -3144,32 +3251,74 @@ class _MediaDetailPageState extends State<_MediaDetailPage> {
   }
 
   Widget _buildActions(ThemeData theme) {
+    final mediaId = widget.mediaId is int ? widget.mediaId as int : null;
+    final subscribed = widget.c.isSubscribed(mediaId);
+    final favorited = widget.c.isFavorited(mediaId);
+    final owned = widget.c.isOwned(mediaId);
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
       child: Row(
         children: [
           FilledButton.icon(
-            onPressed: () => _showPtResults(context, widget.c, mediaId: (widget.mediaId is int) ? widget.mediaId as int : null),
+            onPressed: () => _showPtResults(context, widget.c, mediaId: mediaId),
             icon: const Icon(Icons.download, size: 16),
             label: Text('discover_search_pt'.tr),
           ),
           const SizedBox(width: 10),
+          // 「订阅」就真的订阅（PT 订阅：定时搜种 → 选种 → 推下载器）。
+          // 以前这颗按钮挂的是收藏，文案和行为对不上，订阅完这里也不会变「已订阅」。
           OutlinedButton.icon(
             onPressed: () async {
-              final id = widget.mediaId;
-              if (id is int) {
-                await widget.c.toggleFavoriteByMediaId(id);
-                if (mounted) setState(() {});
+              if (mediaId == null) return;
+              final subId = widget.c.subscriptionIdOf(mediaId);
+              if (subId == null) {
+                final go = await _confirmOwnedMaybe(
+                  context,
+                  {'owned': owned, 'title': _title},
+                  'discover_sub_add'.tr,
+                );
+                if (!go || !mounted) return;
+                final ok = await widget.c.subscribe(mediaId);
+                if (!mounted) return;
+                setState(() {});
+                NasSnack.show(
+                    context, ok ? 'discover_saved'.tr : 'discover_save_failed'.tr);
+                return;
               }
+              final ok = await widget.c.unsubscribe(subId);
+              if (!mounted) return;
+              setState(() {});
+              NasSnack.show(
+                  context, ok ? 'discover_saved'.tr : 'discover_save_failed'.tr);
             },
-            icon: Icon(widget.c.isFavorited(widget.mediaId) ? Icons.star : Icons.star_border,
-                size: 16, color: Colors.amber),
-            label: Text(widget.c.isFavorited(widget.mediaId)
-                ? 'discover_sub_added'.tr
-                : 'discover_sub_add'.tr),
+            icon: Icon(subscribed ? Icons.notifications_active : Icons.notifications_none,
+                size: 16),
+            label: Text(subscribed ? 'discover_sub_added'.tr : 'discover_sub_add'.tr),
+          ),
+          const SizedBox(width: 6),
+          // 收藏（待下载）单独一个星标：它决定「待下载」队列，和订阅是两件事
+          IconButton(
+            tooltip: favorited ? 'discover_favorited'.tr : 'discover_subscribe'.tr,
+            onPressed: () async {
+              if (mediaId == null) return;
+              final go = await _confirmOwnedMaybe(
+                context,
+                {'owned': owned, 'title': _title},
+                'discover_subscribe'.tr,
+              );
+              if (!go || !mounted) return;
+              await widget.c.toggleFavoriteByMediaId(mediaId);
+              if (!mounted) return;
+              setState(() {});
+            },
+            icon: Icon(
+              favorited ? Icons.star : Icons.star_border,
+              size: 20,
+              color: Colors.amber,
+            ),
           ),
           const Spacer(),
-          if (widget.c.isOwned(widget.mediaId))
+          if (owned)
             Text('discover_owned'.tr, style: TextStyle(color: Colors.green.shade700, fontSize: 12)),
         ],
       ),

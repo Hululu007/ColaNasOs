@@ -530,7 +530,8 @@ class DiscoverController extends GetxController {
     final on = !(item['favorited'] == true);
     final res = await _api.favoriteToggle(mediaId: id, on: on);
     if (res.success) {
-      browseItems[index] = {...item, 'favorited': on};
+      // 榜单 / 搜索结果也复用同一部影片，只补当前这一项的话切过去还是旧星标
+      _setFavorited(id, on);
       // 待下载 / 已下载是另外两个列表，不刷新的话刚收藏的电影看不见
       await loadFavorites();
     }
@@ -567,9 +568,21 @@ class DiscoverController extends GetxController {
   bool isOwned(dynamic mediaId) {
     if (mediaId == null) return false;
     final f = _findFavorite(mediaId);
-    if (f != null && (f['owned'] == true || f['downloaded'] == true)) return true;
-    for (final it in browseItems) {
-      if (it['id'] == mediaId && (it['owned'] == true || it['downloaded'] == true)) return true;
+    if (f != null &&
+        (f['owned'] == true ||
+            f['downloaded'] == true ||
+            f['state'] == 'owned')) {
+      return true;
+    }
+    // 榜单 / 搜索结果里的卡片也带 owned（服务端按 nfo_tmdb_id 打的标），
+    // 详情页是从这些列表点进来的，三份都要看，否则「在影视库」角标和二次确认都对不上。
+    for (final list in [browseItems, catalogItems, mediaSearchResults]) {
+      for (final it in list) {
+        if (it['id'] == mediaId &&
+            (it['owned'] == true || it['download_state'] == 'downloaded')) {
+          return true;
+        }
+      }
     }
     return false;
   }
@@ -577,15 +590,11 @@ class DiscoverController extends GetxController {
   /// 按媒体 id 切换收藏（详情页用）：命中发现页列表则就地更新，否则直接调接口
   Future<void> toggleFavoriteByMediaId(int mediaId) async {
     final on = !isFavorited(mediaId);
-    for (var i = 0; i < browseItems.length; i++) {
-      if (browseItems[i]['id'] == mediaId) {
-        final res = await _api.favoriteToggle(mediaId: mediaId, on: on);
-        if (res.success) browseItems[i] = {...browseItems[i], 'favorited': on};
-        await loadFavorites();
-        return;
-      }
-    }
-    await _api.favoriteToggle(mediaId: mediaId, on: on);
+    final res = await _api.favoriteToggle(mediaId: mediaId, on: on);
+    if (!res.success) return;
+    // 榜单（本周热门）/ 搜索结果走的就是这个方法：三份列表都要打补丁，
+    // 只改 browseItems 会让「本周热门」里的星标点了不变。
+    _setFavorited(mediaId, on);
     await loadFavorites();
   }
 
@@ -874,14 +883,51 @@ class DiscoverController extends GetxController {
     final id = mediaId is int ? mediaId : int.tryParse('$mediaId');
     if (id == null) return false;
     final res = await _api.createSubscription(mediaId: id, ruleId: ruleId, enabled: true);
-    if (res.success) await loadSubscriptions();
+    if (res.success) {
+      await loadSubscriptions();
+      // subscriptions 只在卡片构建时被读，Obx 收集不到依赖；
+      // 顺手把列表项拍一下，强制网格重建，卡片上的「已订阅」才会当场变。
+      _touchItems(id, 'subscribed', true);
+    }
     return res.success;
   }
 
   Future<bool> unsubscribe(int id) async {
     final res = await _api.deleteSubscription(id);
-    if (res.success) await loadSubscriptions();
+    if (res.success) {
+      final mediaId = _mediaIdOfSubscription(id);
+      await loadSubscriptions();
+      if (mediaId != null) _touchItems(mediaId, 'subscribed', false);
+    }
     return res.success;
+  }
+
+  /// 订阅记录 id → media_id（取消订阅后要用它把卡片上的「已订阅」抹掉）
+  int? _mediaIdOfSubscription(int subId) {
+    for (final s in subscriptions) {
+      final id = s['id'];
+      final parsed = id is int ? id : int.tryParse('$id');
+      if (parsed == subId) {
+        final mid = s['media_id'];
+        return mid is int ? mid : int.tryParse('$mid');
+      }
+    }
+    return null;
+  }
+
+  /// 给三份列表里的同一部影片打一个标记字段并触发重建（订阅态没有独立存储）
+  void _touchItems(int mediaId, String key, Object? value) {
+    void upd(RxList<Map<String, dynamic>> list) {
+      for (var i = 0; i < list.length; i++) {
+        if (((list[i]['id'] as num?)?.toInt() ?? 0) == mediaId) {
+          list[i] = {...list[i], key: value};
+        }
+      }
+    }
+
+    upd(browseItems);
+    upd(catalogItems);
+    upd(mediaSearchResults);
   }
 
   Future<bool> setSubscriptionEnabled(int id, bool enabled) async {
