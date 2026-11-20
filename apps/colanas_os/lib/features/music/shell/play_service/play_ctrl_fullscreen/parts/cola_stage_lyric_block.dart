@@ -38,11 +38,11 @@ LyricStyle _styleFor(ThemeData theme, bool centered) {
     activeHighlightColor: _kHighlight,
     textStyle: normal.copyWith(
       fontSize: (normal.fontSize ?? 16) + 2,
-      color: theme.colorScheme.onSurface.withValues(alpha: 0.4),
+      color: theme.colorScheme.onSurface.withValues(alpha: 0.78),
     ),
     translationStyle: translation.copyWith(
       fontSize: (translation.fontSize ?? 14) + 2,
-      color: theme.colorScheme.onSurface.withValues(alpha: 0.55),
+      color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
     ),
     activeStyle: active.copyWith(
       fontSize: (active.fontSize ?? 18) + 8,

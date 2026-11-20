@@ -1,10 +1,10 @@
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'package:nas_ui/nas_ui.dart' show NasStyleContext;
 
 import '../../compat/base_components.dart';
 import '../../compat/cola_api_controller.dart';
-import '../../compat/cola_custom_colors.dart';
 import '../../compat/cola_device_utils.dart';
 import '../../compat/getx.dart';
 import '../../compat/host.dart';
@@ -257,7 +257,9 @@ class _ColaMusicStageState extends State<ColaMusicStageSheet> {
           if (!didPop) widget.onClose();
         },
         child: Material(
-          color: Theme.of(context).extension<CustomColors>()?.leftTreeBgColor,
+          // 用不透明底色：leftTreeBgColor 是半透明面板材质，叠在毛玻璃封面上
+          // 会透出底层，歌词区字发虚看不清。这里铺实色，封面/遮罩照常叠在上面。
+          color: context.nasStyle.baseColor,
           child: Stack(
             children: <Widget>[
               _coverBackdrop(_coverFor(item, size: 1200)),

@@ -216,7 +216,7 @@ class _LyricLineTile extends StatelessWidget {
         style: original.copyWith(
           color: active
               ? original.color
-              : original.color?.withValues(alpha: 0.7),
+              : original.color?.withValues(alpha: 0.85),
         ),
       ),
     );
@@ -245,9 +245,9 @@ class _WordHighlightedText extends StatelessWidget {
   List<InlineSpan> _spans() {
     final highlight = activeStyle.color ?? Colors.white;
     final dimmed =
-        activeStyle.color?.withValues(alpha: 0.36) ??
-        baseStyle.color?.withValues(alpha: 0.36) ??
-        Colors.white.withValues(alpha: 0.36);
+        activeStyle.color?.withValues(alpha: 0.6) ??
+        baseStyle.color?.withValues(alpha: 0.6) ??
+        Colors.white.withValues(alpha: 0.6);
 
     return <InlineSpan>[
       for (var i = 0; i < words.length; i++)
