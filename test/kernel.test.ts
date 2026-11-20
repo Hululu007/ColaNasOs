@@ -16,7 +16,7 @@ import {
 import { buildPlan } from '../src/modules/sync/plan';
 import { WatchdogSupervisor } from '../kernel/watchdog-supervisor';
 import { buildUnc, normalizeScanPath, parseUnc } from '../src/modules/video/smb';
-import { jpMetaOf, parseJpTagsFromName } from '../src/modules/video/media-type';
+import { jpMetaOf, parseJpCode, parseJpTagsFromName } from '../src/modules/video/media-type';
 import { looksJunkTmdbMatch, pickExactCodeLink } from '../src/modules/video/jp-scrape';
 import type { ServerModule } from '../kernel/types';
 import type { ConfigStore } from '../kernel/config';
@@ -416,6 +416,18 @@ test('jp: 识别 U 标记后的 LTX / 画质后缀及 NFO 标题关键词', () =
   assert.equal(jpMetaOf('ABP-123-ULTRA.ltx.mp4').uncensored, 0);
 });
 
+test('parseJpCode: 720 是真号段，日期式无码番号与 heyzo 都要认', () => {
+  assert.equal(parseJpCode('SONE-720-Uc.mp4'), 'SONE-720');
+  assert.equal(parseJpCode('[PGD-720-UC] 誘惑女教師/PGD-720-UC.mp4'), 'PGD-720');
+  assert.equal(parseJpCode('092415_001_鬼イカセ.mp4'), '092415_001');
+  assert.equal(parseJpCode('122618-820-carib-1080p.mp4'), '122618-820');
+  assert.equal(parseJpCode('heyzo_hd_1031_試着.mp4'), 'HEYZO-1031');
+  assert.equal(parseJpCode('FC2-PPV-1234567.mp4'), 'FC2-PPV-1234567');
+  // 纯分辨率 / 编码标记不该当番号
+  assert.equal(parseJpCode('[FHD] 1080p.mp4'), null);
+  assert.equal(parseJpCode('H265.1080p.mp4'), null);
+});
+
 test('jp-scrape: 只认番号精确匹配的详情链接', () => {
   const html = [
     '<a href="/v/aaa" ><strong>ABP-12</strong></a>',
@@ -426,8 +438,7 @@ test('jp-scrape: 只认番号精确匹配的详情链接', () => {
   assert.equal(pickExactCodeLink(html, 'ABP-999'), null);
 });
 
-test('jp-scrape: TMDB 垃圾条目过滤', () => {
-  assert.equal(looksJunkTmdbMatch({ title: 'ABP-123', overview: '11111' }, 'ABP-123'), true);
+test('jp-scrape: TMDB 垃圾条目过滤', () => {  assert.equal(looksJunkTmdbMatch({ title: 'ABP-123', overview: '11111' }, 'ABP-123'), true);
   assert.equal(looksJunkTmdbMatch({ title: 'Real Title', overview: '11111' }, 'ABP-123'), false);
   assert.equal(looksJunkTmdbMatch({ title: 'Real Title', overview: '剧情简介' }, 'ABP-123'), false);
 });

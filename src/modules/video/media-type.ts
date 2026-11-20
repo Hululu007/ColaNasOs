@@ -63,7 +63,16 @@ const PREFIX_BLACKLIST = new Set([
 
 /**
  * 从文件名里解析日本作品番号。
- * 只认「2~6 位字母 + 2~5 位数字」的标准形态，并排除 S01E02 / 1080P / H265 这类技术标记。
+ *
+ * 四种形态：
+ *   FC2      FC2-PPV-1234567
+ *   HEYZO    heyzo_hd_1031 → HEYZO-1031
+ *   日期式    無码/素人：MMDDYY_001 / MMDDYY-820（1pondo / carib / 10musume）
+ *   标准番号  ABC-123 / ABCD-12345（2~6 位字母 + 2~5 位数字）
+ *
+ * 分辨率与编码标记不算番号，但**只认带 P 后缀或 2160/4K/8K 的**：
+ * `PGD-720-UC`、`SONE-720` 里的 720 是真番号号段，早先按「分辨率黑名单」整段跳过，
+ * 导致这两个片子 code 为空、连搜索都不会发出去。
  */
 export function parseJpCode(relPath: string): string | null {
   const base = (relPath.split('/').pop() || '')
@@ -75,14 +84,24 @@ export function parseJpCode(relPath: string): string | null {
   const fc2 = /(FC2)[-_ ]*(PPV)?[-_ ]*(\d{5,8})/.exec(base);
   if (fc2) return `FC2-PPV-${fc2[3]}`;
 
+  // HEYZO：heyzo_hd_1031 / heyzo-1031
+  const heyzo = /(HEYZO)[-_ ]*(?:HD[-_ ]*)?(\d{3,5})(?![0-9])/.exec(base);
+  if (heyzo) return `HEYZO-${heyzo[2]}`;
+
+  // 日期式（無码/素人）：MMDDYY 后接 3 位序号，分隔符按原样保留（源站认 _ 也认 -）
+  const dated = /(?:^|[^0-9])(\d{6})([_\-. ])(\d{3})(?![0-9])/.exec(base);
+  if (dated) return `${dated[1]}${dated[2] === ' ' ? '_' : dated[2]}${dated[3]}`;
+
   const re = /(?:^|[^A-Z0-9])([A-Z]{2,6})[-_ ]?(\d{2,5})(?![0-9])/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(base)) !== null) {
     const prefix = m[1];
     const num = m[2];
     if (PREFIX_BLACKLIST.has(prefix)) continue;
-    // 「ABCD 1080」这种分辨率不算番号
-    if (/^(1080|720|480|2160|4K|8K)$/.test(num)) continue;
+    // 2160 / 4K / 8K 从不是番号号段
+    if (/^(2160|4K|8K)$/.test(num)) continue;
+    // 「ABCD 1080P」这种带 P 后缀的才是分辨率
+    if (/^\d{3,4}$/.test(num) && /^P(?![A-Z0-9])/.test(base.slice(m.index + m[0].length))) continue;
     return `${prefix}-${num}`;
   }
   return null;
