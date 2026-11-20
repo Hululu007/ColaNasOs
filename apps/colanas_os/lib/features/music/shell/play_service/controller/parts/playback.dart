@@ -36,7 +36,7 @@ extension MusicPlayServicePlayback on MusicPlayServiceController {
 
     await _newCore.core.stop();
     isPlaying.value = false;
-    _handler?.updateQueue(const <MediaItem>[]);
+    audioBackground.clear(this);
     _syncHandlerPlaybackState();
   }
 
@@ -151,7 +151,7 @@ extension MusicPlayServicePlayback on MusicPlayServiceController {
 
     await _ensureNotificationPermission();
     await _refreshDetailForIndex(safe);
-    _handler?.updateQueue(_buildQueueMediaItems());
+    await _requestAudioFocus();
     await _newCore.playAll(playable, startIndex: safe, autoPlay: autoPlay);
   }
 
@@ -169,6 +169,7 @@ extension MusicPlayServicePlayback on MusicPlayServiceController {
   Future<void> play() async {
     await _activateIosAudioSessionForPlayback();
     await _ensureNotificationPermission();
+    await _requestAudioFocus();
     return _newCore.resume();
   }
 
@@ -179,6 +180,7 @@ extension MusicPlayServicePlayback on MusicPlayServiceController {
   Future<void> resume() async {
     await _activateIosAudioSessionForPlayback();
     await _ensureNotificationPermission();
+    await _requestAudioFocus();
     return _newCore.resume();
   }
 
@@ -248,66 +250,85 @@ extension MusicPlayServicePlayback on MusicPlayServiceController {
 
       playlist.addAll(extra);
       playlist.refresh();
-      _handler?.updateQueue(_buildQueueMediaItems());
     } catch (_) {
       // 补页失败不打断当前播放，下次触底再试。
     }
   }
 
+  /// 切歌：把当前曲目推给系统媒体面板。
   void _syncMediaItem(int index, {bool forceUpdate = false}) {
-    final handler = _handler;
-    if (handler == null) return;
     if (index < 0 || index >= playlist.length) return;
-
-    final base = _buildMediaItem(playlist[index]);
-    final total = duration.value;
-    final needsDuration =
-        (base.duration == null || base.duration! <= Duration.zero) &&
-        total > Duration.zero;
-    final item = needsDuration ? base.copyWith(duration: total) : base;
-
-    final key = '$index|${item.title}|${item.artist}|${item.duration?.inSeconds ?? -1}';
-    if (!forceUpdate && key == _lastSentMediaItemKey) return;
-
-    _lastSentMediaItemKey = key;
-    // 当前项时长先写进队列，控制中心/锁屏才能显示正确的总时长。
-    if (item.duration != null && item.duration! > Duration.zero) {
-      handler.updateQueue(_buildQueueMediaItems());
-    }
-    handler.mediaItem.add(item);
+    _pushMediaSnapshot(index: index, force: forceUpdate);
   }
 
   void _invalidateMediaItemCache() {
     _lastSentMediaItemKey = null;
   }
 
-  /// 生成通知栏/锁屏使用的队列快照，并补齐当前项缺失的时长。
-  List<MediaItem> _buildQueueMediaItems() {
-    final snapshot = playlist.map(_buildMediaItem).toList(growable: false);
-    if (snapshot.isEmpty) return snapshot;
+  /// 抢音频焦点：播客 / 音色试听正在放的话会先被暂停，不会两路一起响。
+  Future<void> _requestAudioFocus() async {
+    await AudioFocus.instance.request(this, () async => pause());
+  }
 
-    final idx = currentIndex.value.clamp(0, snapshot.length - 1);
+  /// 推一份「当前曲目 + 播放状态」到系统媒体面板。
+  ///
+  /// 面板只有一份（音乐与播客共用 `audioBackground`）：只有持有音频焦点的
+  /// 那一路能写，所以暂停中的音乐不会把播客刚放上去的面板顶掉。
+  void _pushMediaSnapshot({int? index, bool force = false}) {
+    if (playlist.isEmpty) return;
+    if (!AudioFocus.instance.holds(this)) return;
+    final i = (index ?? currentIndex.value).clamp(0, playlist.length - 1);
+    final item = playlist[i];
+
+    final state = _coreAdapter?.core.state;
+    final playing = state?.isPlaying ?? isPlaying.value;
     final total = duration.value;
-    if (total <= Duration.zero) return snapshot;
+    final key = '$i|${item.displayTitle}|${item.artist}|$playing|${total.inSeconds}';
+    if (!force && key == _lastSentMediaItemKey) return;
+    _lastSentMediaItemKey = key;
 
-    final current = snapshot[idx];
-    final missingDuration =
-        current.duration == null || current.duration! <= Duration.zero;
-    if (!missingDuration) return snapshot;
+    if (kIsWeb) {
+      // Web 没有前台服务，交给浏览器的 Media Session（切后台时的系统媒体面板）
+      updateMediaSession(
+        title: item.displayTitle,
+        artist: item.artist.trim().isEmpty ? null : item.artist.trim(),
+        album: item.album.trim().isEmpty ? null : item.album.trim(),
+        playing: playing,
+        onPlay: () => unawaited(play()),
+        onPause: () => unawaited(pause()),
+        onNext: () => unawaited(playNext()),
+        onPrevious: () => unawaited(playPrevious()),
+      );
+      if (total > Duration.zero) {
+        updateMediaSessionPosition(duration: total, position: position.value);
+      }
+      return;
+    }
 
-    final patched = snapshot.toList(growable: false);
-    patched[idx] = current.copyWith(duration: total);
-    return patched;
+    audioBackground.update(
+      AudioSnapshot(
+        owner: this,
+        id: '${item.id}|$i',
+        title: item.displayTitle,
+        artist: item.artist.trim().isEmpty ? null : item.artist.trim(),
+        album: item.album.trim().isEmpty ? null : item.album.trim(),
+        artUri: _coverUrl(item),
+        playing: playing,
+        position: position.value,
+        duration: total,
+        onPlay: () => unawaited(play()),
+        onPause: () => unawaited(pause()),
+        onNext: () => unawaited(playNext()),
+        onPrevious: () => unawaited(playPrevious()),
+        onSeek: (to) => unawaited(seekTo(to)),
+        onStop: () => unawaited(pause()),
+      ),
+    );
   }
 
-  List<MusicListItem> _filterPlayable(List<MusicListItem> items) {
-    return [
-      for (final item in items)
-        if (_resolvePlayablePath(item).trim().isNotEmpty) item,
-    ];
-  }
-
-  MediaItem _buildMediaItem(MusicListItem item) {
+  /// 通知栏封面地址。接口要鉴权，而系统取图不带 header，这条沿用列表页
+  /// 那份带令牌的兼容口（`compat/cover`），否则安卓只会显示默认占位。
+  String? _coverUrl(MusicListItem item) {
     final String coverSource;
     if (item.isSeries) {
       coverSource = item.firstFilePath.trim();
@@ -315,27 +336,20 @@ extension MusicPlayServicePlayback on MusicPlayServiceController {
       final full = item.fullPath.trim();
       coverSource = full.isNotEmpty ? full : _resolvePlayablePath(item);
     }
-
-    final useCover =
-        !ApiController.instance.isP2pMode &&
-        coverSource.isNotEmpty &&
-        item.hasInnerCover == 1;
-    final coverUrl = useCover
-        ? ApiController.instance.getMusicCoverUrl(
-            filePath: coverSource,
-            size: 500,
-          )
-        : '';
-
-    return MediaItem(
-      id: _buildPlayUrl(item),
-      title: item.displayTitle,
-      artist: item.artist.trim().isEmpty ? null : item.artist.trim(),
-      album: item.album.trim().isEmpty ? null : item.album.trim(),
-      artUri: coverUrl.isEmpty ? null : Uri.parse(coverUrl),
-      // 服务端 duration 为整秒；这里换算成 Duration 交给 audio_service。
-      duration: item.duration > 0 ? Duration(seconds: item.duration) : null,
+    if (coverSource.isEmpty || item.hasInnerCover != 1) return null;
+    if (ApiController.instance.isP2pMode) return null;
+    final url = ApiController.instance.getMusicCoverUrl(
+      filePath: coverSource,
+      size: 500,
     );
+    return url.isEmpty ? null : url;
+  }
+
+  List<MusicListItem> _filterPlayable(List<MusicListItem> items) {
+    return [
+      for (final item in items)
+        if (_resolvePlayablePath(item).trim().isNotEmpty) item,
+    ];
   }
 
   String _resolvePlayablePath(MusicListItem item) {
@@ -371,28 +385,8 @@ extension MusicPlayServicePlayback on MusicPlayServiceController {
     }
   }
 
+  /// 播放状态变了就重推一次面板（进度也在这一步更新，节流在 `audioBackground`）。
   void _syncHandlerPlaybackState() {
-    final handler = _handler;
-    if (handler == null) return;
-
-    // 新内核没有旧 `_player`，这里按引擎状态映射，避免通知栏一直停在「暂停」。
-    final state = _coreAdapter?.core.state;
-    handler._syncPlaybackState(
-      updatePosition: position.value,
-      queueIndex: currentIndex.value.clamp(
-        0,
-        playlist.isEmpty ? 0 : playlist.length - 1,
-      ),
-      processingState: switch (state) {
-        null => AudioProcessingState.idle,
-        PlaybackIdle() => AudioProcessingState.idle,
-        PlaybackLoading() => AudioProcessingState.loading,
-        PlaybackCompleted() => AudioProcessingState.completed,
-        PlaybackFailed() => AudioProcessingState.error,
-        PlaybackReady() || PlaybackPaused() => AudioProcessingState.ready,
-      },
-      playing: state?.isPlaying ?? false,
-      bufferedPosition: buffered.value,
-    );
+    _pushMediaSnapshot();
   }
 }

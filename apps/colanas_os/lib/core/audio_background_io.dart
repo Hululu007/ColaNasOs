@@ -37,6 +37,7 @@ class _ColanasAudioHandler extends BaseAudioHandler with SeekHandler {
         title: s.title,
         artist: s.artist ?? '',
         album: s.album ?? '',
+        artUri: (s.artUri ?? '').isEmpty ? null : Uri.tryParse(s.artUri!),
         duration: s.duration,
       ),
     );

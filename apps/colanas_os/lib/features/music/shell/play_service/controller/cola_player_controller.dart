@@ -6,9 +6,11 @@ import 'package:flutter/widgets.dart';
 
 import '../../compat/getx.dart';
 
-import 'package:audio_service/audio_service.dart';
 import 'package:audio_session/audio_session.dart';
 
+import '../../../../../core/audio_background.dart';
+import '../../../../../core/audio_focus.dart';
+import '../../../media_session.dart';
 import '../../compat/cola_api_controller.dart';
 import '../../compat/host.dart';
 import '../../list/models/cola_list_models.dart';
@@ -18,10 +20,8 @@ import '../lyric_match.dart';
 // 新播放内核（playback/）：引擎 + 状态机 + 不可变队列，与原控制器并存
 import '../../../playback/playback_controller.dart';
 import '../../../playback/playback_engine.dart';
-import '../../../playback/playback_state.dart';
 import '../../../playback/track.dart';
 
-part 'parts/audio_handler.dart';
 part 'parts/lifecycle.dart';
 part 'parts/lyrics.dart';
 part 'parts/new_core.dart';
@@ -128,7 +128,6 @@ class MusicPlayServiceController extends GetxController
   bool _resumeAfterInterruption = false;
   bool _pendingNotificationPermissionGuide = false;
 
-  _MusicAudioHandler? _handler;
   Future<void>? _serviceInitFuture;
 
   /// 新内核适配层；`kNewPlaybackCore` 关闭时为 null，自动退回原控制器。

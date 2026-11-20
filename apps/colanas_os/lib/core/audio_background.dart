@@ -18,6 +18,7 @@ class AudioSnapshot {
     required this.title,
     this.artist,
     this.album,
+    this.artUri,
     required this.playing,
     required this.position,
     required this.duration,
@@ -34,6 +35,10 @@ class AudioSnapshot {
   final String title;
   final String? artist;
   final String? album;
+
+  /// 封面地址（音乐有，播客没有）。只在面板上展示，不参与下载。
+  final String? artUri;
+
   final bool playing;
   final Duration position;
   final Duration duration;
@@ -52,6 +57,7 @@ class AudioSnapshot {
       title == other.title &&
       artist == other.artist &&
       album == other.album &&
+      artUri == other.artUri &&
       playing == other.playing &&
       duration == other.duration;
 }

@@ -1,16 +1,5 @@
 part of '../cola_player_controller.dart';
 
-/// 后台服务的通知渠道配置。抽成文件级常量，避免初始化流程里夹一大段参数表。
-final AudioServiceConfig _backgroundAudioConfig = AudioServiceConfig(
-  androidStopForegroundOnPause: false,
-  androidShowNotificationBadge: false,
-  androidResumeOnClick: true,
-  androidNotificationClickStartsActivity: true,
-  androidNotificationChannelName: 'Music Playback',
-  androidNotificationChannelId: 'colanas.music.playback',
-  androidNotificationChannelDescription: 'Background music playback controls',
-);
-
 /// 声明为音乐用途 + 永久焦点，系统才会把媒体按键和控制中心入口关联到本应用。
 const AudioSessionConfiguration _musicAudioSession = AudioSessionConfiguration(
   androidWillPauseWhenDucked: true,
@@ -45,10 +34,11 @@ extension MusicPlayServiceLifecycle on MusicPlayServiceController {
   Future<void> _bootstrap() async {
     registerFvp();
     if (_supportBackground) {
-      _handler = await AudioService.init(
-        builder: () => _MusicAudioHandler(this),
-        config: _backgroundAudioConfig,
-      );
+      // 系统媒体面板（通知栏 / 锁屏）全局只有一份：Android 只有一个 MediaSession，
+      // 谁后 `AudioService.init` 谁就把命令通道抢走，先初始化那路的按键就全失效。
+      // 所以音乐和播客共用 `core/audio_background` 这一份前台服务，
+      // 各自往里推快照、按音频焦点决定谁能写 —— 播放中的那一路自动顶掉面板。
+      await audioBackground.ensureStarted(channelName: '音乐播放');
     }
     if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
       await _configureAndroidAudioSession();
