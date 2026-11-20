@@ -2803,6 +2803,73 @@
           }
         }
       },
+      "MusicFolderEntry": {
+        "type": "object",
+        "required": [
+          "name",
+          "path",
+          "tracks"
+        ],
+        "properties": {
+          "name": {
+            "description": "目录名",
+            "type": "string"
+          },
+          "path": {
+            "description": "库内相对目录（可直接回传给 dir）",
+            "type": "string"
+          },
+          "tracks": {
+            "description": "该目录下的曲目总数（含子目录）",
+            "type": "integer"
+          }
+        }
+      },
+      "MusicFoldersQuery": {
+        "type": "object",
+        "required": [
+          "libraryId"
+        ],
+        "properties": {
+          "libraryId": {
+            "minLength": 1,
+            "description": "音乐库 id（第一层就是音乐源）",
+            "type": "string"
+          },
+          "dir": {
+            "maxLength": 1024,
+            "description": "库内相对目录，空字符串表示库根",
+            "type": "string"
+          }
+        }
+      },
+      "MusicFoldersResponse": {
+        "type": "object",
+        "required": [
+          "dir",
+          "items",
+          "files"
+        ],
+        "properties": {
+          "dir": {
+            "description": "本次浏览的目录（已归一化，可直接翻页）",
+            "type": "string"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MusicFolderEntry"
+            }
+          },
+          "files": {
+            "description": "当前目录下的曲目（不含子目录）",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MusicTrack"
+            }
+          }
+        }
+      },
       "MusicAlbum": {
         "type": "object",
         "required": [
@@ -10599,6 +10666,7 @@
           "state",
           "origin",
           "device",
+          "scope",
           "error",
           "createdAt",
           "updatedAt",
@@ -10656,6 +10724,10 @@
           },
           "device": {
             "description": "设备可读名（可空）",
+            "type": "string"
+          },
+          "scope": {
+            "description": "传输来源：user（用户自己点的）/ background（同步、照片备份这类后台搬运，默认不进列表）",
             "type": "string"
           },
           "error": {
@@ -10731,6 +10803,7 @@
                 "state",
                 "origin",
                 "device",
+                "scope",
                 "error",
                 "createdAt",
                 "updatedAt",
@@ -10788,6 +10861,10 @@
                 },
                 "device": {
                   "description": "设备可读名（可空）",
+                  "type": "string"
+                },
+                "scope": {
+                  "description": "传输来源：user（用户自己点的）/ background（同步、照片备份这类后台搬运，默认不进列表）",
                   "type": "string"
                 },
                 "error": {
@@ -10931,6 +11008,7 @@
               "state",
               "origin",
               "device",
+              "scope",
               "error",
               "createdAt",
               "updatedAt",
@@ -10988,6 +11066,10 @@
               },
               "device": {
                 "description": "设备可读名（可空）",
+                "type": "string"
+              },
+              "scope": {
+                "description": "传输来源：user（用户自己点的）/ background（同步、照片备份这类后台搬运，默认不进列表）",
                 "type": "string"
               },
               "error": {
@@ -23554,6 +23636,64 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/MusicStatsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/music/folders": {
+      "get": {
+        "operationId": "musicFolders",
+        "summary": "文件夹浏览：子目录 + 当前目录下的曲目",
+        "tags": [
+          "music"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "in": "query",
+            "name": "libraryId",
+            "required": true,
+            "description": "音乐库 id（第一层就是音乐源）"
+          },
+          {
+            "schema": {
+              "maxLength": 1024,
+              "type": "string"
+            },
+            "in": "query",
+            "name": "dir",
+            "required": false,
+            "description": "库内相对目录，空字符串表示库根"
+          }
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MusicFoldersResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MusicErrorResponse"
                 }
               }
             }

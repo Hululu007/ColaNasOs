@@ -511,6 +511,7 @@
       "error": {}
     },
     "common.select": {},
+    "common.selectAll": {},
     "common.size": {},
     "common.test": {},
     "common.unknown": {},
@@ -952,6 +953,17 @@
     },
     "music.favorite.add": {},
     "music.favorite.remove": {},
+    "music.folder.addToPlaylist": {},
+    "music.folder.empty": {},
+    "music.folder.noSource": {},
+    "music.folder.noSourceHint": {},
+    "music.folder.select": {},
+    "music.folder.selected": {
+      "count": {}
+    },
+    "music.folder.tracks": {
+      "count": {}
+    },
     "music.group.albumCount": {
       "count": {}
     },

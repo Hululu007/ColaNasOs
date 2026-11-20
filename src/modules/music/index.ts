@@ -12,6 +12,7 @@ import { makeMusicHelpers } from './helpers';
 import { absoluteInput, isAbsoluteInput, registerExtraRoot } from '../files/fs-root';
 import { registerMusicLibrary } from './routes/library';
 import { registerMusicItems } from './routes/items';
+import { registerMusicFolders } from './routes/folders';
 import { registerMusicPlayback } from './routes/playback';
 import { registerMusicPlaylists } from './routes/playlists';
 import { registerMusicAutoPlaylists } from './routes/auto-playlists';
@@ -106,6 +107,7 @@ export const music: ServerModule = {
       k.log.info('[dev] 重叠模式：跳过音乐启动扫描');
     }
     await registerMusicItems(app, k, h);
+    await registerMusicFolders(app, k, h);
     await registerMusicPlayback(app, k, h);
     await registerMusicPlaylists(app, k, h);
     await registerMusicAutoPlaylists(app, k, h);

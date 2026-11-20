@@ -2462,6 +2462,54 @@ class MusicListResponse {
       };
 }
 
+class MusicFolderEntry {
+  final String name;
+  final String path;
+  final int tracks;
+
+  const MusicFolderEntry({
+    required this.name,
+    required this.path,
+    required this.tracks,
+  });
+
+  factory MusicFolderEntry.fromJson(Map<String, dynamic> json) => MusicFolderEntry(
+        name: json['name'] as String,
+        path: json['path'] as String,
+        tracks: json['tracks'] as int,
+      );
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+        'name': name,
+        'path': path,
+        'tracks': tracks,
+      };
+}
+
+class MusicFoldersResponse {
+  final String dir;
+  final List<MusicFolderEntry> items;
+  final List<MusicTrack> files;
+
+  const MusicFoldersResponse({
+    required this.dir,
+    required this.items,
+    required this.files,
+  });
+
+  factory MusicFoldersResponse.fromJson(Map<String, dynamic> json) => MusicFoldersResponse(
+        dir: json['dir'] as String,
+        items: (json['items'] as List<dynamic>).map((e) => MusicFolderEntry.fromJson(e as Map<String, dynamic>)).toList(),
+        files: (json['files'] as List<dynamic>).map((e) => MusicTrack.fromJson(e as Map<String, dynamic>)).toList(),
+      );
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+        'dir': dir,
+        'items': items.map((e) => e.toJson()).toList(),
+        'files': files.map((e) => e.toJson()).toList(),
+      };
+}
+
 class MusicAlbum {
   final String name;
   final String? artist;
@@ -9684,6 +9732,7 @@ class TransferSession {
   final String state;
   final String origin;
   final String device;
+  final String scope;
   final String? error;
   final int createdAt;
   final int updatedAt;
@@ -9703,6 +9752,7 @@ class TransferSession {
     required this.state,
     required this.origin,
     required this.device,
+    required this.scope,
     required this.error,
     required this.createdAt,
     required this.updatedAt,
@@ -9723,6 +9773,7 @@ class TransferSession {
         state: json['state'] as String,
         origin: json['origin'] as String,
         device: json['device'] as String,
+        scope: json['scope'] as String,
         error: json['error'] as String?,
         createdAt: json['createdAt'] as int,
         updatedAt: json['updatedAt'] as int,
@@ -9743,6 +9794,7 @@ class TransferSession {
         'state': state,
         'origin': origin,
         'device': device,
+        'scope': scope,
         'error': error,
         'createdAt': createdAt,
         'updatedAt': updatedAt,

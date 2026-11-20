@@ -101,6 +101,35 @@ export const Track = Type.Object(
   { $id: 'MusicTrack' },
 );
 
+/** 文件夹浏览：一层子目录 + 当前目录下的曲目 */
+export const FolderEntry = Type.Object(
+  {
+    name: Type.String({ description: '目录名' }),
+    path: Type.String({ description: '库内相对目录（可直接回传给 dir）' }),
+    tracks: Type.Integer({ description: '该目录下的曲目总数（含子目录）' }),
+  },
+  { $id: 'MusicFolderEntry' },
+);
+
+export const FoldersQuery = Type.Object(
+  {
+    libraryId: Type.String({ minLength: 1, description: '音乐库 id（第一层就是音乐源）' }),
+    dir: Type.Optional(
+      Type.String({ maxLength: 1024, description: '库内相对目录，空字符串表示库根' }),
+    ),
+  },
+  { $id: 'MusicFoldersQuery' },
+);
+
+export const FoldersResponse = Type.Object(
+  {
+    dir: Type.String({ description: '本次浏览的目录（已归一化，可直接翻页）' }),
+    items: Type.Array(Type.Ref(FolderEntry)),
+    files: Type.Array(Type.Ref('MusicTrack'), { description: '当前目录下的曲目（不含子目录）' }),
+  },
+  { $id: 'MusicFoldersResponse' },
+);
+
 export const ListQuery = Type.Object(
   {
     libraryId: Type.Optional(Type.String()),
@@ -475,6 +504,9 @@ export const MUSIC_SCHEMAS = [
   Track,
   ListQuery,
   ListResponse,
+  FolderEntry,
+  FoldersQuery,
+  FoldersResponse,
   AlbumItem,
   AlbumListResponse,
   AlbumsQuery,

@@ -11,7 +11,6 @@ import 'cache_setting/view/cola_cache_settings_view.dart';
 import 'compat/cola_app_routes.dart';
 import 'compat/cola_custom_colors.dart';
 import 'compat/getx.dart';
-import 'compat/host.dart';
 import 'detail/controller/music_detail_router.dart';
 import 'detail/view/music_detail_host.dart';
 import 'lastfm_setting/view/music_lastfm_settings_view.dart';
@@ -26,6 +25,7 @@ import 'playlist/view/cola_playlist_view.dart';
 import 'source_setting/view/cola_source_settings_view.dart';
 import 'sub_list/view/cola_sub_list_overlay.dart';
 import '../music_search_page.dart' show MusicSearchPage;
+import '../music_folder_page.dart' show MusicFolderPage;
 
 /// 是否启用音乐的 兼容适配版。
 /// 置 false 可一行回退到 `MusicShellPage`（实现文件全部保留）。
@@ -136,9 +136,8 @@ class _MusicShellViewState extends State<MusicShellView> {
         );
         break;
       case 'files':
-        // 这里是独立「文件视图」页；本项目已有正式的文件应用，
-        // 这里保留同形态入口，真正浏览交给「文件」应用。
-        page = const PcFolderViewPage(moduleType: FolderViewModuleType.music);
+        // 第一层是音乐来源，点进去按目录浏览（只列子目录 + 音乐文件）
+        page = const MusicFolderPage();
         break;
       case 'playlists':
         page = const PlayListListView();

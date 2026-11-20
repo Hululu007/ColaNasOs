@@ -693,6 +693,9 @@ class _MusicSearchPageState extends State<MusicSearchPage> {
         title: track.title,
         subtitle: track.artist ?? '',
         coverId: track.id,
+        // 按文件路径取图：走兼容口，内嵌封面抽不到时会去在线源兜底，
+        // 搜出来的曲子和列表里的曲子封面口径就一致了。
+        coverPath: track.path,
         focusNode: _cards['songs']?[i],
         onTap: () {
           unawaited(_remember(_query));
@@ -837,6 +840,7 @@ class _ResultCard extends StatefulWidget {
     required this.subtitle,
     required this.coverId,
     required this.onTap,
+    this.coverPath,
     this.circular = false,
     this.focusNode,
   });
@@ -844,6 +848,9 @@ class _ResultCard extends StatefulWidget {
   final String title;
   final String subtitle;
   final String? coverId;
+
+  /// 曲目文件路径。给了就按路径取图（含在线兜底），否则按 id 取专辑封面。
+  final String? coverPath;
   final VoidCallback onTap;
   final bool circular;
   final FocusNode? focusNode;
@@ -888,6 +895,13 @@ class _ResultCardState extends State<_ResultCard> {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final size = widget.circular ? 92.0 : 128.0;
+    // 封面接口是 `music:read` 授权的：必须带 Authorization 头，
+    // 缺头只会拿到 401，然后一路退化成占位图 —— 看着就像「搜索没有封面」。
+    final path = (widget.coverPath ?? '').trim();
+    final coverUrl = path.isNotEmpty
+        ? '${ApiSession.instance.baseUrl}/api/v1/music/compat/cover'
+            '?path=${Uri.encodeQueryComponent(path)}&size=320'
+        : (widget.coverId == null ? '' : musicCoverUrl(widget.coverId!));
     return GestureDetector(
       onTap: widget.onTap,
       child: AnimatedContainer(
@@ -909,7 +923,7 @@ class _ResultCardState extends State<_ResultCard> {
               borderRadius: BorderRadius.circular(
                 widget.circular ? size / 2 : NasTokens.radiusSm,
               ),
-              child: widget.coverId == null
+              child: coverUrl.isEmpty
                   ? Container(
                       width: size,
                       height: size,
@@ -920,7 +934,8 @@ class _ResultCardState extends State<_ResultCard> {
                       width: size,
                       height: size,
                       child: NasCoverImage(
-                        url: musicCoverUrl(widget.coverId!),
+                        url: coverUrl,
+                        headers: ApiSession.instance.authHeaders,
                         borderRadius: widget.circular ? size / 2 : NasTokens.radiusSm,
                         cacheWidth: 320,
                         fallbackText: widget.title,

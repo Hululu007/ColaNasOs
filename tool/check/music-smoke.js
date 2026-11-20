@@ -498,6 +498,93 @@ function makeAudio(out, opts) {
     'n=' + filteredByAlbum.items.length,
   );
 
+  // 18.5 文件夹浏览：目录树由曲目表反推 —— 只列子目录和音乐文件，
+  //      附属文件（.lrc / cover.jpg）本来就不在 music_tracks 里，自然不会出现。
+  //      放在最后造一个子目录，不影响前面的全库断言。
+  const subDir = path.join(songs, 'Album');
+  fs.mkdirSync(subDir, { recursive: true });
+  if (ffmpeg) {
+    makeAudio(path.join(subDir, 'Delta.m4a'), {
+      freq: 660,
+      sec: 2,
+      cover: false,
+      meta: { title: 'Delta Song', artist: 'Artist D', album: 'Album Four', track: '1' },
+    });
+  }
+  if (!fs.existsSync(path.join(subDir, 'Delta.m4a'))) {
+    fs.writeFileSync(path.join(subDir, 'Delta.m4a'), Buffer.alloc(4096, 3));
+  }
+  fs.writeFileSync(path.join(subDir, 'cover.jpg'), Buffer.alloc(128, 9));
+  await app.inject({ method: 'POST', url: '/api/v1/music/scan', headers: bearer, payload: {} });
+
+  const foldersRoot = (
+    await app.inject({
+      method: 'GET',
+      url: '/api/v1/music/folders?libraryId=' + encodeURIComponent(lib.id),
+      headers: bearer,
+    })
+  ).json();
+  check(
+    'folders_root',
+    Array.isArray(foldersRoot.items) &&
+      foldersRoot.items.length === 1 &&
+      foldersRoot.items[0].name === 'Album' &&
+      foldersRoot.items[0].tracks === 1 &&
+      foldersRoot.dir === '' &&
+      Array.isArray(foldersRoot.files) &&
+      // 根目录下的三首（Alpha / Beta / Gamma），子目录里的 Delta 不算
+      foldersRoot.files.length === 3 &&
+      foldersRoot.files.every((f) => !String(f.path).includes('/Album/')),
+    `dirs=${(foldersRoot.items || []).map((d) => d.name + ':' + d.tracks).join(',')} files=${(foldersRoot.files || []).map((f) => f.path).join('|')}`,
+  );
+
+  const foldersSub = (
+    await app.inject({
+      method: 'GET',
+      url: '/api/v1/music/folders?libraryId=' + encodeURIComponent(lib.id) + '&dir=Album',
+      headers: bearer,
+    })
+  ).json();
+  check(
+    'folders_subdir',
+    foldersSub.dir === 'Album' &&
+      foldersSub.items.length === 0 &&
+      foldersSub.files.length === 1 &&
+      foldersSub.files[0].title === 'Delta Song',
+    `dir=${foldersSub.dir} items=${(foldersSub.items || []).length} files=${(foldersSub.files || []).length}`,
+  );
+
+  // `..` 与反斜杠都归一化掉，不会跑出库根
+  const foldersEscape = (
+    await app.inject({
+      method: 'GET',
+      url:
+        '/api/v1/music/folders?libraryId=' +
+        encodeURIComponent(lib.id) +
+        '&dir=' +
+        encodeURIComponent('..\\..\\etc'),
+      headers: bearer,
+    })
+  ).json();
+  check(
+    'folders_escape_normalized',
+    foldersEscape.dir === 'etc' && (foldersEscape.items || []).length === 0,
+    'dir=' + foldersEscape.dir,
+  );
+
+  const foldersAnon = await app.inject({
+    method: 'GET',
+    url: '/api/v1/music/folders?libraryId=' + encodeURIComponent(lib.id),
+  });
+  check('folders_anonymous_401', foldersAnon.statusCode === 401, 'status=' + foldersAnon.statusCode);
+
+  const foldersBadLib = await app.inject({
+    method: 'GET',
+    url: '/api/v1/music/folders?libraryId=missing-lib',
+    headers: bearer,
+  });
+  check('folders_unknown_library_404', foldersBadLib.statusCode === 404, 'status=' + foldersBadLib.statusCode);
+
   // 19. 删库级联（歌单引用一起清掉）
   r = await app.inject({
     method: 'POST',

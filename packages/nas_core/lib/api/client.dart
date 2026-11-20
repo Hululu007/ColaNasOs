@@ -945,6 +945,16 @@ class ApiClient {
     return MusicStatsResponse.fromJson(_asMap(_decode(res)));
   }
 
+  /// 文件夹浏览：子目录 + 当前目录下的曲目
+  Future<MusicFoldersResponse> musicFolders({required String libraryId, String? dir}) async {
+    final query = <String, String>{
+      'libraryId': libraryId,
+      if (dir != null) 'dir': dir,
+    };
+    final res = await transport.send('GET', _uri('/api/v1/music/folders', query), headers: await _headers());
+    return MusicFoldersResponse.fromJson(_asMap(_decode(res)));
+  }
+
   /// 歌词（旁挂 .lrc 优先，其次内嵌；可选 <base>.<lang>.lrc 双语对照）
   Future<MusicLyricsResponse> musicLyrics({required String id, String? token, String? lang}) async {
     final query = <String, String>{

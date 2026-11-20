@@ -409,6 +409,7 @@ class I18nKeys {
   static const commonSearch = 'common.search';
   static const commonSearchFailed = 'common.searchFailed';
   static const commonSelect = 'common.select';
+  static const commonSelectAll = 'common.selectAll';
   static const commonSize = 'common.size';
   static const commonTest = 'common.test';
   static const commonUnknown = 'common.unknown';
@@ -781,6 +782,13 @@ class I18nKeys {
   static const musicDeleteConfirm = 'music.deleteConfirm';
   static const musicFavoriteAdd = 'music.favorite.add';
   static const musicFavoriteRemove = 'music.favorite.remove';
+  static const musicFolderAddToPlaylist = 'music.folder.addToPlaylist';
+  static const musicFolderEmpty = 'music.folder.empty';
+  static const musicFolderNoSource = 'music.folder.noSource';
+  static const musicFolderNoSourceHint = 'music.folder.noSourceHint';
+  static const musicFolderSelect = 'music.folder.select';
+  static const musicFolderSelected = 'music.folder.selected';
+  static const musicFolderTracks = 'music.folder.tracks';
   static const musicGroupAlbumCount = 'music.group.albumCount';
   static const musicGroupPlayAll = 'music.group.playAll';
   static const musicJoinFailed = 'music.joinFailed';
@@ -3110,4 +3118,4 @@ class I18nKeys {
 }
 
 /// 契约键总数（生成时确定），供完整性自检使用。
-const int i18nKeyCount = 3059;
+const int i18nKeyCount = 3067;
