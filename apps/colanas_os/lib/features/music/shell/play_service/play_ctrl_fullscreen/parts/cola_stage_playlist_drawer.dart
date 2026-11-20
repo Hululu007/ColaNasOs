@@ -70,24 +70,38 @@ class ColaMusicStageQueueSheet {
         return SlideTransition(position: slide, child: child);
       },
       pageBuilder: (_, _, _) {
-        return Padding(
-          padding: _surroundingInsets(context),
+        final screen = MediaQuery.sizeOf(context);
+        return SafeArea(
+          // 固定在屏幕右侧、垂直居中、约占屏高 82%：面板位置不再跟随唤起按钮。
+          // 之前按锚点位置裁可用区域（_surroundingInsets），从底部播放条唤起时
+          // 可用高度只剩播放条那一小条，面板被压到右下角溢出屏幕、点开完全看不到。
           child: Align(
             alignment: Alignment.centerRight,
-            child: Material(
-              color: Color.alphaBlend(
-                context.nasStyle.panelColor,
-                context.nasStyle.baseColor,
-              ),
-              child: ConstrainedBox(
-                constraints: BoxConstraints(
-                  maxWidth: panelWidth.max,
-                  minWidth: panelWidth.min,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 24, 12, 24),
+              child: SizedBox(
+                height: math.max(
+                  320.0,
+                  math.min(screen.height * 0.82, screen.height - 48),
                 ),
-                child: _QueuePanel(
-                  controller: controller,
-                  coverUrlResolver: coverUrlResolver,
-                  theme: theme,
+                child: Material(
+                  color: Color.alphaBlend(
+                    context.nasStyle.panelColor,
+                    context.nasStyle.baseColor,
+                  ),
+                  borderRadius: const BorderRadius.all(Radius.circular(12)),
+                  clipBehavior: Clip.antiAlias,
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxWidth: panelWidth.max,
+                      minWidth: panelWidth.min,
+                    ),
+                    child: _QueuePanel(
+                      controller: controller,
+                      coverUrlResolver: coverUrlResolver,
+                      theme: theme,
+                    ),
+                  ),
                 ),
               ),
             ),
@@ -97,25 +111,10 @@ class ColaMusicStageQueueSheet {
     );
   }
 
-  /// 只遮住唤起按钮以外的区域，避免抽屉压住播放条。
-  static EdgeInsets _surroundingInsets(BuildContext context) {
-    final screen = MediaQuery.of(context).size;
-    final anchor = context.findRenderObject();
-    final box = anchor is RenderBox ? anchor : null;
-    final origin = box?.localToGlobal(Offset.zero) ?? Offset.zero;
-    final size = box?.size ?? screen;
-    return EdgeInsets.fromLTRB(
-      origin.dx.clamp(0.0, screen.width),
-      origin.dy.clamp(0.0, screen.height),
-      (screen.width - (origin.dx + size.width)).clamp(0.0, screen.width),
-      (screen.height - (origin.dy + size.height)).clamp(0.0, screen.height),
-    );
-  }
-
   static ({double min, double max}) _panelWidth(BuildContext context) {
-    final anchor = context.findRenderObject();
-    final box = anchor is RenderBox ? anchor : null;
-    final width = (box?.size ?? MediaQuery.of(context).size).width * 0.92;
+    // 宽度按屏幕算，不取唤起按钮的 RenderBox：从底部播放条的小按钮唤起时
+    // 锚点只有播放条那么宽，算出来的 min/max 会被压到很窄，面板几乎看不见。
+    final width = MediaQuery.sizeOf(context).width * 0.92;
     return (min: math.min(380.0, width), max: math.min(520.0, width));
   }
 }

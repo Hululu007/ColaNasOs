@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../../../compat/cola_device_utils.dart';
 import '../../../compat/host.dart';
 import '../../app_components/cola_disc_cover.dart';
 import 'cola_stage_disc_block.dart';
@@ -154,7 +153,13 @@ class _ColaMusicStageBodyState extends State<ColaMusicStageBody> {
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
-      builder: (_, _) => DeviceUtils.isMobile ? _narrowLayout() : _wideLayout(),
+      builder: (_, box) {
+        // 按可用宽度选布局，不按「手机/桌面」判定：Web 端 isDesktop 恒为 false
+        // （isDesktop 带 !kIsWeb 条件），用 DeviceUtils.isMobile 会让 PC 浏览器
+        // 永远走分页布局。宽屏（PC / 平板横屏）直接左右并排：左唱片、右歌词。
+        final wide = box.maxWidth >= 900;
+        return wide ? _wideLayout() : _narrowLayout();
+      },
     );
   }
 }
