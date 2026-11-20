@@ -22,6 +22,14 @@ class SyncScheduler {
   String? _claimedScope;
   final _watch = createSyncWatcher();
 
+  /// 当前账号没有同步权限（403）时置位：本进程内不再重复请求。
+  ///
+  /// 以前 claim 失败只打一行 debugPrint，`_claimedScope` 也不写，于是每分钟
+  /// 重试一次 —— 服务端日志里 3MB 就攒了 466 条 403，真正的问题全被冲掉了。
+  /// 权限是按账号发的（`auth_users.scopes` 里没有 sync:read / sync:write），
+  /// 重试一万次也不会自己好，收益为零。
+  bool _scopeDenied = false;
+
   void start() {
     if (!SyncEngine.instance.fs.canSync) return;
     if (_timer != null) return;
@@ -62,8 +70,11 @@ class SyncScheduler {
 
   /// 拉一次任务列表（托盘要用它算「本机任务数」，界面也要用）
   Future<List<SyncTask>> _loadTasks() async {
+    // 没有同步权限就别再去拉列表：任务列表接口同样要 sync:read，只会再来一条 403
+    if (_scopeDenied) return const [];
     final deviceId = _deviceId;
     await _claimMachineTasks(deviceId);
+    if (_scopeDenied) return const [];
     final res = await ApiSession.instance.client.syncTaskList();
     final raw = (res['items'] as List?) ?? const [];
     return raw
@@ -73,6 +84,7 @@ class SyncScheduler {
   }
 
   Future<void> _claimMachineTasks(String? deviceId) async {
+    if (_scopeDenied) return;
     if (deviceId == null ||
         deviceId.isEmpty ||
         ColanasClientId.value != deviceId) {
@@ -86,6 +98,15 @@ class SyncScheduler {
         body: <String, dynamic>{'deviceId': deviceId},
       );
       _claimedScope = scope;
+    } on ApiError catch (e) {
+      // 403 / 401 是权限或登录态问题，按账号发的权限不会因为重试而变好：
+      // 记一次就停手，等用户改权限或重新登录（重启进程）再试。
+      if (e.statusCode == 403 || e.statusCode == 401) {
+        _scopeDenied = true;
+        debugPrint('[sync] 当前账号没有同步权限（${e.statusCode}），本次运行不再重试');
+        return;
+      }
+      debugPrint('[sync] claim machine tasks failed: $e');
     } catch (e) {
       debugPrint('[sync] claim machine tasks failed: $e');
     }

@@ -7,6 +7,7 @@ import 'package:nas_core/nas_core.dart';
 import '../../core/android_notification_permission.dart';
 import '../../core/audio_background.dart';
 import '../../core/audio_focus.dart';
+import '../../core/client_log.dart';
 import '../../core/session.dart';
 import '../music/media_session.dart';
 
@@ -26,6 +27,19 @@ class BlogPlayer extends ChangeNotifier {
 
   Player? _player;
   final List<StreamSubscription<Object?>> _subs = [];
+
+  /// 停播看门狗：mpv 对「长连接被对方关掉、又不再续传」不会报错，也不会自己
+  /// 重连，表现就是播到某个位置后彻底安静、界面上还显示「正在播放」。
+  /// 2026-11-20 早上的实测：08:27 开播，那条 206 请求 6.8 秒就被断开，
+  /// 之后 20 分钟一个请求都没有，26 分钟的一期播到 20 分钟处停死。
+  Timer? _watchdog;
+  Duration _lastProgress = Duration.zero;
+  DateTime _lastProgressAt = DateTime.now();
+  int _stallRecoveries = 0;
+  bool _recovering = false;
+
+  static const Duration _stallCheckInterval = Duration(seconds: 5);
+  static const Duration _stallThreshold = Duration(seconds: 20);
 
   /// 当前播放队列（可编辑：加入 / 移除 / 跳转）。
   List<BlogEpisodeItem> _queue = const [];
@@ -61,6 +75,12 @@ class BlogPlayer extends ChangeNotifier {
     final p = Player();
     _subs.add(p.stream.position.listen((v) {
       position = v;
+      // 只有真的往前走了才算「活着」：暂停、拖动时位置本来就不动
+      if (v > _lastProgress + const Duration(milliseconds: 300)) {
+        _lastProgress = v;
+        _lastProgressAt = DateTime.now();
+        _stallRecoveries = 0;
+      }
       // 锁屏面板的进度：只有活跃音源能写，别把音乐的系统面板抢过来
       if (AudioFocus.instance.holds(this)) {
         if (kIsWeb) {
@@ -79,6 +99,9 @@ class BlogPlayer extends ChangeNotifier {
     }));
     _subs.add(p.stream.playing.listen((v) {
       playing = v;
+      // 从暂停恢复的那一刻重新起算：暂停期间位置不动是用户意愿，
+      // 不重置的话恢复播放会立刻被看门狗判成「卡死」。
+      if (v) _lastProgressAt = DateTime.now();
       _syncMediaSession();
       notifyListeners();
     }));
@@ -91,7 +114,61 @@ class BlogPlayer extends ChangeNotifier {
       notifyListeners();
     }));
     _player = p;
+    _startWatchdog();
     return p;
+  }
+
+  void _startWatchdog() {
+    _watchdog?.cancel();
+    _lastProgress = position;
+    _lastProgressAt = DateTime.now();
+    _watchdog = Timer.periodic(_stallCheckInterval, (_) => _checkStall());
+  }
+
+  void _checkStall() {
+    if (_recovering || loading || error != null) return;
+    if (!playing || _player == null) return;
+    if (duration <= Duration.zero) return;
+    if (episode == null) return;
+    if (DateTime.now().difference(_lastProgressAt) < _stallThreshold) return;
+    unawaited(_recoverFromStall());
+  }
+
+  /// 卡住就重新取一次播放地址，从当前位置续上。
+  ///
+  /// 重连要重新走 `blogAudioUrl`：URL 里带的是短期令牌，前一次链接可能早就
+  /// 过了有效期，拿旧地址重试只会 401。连续三次都续不上就停下来报错，
+  /// 不能无限重连把界面卡在「加载中」。
+  Future<void> _recoverFromStall() async {
+    if (_recovering) return;
+    _recovering = true;
+    final at = position;
+    _stallRecoveries += 1;
+    ClientLogger.instance.warn(
+      '播客播放停滞 ${_stallThreshold.inSeconds}s，第 $_stallRecoveries 次重连',
+      route: 'blog.player/${episodeId ?? '-'}',
+      detail:
+          'pos=${at.inMilliseconds}ms dur=${duration.inMilliseconds}ms '
+          'playing=$playing rate=$rate',
+    );
+    try {
+      if (_stallRecoveries > 3) {
+        playing = false;
+        loading = false;
+        error = I18n.instance.tr('blog.loadFailed');
+        notifyListeners();
+        return;
+      }
+      await _load(resumeAt: at);
+    } catch (e) {
+      error = '$e';
+      loading = false;
+      notifyListeners();
+    } finally {
+      _recovering = false;
+      _lastProgress = position;
+      _lastProgressAt = DateTime.now();
+    }
   }
 
   /// 只暂停，不释放资源：交给 AudioFocus 在别的音源开播时调用。
@@ -178,6 +255,9 @@ class BlogPlayer extends ChangeNotifier {
     position = Duration.zero;
     duration = Duration.zero;
     playing = false;
+    _stallRecoveries = 0;
+    _lastProgress = Duration.zero;
+    _lastProgressAt = DateTime.now();
     AudioFocus.instance.release(this);
     _clearMediaSession();
     notifyListeners();
@@ -189,14 +269,15 @@ class BlogPlayer extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> _load() async {
+  Future<void> _load({Duration? resumeAt}) async {
     final current = episode;
     if (current == null) return;
     // 开播前先让音乐 / 音色试听让路，避免两路声音叠在一起
     await AudioFocus.instance.request(this, pause);
     error = null;
     loading = true;
-    position = Duration.zero;
+    // 续播时不要把进度条闪回 0：界面按断点画，seek 成功前也不会跳
+    position = resumeAt ?? Duration.zero;
     duration = Duration(seconds: current.durationSec.round());
     notifyListeners();
     try {
@@ -213,11 +294,16 @@ class BlogPlayer extends ChangeNotifier {
       final url = '${ApiSession.instance.baseUrl}${res.url}';
       final p = _ensure();
       await p.open(Media(url), play: true);
+      if (resumeAt != null && resumeAt > Duration.zero) {
+        await p.seek(resumeAt);
+      }
       await p.setRate(rate);
       // open(play:true) 的 playing 流可能晚一拍；先把面板推成「正在播」，
       // 前台服务要看到 playing=true 才会真正常驻。
       playing = true;
       loading = false;
+      _lastProgress = position;
+      _lastProgressAt = DateTime.now();
       _syncMediaSession();
       notifyListeners();
     } catch (e) {
@@ -234,11 +320,18 @@ class BlogPlayer extends ChangeNotifier {
       return;
     }
     // 从暂停恢复也是「开播」，同样要抢焦点
-    if (!playing) await AudioFocus.instance.request(this, pause);
+    if (!playing) {
+      _lastProgressAt = DateTime.now();
+      await AudioFocus.instance.request(this, pause);
+    }
     await p.playOrPause();
   }
 
   Future<void> seek(Duration to) async {
+    // 手动拖动后重新起算：不然「往回调」会被看门狗当成停滞
+    _lastProgress = to;
+    _lastProgressAt = DateTime.now();
+    _stallRecoveries = 0;
     await _player?.seek(to);
   }
 
@@ -258,6 +351,8 @@ class BlogPlayer extends ChangeNotifier {
     final held = AudioFocus.instance.holds(this);
     await _player?.stop();
     playing = false;
+    _stallRecoveries = 0;
+    _lastProgressAt = DateTime.now();
     AudioFocus.instance.release(this);
     if (held) _clearMediaSession();
     notifyListeners();
@@ -334,6 +429,8 @@ class BlogPlayer extends ChangeNotifier {
   @override
   void dispose() {
     AudioFocus.instance.release(this);
+    _watchdog?.cancel();
+    _watchdog = null;
     for (final s in _subs) {
       unawaited(s.cancel());
     }
