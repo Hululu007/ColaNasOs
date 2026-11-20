@@ -737,6 +737,23 @@ export type MusicListResponse = {
   "nextCursor": string;
 };
 
+export type MusicFolderEntry = {
+  "name": string;
+  "path": string;
+  "tracks": number;
+};
+
+export type MusicFoldersQuery = {
+  "libraryId": string;
+  "dir"?: string;
+};
+
+export type MusicFoldersResponse = {
+  "dir": string;
+  "items": MusicFolderEntry[];
+  "files": MusicTrack[];
+};
+
 export type MusicAlbum = {
   "name": string;
   "artist": string;
@@ -2847,6 +2864,7 @@ export type TransferSession = {
   "state": string;
   "origin": string;
   "device": string;
+  "scope": string;
   "error": string;
   "createdAt": number;
   "updatedAt": number;
@@ -2877,6 +2895,7 @@ export type TransferSessionsResponse = {
     "state": string;
     "origin": string;
     "device": string;
+    "scope": string;
     "error": string;
     "createdAt": number;
     "updatedAt": number;
@@ -2927,6 +2946,7 @@ export type TransferBeginResponse = {
     "state": string;
     "origin": string;
     "device": string;
+    "scope": string;
     "error": string;
     "createdAt": number;
     "updatedAt": number;

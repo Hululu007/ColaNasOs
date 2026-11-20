@@ -517,6 +517,11 @@ export class ColanasClient {
     return this.request('GET', '/api/v1/music/favorites', params, 'query');
   }
 
+  /** 文件夹浏览：子目录 + 当前目录下的曲目 */
+  async musicFolders(params: Record<string, any> = {}): Promise<any> {
+    return this.request('GET', '/api/v1/music/folders', params, 'query');
+  }
+
   /** 播放历史（按时间倒序，返回完整曲目） */
   async musicHistory(params: Record<string, any> = {}): Promise<any> {
     return this.request('GET', '/api/v1/music/history', params, 'query');

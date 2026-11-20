@@ -1,7 +1,7 @@
 # API 参考
 
 > 由 `tool/gen-api-doc.js` 从 `contracts/openapi.json` 生成，**请勿手改**；改契约后执行 `npm run api:doc`。
-> 当前：**426 个路径 / 454 个操作 / 19 个域**。鉴权统一为 `Authorization: Bearer <jwt>`，媒体直链另支持 `?token=`（5 分钟）。
+> 当前：**427 个路径 / 455 个操作 / 19 个域**。鉴权统一为 `Authorization: Bearer <jwt>`，媒体直链另支持 `?token=`（5 分钟）。
 
 ## 域索引
 
@@ -12,7 +12,7 @@
 - **events**（`events`）· 1 个操作 · [跳转](#events)
 - **文件**（`files`）· 18 个操作 · [跳转](#files)
 - **开放集成（Webhook / deliveries）**（`integration`）· 6 个操作 · [跳转](#integration)
-- **音乐**（`music`）· 35 个操作 · [跳转](#music)
+- **音乐**（`music`）· 36 个操作 · [跳转](#music)
 - **offline**（`offline`）· 11 个操作 · [跳转](#offline)
 - **其他**（`other`）· 2 个操作 · [跳转](#other)
 - **相册**（`photo`）· 142 个操作 · [跳转](#photo)
@@ -810,6 +810,13 @@ Webhook 列表（不含 secret） · `webhookList`
 我的收藏 id 列表（曲库页星标状态用，只回 id 不带曲目） · `musicFavoriteIds`
 
 - 响应：200 object
+
+#### `GET /api/v1/music/folders`
+
+文件夹浏览：子目录 + 当前目录下的曲目 · `musicFolders`
+
+- 参数：`libraryId` · 查询 · string · **必填**<br>`dir` · 查询 · string · 可选
+- 响应：200 `MusicFoldersResponse` · 错误 400
 
 #### `GET /api/v1/music/history`
 

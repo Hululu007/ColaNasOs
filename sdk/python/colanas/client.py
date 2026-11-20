@@ -423,6 +423,10 @@ class ColanasClient:
         """我的收藏（按收藏时间倒序，返回完整曲目）"""
         return self._request("GET", "/api/v1/music/favorites", params, "query")
 
+    def music_folders(self, **params):
+        """文件夹浏览：子目录 + 当前目录下的曲目"""
+        return self._request("GET", "/api/v1/music/folders", params, "query")
+
     def music_history(self, **params):
         """播放历史（按时间倒序，返回完整曲目）"""
         return self._request("GET", "/api/v1/music/history", params, "query")
