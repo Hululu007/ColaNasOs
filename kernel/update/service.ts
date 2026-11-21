@@ -132,7 +132,12 @@ function parseSignature(raw: string): string {
  */
 async function fetchRepoText(spec: string, signal?: AbortSignal): Promise<string> {
   const at = spec.indexOf('@@');
-  const url = at === -1 ? spec : `${spec.slice(0, at)}${spec.slice(at + 2)}`;
+  // `@@` 两边都要归一化斜杠：少一个就是 `contentsrelease/update.json`，
+  // 平台照样返回 404，而错误信息里只看到「全部更新源失败」。
+  const url =
+    at === -1
+      ? spec
+      : `${spec.slice(0, at).replace(/\/+$/, '')}/${spec.slice(at + 2).replace(/^\/+/, '')}`;
   const res = await fetchText([url], { maxBytes: 1024 * 1024, signal });
   if (at === -1) return res.text;
   let body: { encoding?: string; content?: string };
