@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "channel": "stable",
-  "releasedAt": "2026-11-21T09:01:21.250Z",
+  "releasedAt": "2026-11-21T09:05:28.357Z",
   "keyId": "k2026a",
   "notes": {
     "zh": "1.3.16：服务端与安卓手机/TV 包；播放器直连与 HLS 重试位置修复。"
@@ -24,7 +24,7 @@
               "sha256": "84538f620365ec1370b84526431358b763584dac6284778781c070bd4445af31"
             },
             "urls": [
-              "https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.16/0-main.dart.js.br"
+              "https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.16/0-09be104d0961-main.dart.js.br"
             ]
           }
         ],
@@ -51,7 +51,7 @@
           "size": 65455,
           "sha256": "b37bcc12d41aa0d55689f82d7a5fb5efaf496e0536330e4c879a5e9be796640c",
           "urls": [
-            "https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.16/manifest-D10316.json"
+            "https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.16/manifest-D10316-b37bcc12d41a.json"
           ]
         }
       },
