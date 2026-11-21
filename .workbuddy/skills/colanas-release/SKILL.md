@@ -39,15 +39,17 @@ agent_created: true
 16. **从 asar 里抽二进制必须用 `original-fs`**：Electron 给 `fs` 打了 asar 补丁，路径以 `.asar` 结尾时按「asar 内部条目」解析，`fs.openSync('<resources>/app.asar')` 直接抛 `ENOENT, not found in ...\resources\app.asar`。纯 Node 下能读、打包后必失败（摊平 `node_modules` 就踩过这条，异常还被 catch 吞掉，表现成「修复完全没生效」）。写法：`require('original-fs')`，纯 Node 环境 catch 回落普通 `fs`；失败信息必须落到 `<dataDir>/logs/shell.log`，GUI 外壳没有控制台，`console.error` 等于没写。
 17. **默认发预发布，除非用户说「发正式版」**（用户 2026-11-21 定）：开发期的版本一律 `--pre` —— 清单写 `release/update-pre.json`（`channel: "pre"`），Release 标 `release_status=pre`。只有用户明确要求正式版时才发 `release/update.json` + `latest`。正式版清单决定了所有没勾「接收预发布」的设备看到什么，别拿它当日常测试通道。
 18. **转正用同一个 tag 原地改，不要新建 Release**：GitCode 的 `DELETE /repos/{repo}/releases/{tag}` 返 **405 METHOD_NOT_ALLOWED**（平台不支持删除 Release），所以「发正式版时自动删掉旧预发布」做不到脚本化。正确流程：同一个 tag 重跑 `release.js`（不带 `--pre`）→ 补 `update.json` 三件套 + 全量包 → `scripts/patch_release.py --tag=... --latest` 把状态转正、正文改掉。历史遗留的预发布 Release 只能网页手工删，脚本里不要写自动删逻辑。
-19. **版本命名：正式 `X.Y.Z`，预览 `X.Y.Z.N`**（用户 2026-11-21 定）：
-    - 正式版 `1.3.21`、`1.3.22`；预览版在正式号后面多点一段 `1.3.21.1`、`1.3.21.2`。
-    - 预览版**不改正式号**：`1.3.21.1` 的 `package.json` 仍是 `1.3.21`（多一段在 npm/pubspec 里非法），
-      多出来的第 4 段只体现在 **Release tag（`v1.3.21.1`）、Release 标题和清单的 `channel: "pre"`** 上，
-      构建号（`+N` / `versionCode`）照旧递增来区分不同次预览。
-    - 说「发版」= 发预览版；说「发正式版」= 三段正式号 + 转正。
-20. **只有正式版推 GitHub**：平时的预览版只发 GitCode。GitHub 的 Release 只承接正式版
-    （`--pre` 的内容不要往 GitHub 推），这样 GitHub 上永远是干净的正式版本列表；
-    预览版在 GitCode 上堆起来之后一次性网页删掉。
+19. **版本号：两段是正式版，三段是预览版**（用户 2026-11-21 定，最终口径）：
+    - **正式版 `X.Y`**：`1.4`、`1.5`、`1.6`。对外只写两段（tag `v1.4`、标题「ColaNasOs 1.4」）。
+      内部仍写成 `X.Y.0`（npm / pubspec 不认两段），所以 `package.json` 是 `1.4.0`、
+      `version` 数字是 `1004000`。
+    - **预览版 `X.Y.Z`**：`1.3.21`、`1.3.22`、`1.4.1`… 三段都算预览，patch 位就是「第几次预览」。
+    - 版本比较天然成立：`1.4.0`(1004000) > `1.3.22`(1003022)，正式版永远大于它之前的预览版。
+    - 发新正式版时 patch 归零（`1.3.x` → `1.4.0`），不要出现 `1.4.1` 当正式版。
+20. **GitHub 只接正式版**：预览版一律只发 GitCode。GitHub 上永远只有 `v1.4` / `v1.5`
+    这种两段正式版，`X.Y.Z` 的三段版本一个都不要推过去。GitCode 上的三段预览版攒多了
+    （以及升到新正式版之后的所有旧 `X.Y.*`）一次性网页删掉 —— 用户的说法是
+    「以后就在 GitCode 上直接删掉所有 1.3.x，直接升到 1.4」。
 
 ## Workflow decision tree
 

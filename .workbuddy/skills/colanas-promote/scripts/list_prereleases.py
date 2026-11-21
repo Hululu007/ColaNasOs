@@ -39,6 +39,17 @@ def parse_semver(tag: str) -> tuple[int, int, int] | None:
 TEST_TAG = re.compile(r"(test|tmp|probe|check|try|demo|draft)", re.I)
 
 
+def version_segments(tag: str) -> int:
+    """tag 里数字段数：`v1.4` = 2（正式版），`v1.3.21` = 3（预览版）。
+
+    用户 2026-11-21 定的口径：两段是正式版，三段都是预览版。
+    """
+    m = re.search(r"(\d+(?:\.\d+)+)", tag or "")
+    if not m:
+        return 0
+    return len(m.group(1).split("."))
+
+
 def list_releases(opener, token: str, repo: str) -> list[dict]:
     out: list[dict] = []
     page = 1
@@ -53,9 +64,8 @@ def list_releases(opener, token: str, repo: str) -> list[dict]:
     return out
 
 
-def stable_semver() -> tuple[int, int, int] | None:
-    """本地 release/update.json 里的服务端版本（没有就返回 None）。"""
-    p = Path("release/update.json")
+def _semver_of(path: str) -> tuple[int, int, int] | None:
+    p = Path(path)
     if not p.exists():
         return None
     try:
@@ -63,6 +73,19 @@ def stable_semver() -> tuple[int, int, int] | None:
         return parse_semver(str(j.get("components", {}).get("server", {}).get("semver", "")))
     except Exception:
         return None
+
+
+def stable_semver() -> tuple[int, int, int] | None:
+    """本地 release/update.json 里的服务端版本（正式通道）。"""
+    return _semver_of("release/update.json")
+
+
+def pre_semver() -> tuple[int, int, int] | None:
+    """本地 release/update-pre.json 里的服务端版本（预发布通道）。
+
+    这个版本不能删 —— 勾了「接收预发布版」的设备正指着它下载。
+    """
+    return _semver_of("release/update-pre.json")
 
 
 def main() -> None:
@@ -85,6 +108,7 @@ def main() -> None:
     opener = G.build_opener(args.proxy)
     releases = list_releases(opener, token, args.repo)
     stable = stable_semver()
+    pre = pre_semver()
 
     rows = []
     for r in releases:
@@ -94,18 +118,21 @@ def main() -> None:
         sized = [a for a in assets if a.get("size")]
         ver = parse_semver(tag)
 
+        segs = version_segments(tag)
         if TEST_TAG.search(tag):
             verdict, why = "ORPHAN", "tag 名像发版自检 / 试上传"
-        elif status == "latest":
-            verdict, why = "KEEP", "状态是 latest"
-        elif stable and ver and ver == stable:
-            verdict, why = "KEEP", "与正式清单同版本"
+        elif segs == 2:
+            verdict, why = "KEEP", "两段 = 正式版"
         elif not sized:
             verdict, why = "ORPHAN", "没有附件"
-        elif args.mark_superseded and status == "pre" and stable and ver and ver < stable:
-            verdict, why = "SUPERSEDED", f"低于正式版 {'.'.join(map(str, stable))}"
-        elif status == "pre":
-            verdict, why = "PRE", "预发布（未转正）"
+        elif segs >= 3 and stable and ver and ver == stable:
+            verdict, why = "KEEP", "三段预览版，但当前正式清单还指着它（先发正式版再删）"
+        elif segs >= 3 and pre and ver and ver == pre:
+            verdict, why = "KEEP", "三段预览版，但预发布清单正指着它"
+        elif segs >= 3:
+            verdict, why = "DELETABLE", "三段 = 预览版，可删"
+        elif status == "latest":
+            verdict, why = "KEEP", "状态是 latest"
         elif args.older_than_stable and stable and ver and ver < stable:
             verdict, why = "OLD", f"历史正式版（低于 {'.'.join(map(str, stable))}）"
         else:
@@ -134,7 +161,7 @@ def main() -> None:
         size = f"{r['bytes'] / 1048576:.1f} MB" if r["bytes"] else "-"
         print(f"{r['tag']:<22}{r['status']:<10}{r['assets']:>4}{size:>10}  {r['verdict']}  {r['why']}")
 
-    deletable = [r["tag"] for r in rows if r["verdict"] in ("SUPERSEDED", "ORPHAN", "OLD")]
+    deletable = [r["tag"] for r in rows if r["verdict"] in ("DELETABLE", "SUPERSEDED", "ORPHAN", "OLD")]
     print()
     if deletable:
         print("可清理（只能网页手工删）：")
