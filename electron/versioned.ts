@@ -22,6 +22,115 @@ export function dataDirOf(): string {
   return path.join(base, 'colanas_os_server');
 }
 
+/**
+ * 把安装包里的 `node_modules` 摊到数据目录一次。
+ *
+ * 拆壳后内核从 `versions/D<NNN>/kernel/` 启动，`require('fastify')` 会沿父目录找
+ * `node_modules`；而依赖被压在 `resources/app.asar` 这个**单文件**里，
+ * 外壳注入的 `NODE_PATH` 在 Electron 的 utilityProcess 里不生效。实测后果：
+ *
+ *   Error: Cannot find module 'fastify'
+ *     requireStack: versions/D10317/kernel/index.js
+ *
+ * 摊到 `<dataDir>/node_modules` 后，解析链
+ * `versions/D10317/kernel → D10317 → versions → <dataDir>` 天然命中，
+ * 不依赖任何环境变量，且对之后每个新版本目录都生效。
+ *
+ * asar 里只有纯 JS；原生模块（.node）被 electron-builder 拆到
+ * `app.asar.unpacked/node_modules`，必须合并两层。带版本戳跳过重复拷贝。
+ */
+export function ensureKernelModules(dataDir: string, resourcesPath: string, appVersion: string): void {
+  const dest = path.join(dataDir, 'node_modules');
+  const marker = path.join(dataDir, '.kernel-modules.json');
+  try {
+    const prev = JSON.parse(fs.readFileSync(marker, 'utf8')) as { app?: string };
+    if (prev.app === appVersion && fs.existsSync(path.join(dest, 'fastify', 'package.json'))) return;
+  } catch {
+    /* 没有标记：照做一次 */
+  }
+
+  const asar = path.join(resourcesPath, 'app.asar');
+  if (!fs.existsSync(asar)) return;
+
+  const head = Buffer.alloc(16);
+  const fd = fs.openSync(asar, 'r');
+  let header: { files?: Record<string, AsarNode> };
+  let base = 0;
+  try {
+    fs.readSync(fd, head, 0, 16, 0);
+    // asar: [u32=4][u32=headerPickleSize][u32=headerSize][u32=jsonLen] + json
+    const pickle = head.readUInt32LE(4);
+    const jsonLen = head.readUInt32LE(12);
+    const hb = Buffer.alloc(jsonLen);
+    fs.readSync(fd, hb, 0, jsonLen, 16);
+    header = JSON.parse(hb.toString('utf8')) as { files?: Record<string, AsarNode> };
+    base = 8 + pickle;
+  } finally {
+    fs.closeSync(fd);
+  }
+
+  const root = header.files?.node_modules;
+  if (!root?.files) return;
+
+  fs.rmSync(dest, { recursive: true, force: true });
+  fs.mkdirSync(dest, { recursive: true });
+
+  const src = fs.openSync(asar, 'r');
+  let bytes = 0;
+  try {
+    const emit = (rel: string, node: AsarNode): void => {
+      const out = path.join(dest, rel);
+      if (node.files) {
+        fs.mkdirSync(out, { recursive: true });
+        for (const [name, child] of Object.entries(node.files)) emit(path.join(rel, name), child);
+        return;
+      }
+      if (node.unpacked || !node.size) {
+        fs.mkdirSync(path.dirname(out), { recursive: true });
+        if (!node.size) fs.writeFileSync(out, '');
+        return; // 原生模块在 app.asar.unpacked 里，下面统一覆盖
+      }
+      const buf = Buffer.allocUnsafe(node.size);
+      fs.readSync(src, buf, 0, node.size, base + Number(node.offset));
+      fs.mkdirSync(path.dirname(out), { recursive: true });
+      fs.writeFileSync(out, buf);
+      bytes += node.size;
+    };
+    emit('', root);
+  } finally {
+    fs.closeSync(src);
+  }
+
+  // 覆盖原生模块（better-sqlite3 / node-pty / onnxruntime-node / @napi-rs）
+  const unpacked = path.join(resourcesPath, 'app.asar.unpacked', 'node_modules');
+  if (fs.existsSync(unpacked)) {
+    const overlay = (dir: string, rel: string): void => {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const from = path.join(dir, e.name);
+        const to = path.join(dest, rel, e.name);
+        if (e.isDirectory()) {
+          fs.mkdirSync(to, { recursive: true });
+          overlay(from, path.join(rel, e.name));
+        } else {
+          fs.mkdirSync(path.dirname(to), { recursive: true });
+          fs.copyFileSync(from, to);
+        }
+      }
+    };
+    overlay(unpacked, '');
+  }
+
+  fs.writeFileSync(marker, JSON.stringify({ app: appVersion, at: Date.now(), bytes }), 'utf8');
+  console.log(`[shell] 内核依赖已摊到 ${dest}（asar 内 ${(bytes / 1048576).toFixed(1)} MB + 原生模块）`);
+}
+
+interface AsarNode {
+  size?: number;
+  offset?: string;
+  unpacked?: boolean;
+  files?: Record<string, AsarNode>;
+}
+
 export interface SeedSources {
   kernelDir: string;
   /** `dist/src`（kernel 的模块实现都在这里），少它内核起不来 */

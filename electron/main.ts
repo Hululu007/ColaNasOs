@@ -6,6 +6,7 @@ import type { WatchdogMetrics } from '../kernel/watchdog';
 import { isAutostartEnabled, setAutostart, syncAutostart } from './autostart';
 import {
   dataDirOf,
+  ensureKernelModules,
   nativeModulePaths,
   prepareBoot,
   resolveKernelEntry,
@@ -556,6 +557,18 @@ app.whenReady().then(() => {
 
   versionedKernel = app.isPackaged || process.env.COLANAS_VERSIONED_KERNEL === '1';
   if (versionedKernel) {
+    /**
+     * 先把依赖摊到数据目录，再播种 / 判定。
+     * 版本目录里的内核靠父目录找 `node_modules`，而依赖压在 app.asar 里 ——
+     * 顺序反了就是 `Cannot find module 'fastify'`，内核直接起不来（实测）。
+     */
+    if (app.isPackaged) {
+      try {
+        ensureKernelModules(dataDir, process.resourcesPath, app.getVersion());
+      } catch (err) {
+        console.error('[shell] 内核依赖准备失败，仍尝试从安装目录启动', err);
+      }
+    }
     try {
       seedIfNeeded(dataDir, seedSources());
     } catch (err) {
