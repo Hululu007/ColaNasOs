@@ -20,43 +20,43 @@
       }
     },
     "client_pc": {
-      "semver": "1.3.15",
-      "version": 10315,
-      "versionCode": 36,
+      "semver": "1.3.19",
+      "version": 10319,
+      "versionCode": 40,
       "assets": {
         "setup": {
-          "size": 30641470,
-          "sha256": "b84de5f5cfaae0358741a8b4c0ee4f6b1095457af72c6eb4563915a06fb0e6bc",
+          "size": 30643614,
+          "sha256": "6f818b84535bbaa32e98ecff45a524fa89c23e917dae71df93b2332f8f7a0674",
           "urls": [
-            "https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.15/ColaNasOs-Client-1.3.15-Setup.exe"
+            "https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.19/ColaNasOs-Client-1.3.19-Setup.exe"
           ]
         },
         "portable": {
-          "size": 40534483,
-          "sha256": "041f51334e16277d48d838d7000bc9960c82dfaca7a169c0d15356e1d8326e20",
+          "size": 40535643,
+          "sha256": "e6f7ae3bb46e9a157310bc9b20ce39dbc22cbd66a437614c8a273d3b1564f348",
           "urls": [
-            "https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.15/ColaNasOs-Client-1.3.15-windows-x64.zip"
+            "https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.19/ColaNasOs-Client-1.3.19-windows-x64.zip"
           ]
         }
       }
     },
     "client_android": {
-      "semver": "1.3.16",
-      "version": 10316,
-      "versionCode": 37,
+      "semver": "1.3.19",
+      "version": 10319,
+      "versionCode": 40,
       "assets": {
         "apk": {
-          "size": 46949155,
-          "sha256": "cac7ac7a7912226500302cb5964a3cf12b0daafca6f39f3067a33c0b02252c44",
+          "size": 46949159,
+          "sha256": "c85c07f23c425da350e5f669c182acc7fb9f3cdde8af4a3a673a3d419eb95d5f",
           "urls": [
-            "https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.16/ColaNasOs-Client-1.3.16-android-arm64.apk"
+            "https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.19/ColaNasOs-Client-1.3.19-android-arm64.apk"
           ]
         },
         "apk_tv": {
-          "size": 46949155,
-          "sha256": "1d6c03e8bce7da36115b2d428250abc1fa1334e58f3fd85472fedf78704a3e00",
+          "size": 46949159,
+          "sha256": "862611b9813e95cf3b2ca983d4900904908c775266d5203cd2ca260588bf69c8",
           "urls": [
-            "https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.16/ColaNasOs-Client-1.3.16-android-arm64-tv.apk"
+            "https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.19/ColaNasOs-Client-1.3.19-android-arm64-tv.apk"
           ]
         }
       }
