@@ -162,6 +162,13 @@ class TvMedia3PlayerController {
     required int positionMs,
     required bool play,
     required String formatHint,
+    /// 隧道模式：只有电视芯片支持。手机 / 平板打开会黑屏（解码器就绪但
+    /// VideoSize 停在 0x0，只有声音），所以默认关，由 TV 模式显式打开。
+    bool tunneled = false,
+    /// 视频与音频分开取：视频用 [url]（原片，杜比视界配置完整），音频用这条
+    /// 服务端转好的 AAC 流。原片的 E-AC3 / DTS-HD 在缺少解码器的手机上出不了声，
+    /// 而把视频一起转封装又会丢掉 DV 的配置记录（画面直接黑）。
+    String? audioUrl,
   }) async {
     if (_disposed) throw StateError('TV Media3 player is disposed');
     final args = <String, Object?>{
@@ -169,6 +176,8 @@ class TvMedia3PlayerController {
       'positionMs': positionMs < 0 ? 0 : positionMs,
       'play': play,
       'formatHint': formatHint,
+      'tunneled': tunneled,
+      if (audioUrl != null && audioUrl.isNotEmpty) 'audioUrl': audioUrl,
     };
     _playWhenReady = play;
     _lastOpen = args;

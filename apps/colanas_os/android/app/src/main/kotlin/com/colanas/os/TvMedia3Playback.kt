@@ -22,6 +22,7 @@ import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.source.MergingMediaSource
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.ui.PlayerView
 import io.flutter.plugin.common.BinaryMessenger
@@ -95,18 +96,21 @@ private object TvMedia3PlaybackHost {
 }
 
 private class TvMedia3Session(
-    context: Context,
+    private val context: Context,
     private val viewId: Int,
     private val view: PlayerView,
 ) {
     private val handler = Handler(Looper.getMainLooper())
 
-    // 电视端必须开隧道模式：音视频同步与合成交给 SoC 的硬件通道，
-    // 否则 4K / HDR 片源会在应用层做一遍同步与拷贝，表现为持续掉帧。
-    private val trackSelector =
-        DefaultTrackSelector(context).apply {
-            setParameters(parameters.buildUpon().setTunnelingEnabled(true).build())
-        }
+    // 电视端用隧道模式：音视频同步与合成交给 SoC 的硬件通道，否则 4K / HDR
+    // 片源会在应用层多一遍同步与拷贝，表现为持续掉帧。
+    //
+    // ⚠️ 隧道模式**只有电视芯片认**：手机 / 平板没有 tunneled playback，
+    // 打开后解码器能初始化（日志里能看到 c2.qti.dv.decoder 就绪）但一帧都
+    // 出不来，VideoSize 停在 0x0，画面纯黑、只有声音。
+    // 所以由 Dart 侧按「本机是不是电视」传 `tunneled` 进来，默认关。
+    private val trackSelector = DefaultTrackSelector(context)
+    private val mediaSourceFactory: DefaultMediaSourceFactory
     private val player: ExoPlayer
     private var eventSink: EventChannel.EventSink? = null
     private var videoDecoder = ""
@@ -129,7 +133,7 @@ private class TvMedia3Session(
                 .setConnectTimeoutMs(30_000)
                 .setReadTimeoutMs(60_000)
                 .setAllowCrossProtocolRedirects(true)
-        val mediaSourceFactory =
+        mediaSourceFactory =
             DefaultMediaSourceFactory(DefaultDataSource.Factory(context, httpFactory))
         // 解码器回退：某些电视的杜比视界 / HEVC 10bit 硬解实例初始化失败时，
         // 允许 ExoPlayer 继续尝试其它硬件解码器，而不是直接黑屏报错。
@@ -226,21 +230,57 @@ private class TvMedia3Session(
         emitState()
     }
 
-    fun open(url: String, positionMs: Long, play: Boolean, formatHint: String?) {
+    fun open(
+        url: String,
+        positionMs: Long,
+        play: Boolean,
+        formatHint: String?,
+        tunneled: Boolean = false,
+        audioUrl: String? = null,
+    ) {
         check(!released) { "TV Media3 player has been released" }
-        val mediaItem =
-            MediaItem.Builder()
-                .setUri(url)
-                .apply {
-                    mimeTypeFor(formatHint)?.let(::setMimeType)
-                }
-                .build()
+        // 手机上开隧道模式会黑屏（解码器就绪但不出帧，VideoSize=0x0）
+        trackSelector.setParameters(
+            trackSelector.parameters.buildUpon().setTunnelingEnabled(tunneled).build(),
+        )
         videoDecoder = ""
         openedAtMs = SystemClock.elapsedRealtime()
         firstFrameMs = null
         player.stop()
         player.clearMediaItems()
-        player.setMediaItem(mediaItem, positionMs.coerceAtLeast(0L))
+
+        if (!audioUrl.isNullOrBlank()) {
+            // 视频与音频分开取：视频走原片（杜比视界配置完整，交给本机 DV 解码器），
+            // 音频走服务端转好的 AAC —— 原片的 E-AC3 / DTS-HD 在没有对应解码器的
+            // 手机上根本出不了声，而把视频一起转封装又会丢掉 DV 的 dvcC 配置
+            // （实测 ffmpeg 8.1 的 mp4 muxer 传不过去），画面直接黑。
+            val videoItem =
+                MediaItem.Builder()
+                    .setUri(url)
+                    .apply { mimeTypeFor(formatHint)?.let(::setMimeType) }
+                    .build()
+            val audioItem =
+                MediaItem.Builder()
+                    .setUri(audioUrl)
+                    .setMimeType(MimeTypes.APPLICATION_M3U8)
+                    .build()
+            player.setMediaSource(
+                MergingMediaSource(
+                    mediaSourceFactory.createMediaSource(videoItem),
+                    mediaSourceFactory.createMediaSource(audioItem),
+                ),
+                positionMs.coerceAtLeast(0L),
+            )
+        } else {
+            val mediaItem =
+                MediaItem.Builder()
+                    .setUri(url)
+                    .apply {
+                        mimeTypeFor(formatHint)?.let(::setMimeType)
+                    }
+                    .build()
+            player.setMediaItem(mediaItem, positionMs.coerceAtLeast(0L))
+        }
         player.playWhenReady = play
         player.prepare()
         emitState()
@@ -397,6 +437,8 @@ object TvMedia3MethodHandler : MethodChannel.MethodCallHandler {
                     call.argument<Number>("positionMs")?.toLong() ?: 0L,
                     call.argument<Boolean>("play") ?: true,
                     call.argument<String>("formatHint"),
+                    call.argument<Boolean>("tunneled") ?: false,
+                    call.argument<String>("audioUrl"),
                 )
             } else {
                 session.invoke(call)

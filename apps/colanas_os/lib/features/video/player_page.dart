@@ -574,6 +574,13 @@ class _PlayerPageState extends State<PlayerPage> {
   /// 画面不动，只换音轨。只试一次，避免来回切会话。
   bool _nativeAudioFallbackAttempted = false;
 
+  /// 非空时 Media3 用「视频走原片 + 音频走这条流」的合并播放。
+  ///
+  /// 场景：手机没有 E-AC3 / DTS-HD 解码器，但视频本身能硬解（杜比视界由本机
+  /// DV 解码器直通）。以前是把整片转封装成 fMP4，结果 ffmpeg 传不出 DV 的
+  /// `dvcC` 配置，画面全黑。现在视频不动，只把音频换成服务端的 AAC。
+  String? _mergedAudioUrl;
+
   /// 本次播放内不再缓存会话地址：服务端建会话时会把同一部片还在跑的旧会话
   /// 取消掉（换档），本地缓存拿到的可能是已取消的半个播放列表。
   /// 已转完的档位由服务端 `dupe` 直接复用，多一次请求但不会拿到坏地址。
@@ -1072,21 +1079,28 @@ class _PlayerPageState extends State<PlayerPage> {
       );
       try {
         if (mounted) setState(() => _preparing = true);
-        final u = await _ensureTranscode('original', defaultTranscodeCodec());
+        // 只让服务端转音频（视频原件不动）：返回的 HLS 里视频是 copy，
+        // 我们只取它的音频轨，视频轨在 Media3 侧被禁用。
+        final audioStream = await _ensureTranscode('original', defaultTranscodeCodec());
         if (!mounted) return;
+        final resumeAt = _playbackPosition;
         setState(() {
           _error = null;
           _isTranscode = true;
           _preset = 'original';
           _codec = 'original';
+          _mergedAudioUrl = audioStream;
           _preparing = false;
         });
-        // 这条 HLS 的视频仍是杜比视界：`_shouldUseNativeTvPlayer` 会继续用
-        // Media3 播，交给系统解码器直通，而不是退回 libmpv（那边必黑）。
-        await _openUrl(u, retries: 5);
+        // 视频仍用原片直链：杜比视界的 dvcC 配置完整，交给本机 DV 解码器
+        await _openUrl(
+          _directUrl,
+          seekTo: resumeAt > Duration.zero ? resumeAt : null,
+          retries: 3,
+        );
       } catch (e) {
         if (mounted) setState(() => _preparing = false);
-        ClientLogger.instance.warn('原片封装也起不来：$e', route: 'player.audio');
+        ClientLogger.instance.warn('音频分离失败：$e', route: 'player.audio');
       }
       return;
     }
@@ -1212,6 +1226,10 @@ class _PlayerPageState extends State<PlayerPage> {
           positionMs: seekTo?.inMilliseconds ?? 0,
           play: want,
           formatHint: formatHint,
+          // 隧道模式只在电视上开：手机 / 平板打开会黑屏（见 TvMedia3Playback.kt）
+          tunneled: _tvMode,
+          // 音频轨手机解不了时，视频仍走原片、音频单独取服务端 AAC
+          audioUrl: _mergedAudioUrl,
         );
       } else {
         await _player.open(Media(u), play: want);
@@ -2413,6 +2431,8 @@ class _PlayerPageState extends State<PlayerPage> {
     final prevPreset = _preset;
     final prevCodec = _codec;
     final previousError = _error;
+    // 换档 = 换会话：上一次「视频原片 + 音频分离」的组合不能带过来
+    _mergedAudioUrl = null;
 
     final fromDirect = !_isTranscode;
     // 颜色原因（HDR / 杜比视界在这条链路上不能直连）会强制转码：
