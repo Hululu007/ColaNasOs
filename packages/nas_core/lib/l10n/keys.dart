@@ -3147,6 +3147,8 @@ class I18nKeys {
   static const updateRollback = 'update.rollback';
   static const updateAutoCheck = 'update.autoCheck';
   static const updateAutoCheckHint = 'update.autoCheckHint';
+  static const updatePreChannel = 'update.preChannel';
+  static const updatePreChannelHint = 'update.preChannelHint';
   static const updateVersionDir = 'update.versionDir';
   static const updateTvHint = 'update.tvHint';
   static const updateFullReady = 'update.fullReady';
@@ -3155,4 +3157,4 @@ class I18nKeys {
 }
 
 /// 契约键总数（生成时确定），供完整性自检使用。
-const int i18nKeyCount = 3103;
+const int i18nKeyCount = 3105;
