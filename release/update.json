@@ -1,62 +1,99 @@
 {
   "schema": 1,
   "channel": "stable",
-  "releasedAt": "2026-11-21T11:16:17.204Z",
+  "releasedAt": "2026-11-21T12:29:02.047Z",
   "keyId": "k2026a",
   "minShell": "1.3.19",
   "notes": {
-    "zh": "修复装上 1.3.17/1.3.18 后服务端起不来（内核报 Cannot find module fastify）：外壳摊平依赖改用 original-fs，Electron 里读不了 app.asar 自身；失败也落盘到 logs/shell.log。必须装全量包，外壳在 asar 内，增量替换不到。"
+    "zh": "修复安卓/TV 播放原片时音频滤镜初始化失败导致整片报错：libmpv 的 af 改为直接写滤镜名，挂不上时自动关掉响度归一与降混并带播放位置重开，片子照常播放。TV 包构建参数改为 COLANAS_TV=true，应用内更新能正确识别 TV 包。"
   },
   "components": {
     "server": {
-      "semver": "1.3.19",
-      "version": 10319,
-      "full": {
-        "size": 577571796,
-        "sha256": "14d2acacc940677d9488e29858a043d8dbdc3be6e72c948d5217df9e46715e3d",
-        "urls": [
-          "https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.19/ColaNasOs-Server-1.3.19-Setup.exe"
-        ]
+      "semver": "1.3.20",
+      "version": 10320,
+      "delta": {
+        "from": [
+          "1.3.19"
+        ],
+        "files": [
+          {
+            "path": "web/main.dart.js",
+            "size": 6136955,
+            "sha256": "8f47de528dff68687e5b758125b81fc45f57b3ab6f51769524d32969c9718b46",
+            "br": {
+              "size": 1281111,
+              "sha256": "253425a98f485792156b0c07f9ee93a2e23e883b5da911ff8eb925db74b04646"
+            },
+            "urls": [
+              "https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.20/0-8f47de528dff-main.dart.js.br"
+            ]
+          }
+        ],
+        "bundles": [
+          {
+            "name": "smallfiles-efd98540cd7d.brb",
+            "size": 355,
+            "sha256": "efd98540cd7d33ffa8ef9dd47d3812b86a3c8d80d0a794a28a336b52d64ad14c",
+            "members": [
+              "version.json",
+              "web/.last_build_id",
+              "web/version.json"
+            ],
+            "urls": [
+              "https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.20/smallfiles-efd98540cd7d.brb"
+            ]
+          }
+        ],
+        "urlBase": [
+          "https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.20"
+        ],
+        "manifest": {
+          "size": 65455,
+          "sha256": "004a0b96b74ed3a5824cbc2e291749776795240b59a03c60aa5a0e2d19c7ee19",
+          "urls": [
+            "https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.20/manifest-D10320-004a0b96b74e.json"
+          ]
+        }
       }
     },
     "client_pc": {
-      "semver": "1.3.19",
-      "version": 10319,
-      "versionCode": 40,
+      "semver": "1.3.20",
+      "version": 10320,
+      "versionCode": 41,
       "assets": {
         "setup": {
-          "size": 30643614,
-          "sha256": "6f818b84535bbaa32e98ecff45a524fa89c23e917dae71df93b2332f8f7a0674",
+          "size": 30642277,
+          "sha256": "256739d6a7779cda55a7017f883105c74fb7456d6476763bc88a53b4073e3666",
           "urls": [
-            "https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.19/ColaNasOs-Client-1.3.19-Setup.exe"
+            "https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.20/ColaNasOs-Client-1.3.20-Setup.exe"
           ]
         },
         "portable": {
-          "size": 40535643,
-          "sha256": "e6f7ae3bb46e9a157310bc9b20ce39dbc22cbd66a437614c8a273d3b1564f348",
+          "size": 40536379,
+          "sha256": "c17a7d6fdebb1e7536c77199f915ab7499414837603012151b589c352e18126d",
           "urls": [
-            "https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.19/ColaNasOs-Client-1.3.19-windows-x64.zip"
+            "https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.20/ColaNasOs-Client-1.3.20-windows-x64.zip"
           ]
         }
       }
     },
     "client_android": {
-      "semver": "1.3.19",
-      "version": 10319,
-      "versionCode": 40,
+      "semver": "1.3.20",
+      "version": 10320,
+      "versionCode": 41,
       "assets": {
         "apk": {
           "size": 46949159,
-          "sha256": "c85c07f23c425da350e5f669c182acc7fb9f3cdde8af4a3a673a3d419eb95d5f",
+          "sha256": "1841c1df09c377b57af79db119c97b81ba8093a4fbd7abae1f9dda46c999d749",
           "urls": [
-            "https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.19/ColaNasOs-Client-1.3.19-android-arm64.apk"
+            "https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.20/ColaNasOs-Client-1.3.20-android-arm64.apk"
           ]
         },
         "apk_tv": {
           "size": 46949159,
-          "sha256": "862611b9813e95cf3b2ca983d4900904908c775266d5203cd2ca260588bf69c8",
+          "sha256": "36e7a32893ccac11f4b31db2ad8a6ea1832969ced9e3ceadb88db908bb2d6ca1",
           "urls": [
-            "https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.19/ColaNasOs-Client-1.3.19-android-arm64-tv.apk"
+            "https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.20/ColaNasOs-Client-1.3.20-android-arm64-tv.apk"
           ]
         }
       }
