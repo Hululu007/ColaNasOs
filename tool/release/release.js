@@ -30,10 +30,23 @@ function main() {
   const tag = String(L.arg('tag', `v${product.semver}`));
   const channels = String(L.arg('channel', 'stable'));
   const fromDirs = L.args('from').map((p) => path.resolve(L.root, p));
+  /**
+   * 下载源：`<url>[#<资产名后缀>]`，逗号分隔，**顺序即优先级**。
+   *
+   * 加 `#-v2` 的原因是 GitCode 上的附件可能被平台改过名（同名重传失败后人工加的），
+   * 而 GitHub 上是原名。清单里的 urls 是逐条的，所以两边各写各的即可。
+   */
   const urlBases = String(L.arg('url-base', ''))
     .split(',')
     .map((s) => s.trim())
-    .filter(Boolean);
+    .filter(Boolean)
+    .map((spec) => {
+      const hash = spec.indexOf('#');
+      const url = (hash === -1 ? spec : spec.slice(0, hash)).replace(/\/+$/, '');
+      const suffix = hash === -1 ? '' : spec.slice(hash + 1);
+      return { url, suffix };
+    });
+
   const id = L.versionId(product.version);
   /** 需要上传的「扁平资产名 → 本地文件」，最后写成 upload.json 给 publish.js */
   const uploads = [];
@@ -105,6 +118,20 @@ function main() {
   const sig = require('node:crypto').sign(null, Buffer.from(text, 'utf8'), pem).toString('base64');
   fs.writeFileSync(`${updatePath}.sig`, sig, 'utf8');
 
+  // 清单要发布到**仓库里的 release/ 目录**（raw 直链，地址稳定）：
+  // GitCode 的 releases/latest/download 返回 HTML，Release 资产没法当稳定清单源
+  const manifestOut = L.arg('manifest-out');
+  if (manifestOut) {
+    const dir = path.resolve(L.root, String(manifestOut));
+    L.ensureDir(dir);
+    fs.copyFileSync(updatePath, path.join(dir, 'update.json'));
+    fs.copyFileSync(`${updatePath}.sig`, path.join(dir, 'update.json.sig'));
+    console.log(
+      `[release] 清单已复制到 ${path.relative(L.root, dir)}/（提交并 push 即发布；` +
+        'raw 直链地址不随版本变化）',
+    );
+  }
+
   for (const name of fs.readdirSync(assetsDir)) {
     uploads.push({ name, file: path.join(assetsDir, name) });
   }
@@ -146,7 +173,7 @@ function main() {
     return {
       size: fs.statSync(file).size,
       sha256: L.sha256FileHex(file),
-      urls: urlBases.map((b) => `${b.replace(/\/+$/, '')}/${encodeURIComponent(name)}`),
+      urls: urlBases.map((b) => assetUrl(b, name)),
     };
   }
 
@@ -197,6 +224,20 @@ function main() {
     // 551 MB 的整包不用在 dist_release 里再复制一份
     L.writeJson(path.join(out, 'upload.json'), { tag, entries: uploads });
   }
+}
+
+/**
+ * 按源拼资产 URL：后缀插在扩展名之前（`x-Setup.exe` + `-v2` → `x-Setup-v2.exe`）。
+ *
+ * 放在模块级：`buildDelta` 也要用（增量资产同样要按源改名）。
+ */
+function assetUrl(base, fileName) {
+  const dot = fileName.lastIndexOf('.');
+  const name =
+    base.suffix && dot > 0
+      ? `${fileName.slice(0, dot)}${base.suffix}${fileName.slice(dot)}`
+      : `${fileName}${base.suffix}`;
+  return `${base.url}/${encodeURIComponent(name)}`;
 }
 
 function buildVersionDir(versionDir, product) {
@@ -283,7 +324,7 @@ function buildDelta({ versionDir, assetsDir, manifest, baselines, urlBases, id }
       size: raw.length,
       sha256: L.sha256Hex(raw),
       br: { size: br.length, sha256: L.sha256Hex(br) },
-      urls: urlBases.map((b) => `${b.replace(/\/+$/, '')}/${encodeURIComponent(assetName)}`),
+      urls: urlBases.map((b) => assetUrl(b, assetName)),
     });
   }
 
@@ -297,7 +338,7 @@ function buildDelta({ versionDir, assetsDir, manifest, baselines, urlBases, id }
       size: packed.length,
       sha256: L.sha256Hex(packed),
       members: small.map((s) => s.path),
-      urls: urlBases.map((b) => `${b.replace(/\/+$/, '')}/${bundleName}`),
+      urls: urlBases.map((b) => assetUrl(b, bundleName)),
     });
   }
 
@@ -305,7 +346,7 @@ function buildDelta({ versionDir, assetsDir, manifest, baselines, urlBases, id }
   const manifestAsset = {
     size: fs.statSync(path.join(assetsDir, manifestName)).size,
     sha256: L.sha256FileHex(path.join(assetsDir, manifestName)),
-    urls: urlBases.map((b) => `${b.replace(/\/+$/, '')}/${manifestName}`),
+    urls: urlBases.map((b) => assetUrl(b, manifestName)),
   };
 
   console.log(
@@ -315,7 +356,7 @@ function buildDelta({ versionDir, assetsDir, manifest, baselines, urlBases, id }
     from: [...baseNames],
     files,
     bundles,
-    urlBase: urlBases.map((b) => b.replace(/\/+$/, '')),
+    urlBase: urlBases.map((b) => b.url),
     manifest: manifestAsset,
   };
 }

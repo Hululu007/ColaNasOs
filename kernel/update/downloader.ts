@@ -152,6 +152,11 @@ export async function downloadAsset(opts: DownloadOptions): Promise<DownloadResu
         if (err instanceof DownloadError && err.code === 'E_ABORTED') throw err;
         const msg = `${sourceLabel(url)}: ${(err as Error).message}`;
         errors.push(msg);
+        /**
+         * 停滞 / 过慢：同一来源再试一次大概率还是慢，直接换下一个源。
+         * 每个源要等 18s 才判定停滞，重试一次就是 36s，用户感觉就是「卡死」。
+         */
+        if (err instanceof DownloadError && (err.code === 'E_SLOW' || err.code === 'E_STALL')) break;
         // 摘要不符已经删了 part；其余情况保留 part 续传
       }
     }
@@ -211,6 +216,18 @@ async function fetchToFile(o: FetchToFileOptions): Promise<number> {
   }
   if (!res.body) throw new DownloadError('E_BODY', '响应没有 body');
 
+  /**
+   * 拿到的不是文件而是网页：说明地址配错了（GitCode 的
+   * `releases/latest/download/...` 就是这种情况，返回的是 release 页面）。
+   * 早一点拒绝，比让它下 3 KB HTML 再报「摘要不符」清楚得多。
+   */
+  const ctype = String(res.headers.get('content-type') || '').toLowerCase();
+  if (ctype.includes('text/html')) {
+    await res.body.cancel().catch(() => undefined);
+    fs.rmSync(part, { force: true });
+    throw new DownloadError('E_HTML', `${o.url} 返回的是网页而不是文件（地址配错了）`);
+  }
+
   // 服务端不认 Range（返回 200 整包）：丢弃已有片段，从头写
   const ranged = res.status === 206;
   if (offset > 0 && !ranged) offset = 0;
@@ -243,7 +260,15 @@ async function fetchToFile(o: FetchToFileOptions): Promise<number> {
         await reader.cancel().catch(() => undefined);
         throw aborted();
       }
-      const { done, value } = await reader.read();
+      let chunk: { done: boolean; value?: Uint8Array };
+      try {
+        chunk = await readWithStallGuard(reader, STALL_WINDOW_MS * 3);
+      } catch (err) {
+        // 超时 / 外部取消：先把流关掉，再把错误交给上层换源
+        await reader.cancel().catch(() => undefined);
+        throw err instanceof DownloadError ? err : new DownloadError('E_STALL', String((err as Error).message));
+      }
+      const { done, value } = chunk;
       if (done) break;
       if (value && value.length > 0) {
         fs.writeSync(fd, value);
@@ -271,7 +296,7 @@ async function fetchToFile(o: FetchToFileOptions): Promise<number> {
           throw new DownloadError('E_SLOW', `速度过低 ${Math.round(speed / 1024)} KB/s`);
         }
       }
-      // 卡住不动：连续一段时间没有任何数据
+      // 双保险：即使 read 正常返回（比如只是 keep-alive 空转），也不让它无限拖
       if (Date.now() - lastDataAt > STALL_WINDOW_MS * 3) {
         await reader.cancel().catch(() => undefined);
         throw new DownloadError('E_STALL', '下载停滞');
@@ -304,6 +329,39 @@ async function fetchToFile(o: FetchToFileOptions): Promise<number> {
   return loaded;
 }
 
+/**
+ * 读下一块，带停滞看门狗。
+ *
+ * `fetch` 的 `reader.read()` **没有超时**：连接半死（对端不吐数据也不关闭）时它会
+ * 永远 pending。以前的停滞检测写在读完之后，等于形同虚设。这里每次读都竞速一个
+ * 定时器，超时就抛 `E_STALL` 让上层换源（`.part` 保留可续传）。
+ */
+interface ReaderLike {
+  read(): Promise<{ done: boolean; value?: Uint8Array }>;
+  cancel(): Promise<void>;
+}
+
+function readWithStallGuard(
+  reader: ReaderLike,
+  ms: number,
+): Promise<{ done: boolean; value?: Uint8Array }> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new DownloadError('E_STALL', `下载停滞（${Math.round(ms / 1000)}s 无数据）`));
+    }, ms);
+    reader.read().then(
+      (r) => {
+        clearTimeout(timer);
+        resolve(r);
+      },
+      (e) => {
+        clearTimeout(timer);
+        reject(e);
+      },
+    );
+  });
+}
+
 /** `.part`（brotli）→ `dest`，流式解压后校验原文件摘要 */
 async function brotliTo(part: string, opts: DownloadOptions): Promise<void> {
   const out = `${opts.dest}.out`;
@@ -329,8 +387,24 @@ async function brotliTo(part: string, opts: DownloadOptions): Promise<void> {
   fs.rmSync(part, { force: true });
 }
 
-/**
- * 小文件直读（清单 / 签名 / 小 JSON），带同样的换源与超时。
+/** 给任意 Promise 套一个超时（超时后原 Promise 继续跑，但结果丢弃） */
+function withTimeout<T>(p: Promise<T>, ms: number, message: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms);
+    p.then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(timer);
+        reject(e);
+      },
+    ).catch(() => undefined);
+  });
+}
+
+/** 小文件直读（清单 / 签名 / 小 JSON），带同样的换源与超时。
  *
  * 用 `arrayBuffer()` 一次读完：清单只有几 KB，没必要为它写流式；
  * 同时避开「读一半取消」这类会踩 undici 断言的路径。
@@ -352,7 +426,8 @@ export async function fetchText(
         await res.body?.cancel().catch(() => undefined);
         throw new Error(`HTTP ${res.status}`);
       }
-      const buf = Buffer.from(await res.arrayBuffer());
+      // arrayBuffer 同样没有超时：小文件卡住一样会把「检查更新」挂死
+      const buf = Buffer.from(await withTimeout(res.arrayBuffer(), 20_000, '清单响应超时'));
       if (buf.length > maxBytes) throw new Error(`响应过大 ${buf.length}B`);
       opts.memo?.remember(opts.memoKey ?? sha256(buf).slice(0, 16), url);
       return { text: buf.toString('utf8'), source: url };

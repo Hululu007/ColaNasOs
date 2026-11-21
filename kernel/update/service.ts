@@ -45,12 +45,20 @@ export interface UpdateSettings {
   autoCheck: boolean;
 }
 
+/**
+ * 清单地址：**仓库里的 `release/update.json`**（raw 直链），不是 Release 资产。
+ *
+ * 为什么不用 `releases/latest/download/update.json`：2026-11-21 实测
+ * `gitcode.com/.../releases/latest/download/<文件>` 返回的是 **text/html 的页面**
+ * （3575 字节），拿不到文件；而 `raw.gitcode.com/<owner>/<repo>/raw/main/<path>`
+ * 是真正的 text/plain。raw 直链还天然稳定：地址不随 tag 变，每次发版只提交一次清单。
+ *
+ * 顺序即优先级：GitCode（国内快，实测 8.6 MB/s）→ GitHub（境外兜底，
+ * 国内可能需要设置代理）。
+ */
 export const DEFAULT_MANIFEST_URLS = [
-  // GitCode 仓（CSDN）是这个项目的主库；GitHub 是国际源 + 代码镜像
-  'https://gitcode.com/cocacola23/ColaNasOs/releases/download/update-stable/update.json',
-  'https://github.com/colaKot/ColaNasOs/releases/latest/download/update.json',
-  // Gitee 只在真配了仓之后才加（默认占位不会命中，顺序留着不影响）
-  'https://gitee.com/cocacola23/ColaNasOs/releases/download/update-stable/update.json',
+  'https://raw.gitcode.com/cocacola23/ColaNasOs/raw/main/release/update.json',
+  'https://raw.githubusercontent.com/colaKot/ColaNasOs/main/release/update.json',
 ];
 
 export type JobPhase =
