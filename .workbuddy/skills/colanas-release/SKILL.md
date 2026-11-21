@@ -26,7 +26,7 @@ agent_created: true
 5. **不跑全量门禁、不等 CI**：交付前只跑 `flutter analyze lib`、`npm run installer.check`、`npm run version:check`、`npm run sbom.check`。`verify:full` / CI 不作为本 Skill 的必经步骤。
 6. **构建与验证的代理相反**：electron-builder 下载 Electron/依赖要挂 `http://127.0.0.1:21578`；跑 test / verify 前要 unset 代理。
 7. **dev.bat 在跑时禁止构建 Web**：5173 走热重载，不要为了 7888 重建 `build/web`。
-8. **凭据不落盘**：GitHub 用 `GITHUB_TOKEN` 或 git credential；GitCode 用当前 shell 的 `GITCODE_TOKEN`。不要写进仓库、日志或临时脚本。
+8. **凭据不进版本库**：GitHub 用 `GITHUB_TOKEN` 或 git credential；GitCode 用环境变量或仓库 `.workbuddy/.env`（已 gitignore，脚本自动读取）。不要写进被提交的文件、日志或临时脚本。
 9. **附件必须强校验**：`gitcode-cli` 的 `✓` 不可信；最终以 API 返回的 `size` 和 `digest` 为准。
 
 ## Workflow decision tree
@@ -172,7 +172,7 @@ python .workbuddy/skills/colanas-release/scripts/github_release.py \
 
 ## Phase 6：GitCode Release
 
-脚本路径：`scripts/gitcode_release.py`。先在当前 shell 导出 PAT：
+脚本路径：`scripts/gitcode_release.py`。脚本优先读环境变量 `GITCODE_TOKEN`，没有时自动读仓库 `.workbuddy/.env`。只有本机还没有令牌文件时才需要临时导出：
 
 ```bash
 export GITCODE_TOKEN=<PAT>

@@ -51,6 +51,8 @@ docs/audio/
 # 发版 Skill 是团队可复用资产，单独放行；其余 .workbuddy/ 内容仍不入库
 !.workbuddy/
 .workbuddy/*
+# 本地凭证文件，禁止入库
+.workbuddy/.env
 !.workbuddy/skills/
 .workbuddy/skills/*
 !.workbuddy/skills/colanas-release/

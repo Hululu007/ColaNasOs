@@ -27,6 +27,7 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+from pathlib import Path
 
 API = "https://api.gitcode.com/api/v5"
 EMPTY_SHA = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -34,6 +35,24 @@ EMPTY_SHA = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 
 class ApiError(RuntimeError):
     pass
+
+
+def load_token():
+    """优先读环境变量；否则读仓库 .workbuddy/.env（不打印 token）。"""
+    token = os.environ.get("GITCODE_TOKEN", "")
+    if token:
+        return token
+    env_path = Path(__file__).resolve().parents[4] / ".workbuddy" / ".env"
+    if not env_path.exists():
+        return ""
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        if key.strip() == "GITCODE_TOKEN":
+            return value.strip().strip('"').strip("'")
+    return ""
 
 
 def build_opener(proxy):
@@ -209,9 +228,9 @@ def main():
     ap.add_argument("--proxy", default="http://127.0.0.1:21578", help="传空字符串可禁用代理")
     args = ap.parse_args()
 
-    token = os.environ.get("GITCODE_TOKEN", "")
+    token = load_token()
     if not token:
-        sys.exit("需要 GITCODE_TOKEN 环境变量（GitCode PAT，设置页生成）")
+        sys.exit("需要 GITCODE_TOKEN 环境变量，或仓库 .workbuddy/.env 中的 GITCODE_TOKEN")
 
     names = [f.strip() for f in args.files.split(",") if f.strip()]
     opener = build_opener(args.proxy)

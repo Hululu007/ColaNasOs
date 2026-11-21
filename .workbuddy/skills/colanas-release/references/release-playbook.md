@@ -101,7 +101,7 @@ ColaNasOs-Client-1.3.14-android-arm64-v2.apk
 根因是 Release 里已经有同名 0 字节附件，后续同名 PUT 被当成「更新」，GitCode 回调失败，文件保持 0 字节。换新文件名后 `size` 和 `sha256` 与本地完全一致，下载返回正确 `Content-Length` 和 `MZ` 文件头。
 
 ```bash
-export GITCODE_TOKEN=<PAT>
+# 本机已在 .workbuddy/.env 里保存 GITCODE_TOKEN，脚本会自动读取；没有时才需要手动 export
 python .workbuddy/skills/colanas-release/scripts/gitcode_release.py \
   --repo cocacola23/ColaNasOs --tag v1.3.14 --dist dist_installer \
   --files "$FILES" --suffix -v2
