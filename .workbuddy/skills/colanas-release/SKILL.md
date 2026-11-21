@@ -272,9 +272,19 @@ python .workbuddy/skills/colanas-release/scripts/gitcode_release.py \
 - 显式 `--clean-empty` 会先删除同名 0 字节附件，再用原文件名上传（这是远程删除操作，只在用户确认清理时使用）。
 - `--uploader cli` 可改用 `gitcode-cli`，但脚本仍会查 API 验证，不信任 `✓`。
 - 上传后核对远端 `size` 与本地一致；有 `digest` 时核对 sha256。不一致即失败。
-- Release 已存在时脚本只复用，不更新描述。要改描述用
-  `PATCH /api/v5/repos/{owner}/{repo}/releases/{tag}`，body 至少带 `name` 和 `body`
-  （可选 `release_status=latest`）。追加产物后应同步改描述，避免说明与附件矛盾。
+- Release 已存在时脚本只复用，不更新描述。要改描述用 `scripts/patch_release.py`（内部走
+  `PATCH /api/v5/repos/{owner}/{repo}/releases/{tag}`，body 至少带 `name` 和 `body`，
+  可选 `release_status=latest`）。追加产物后应同步改描述，避免说明与附件矛盾。
+- **Release 页面排版（用户 2026-11-21 定）：附件区动不了，正文才是可编排的地方。**
+  - 附件区（assets）**不能排序、不能折叠、不支持自定义链接资产** —— v5 API 的 release 结构里
+    没有 `links` 字段，上游 GitLab 同样有「assets 顺序创建后不保留」的 issue。想突出全量包
+    只能靠正文里的下载表，不要试图调附件顺序。
+  - 正文用 `scripts/make_release_notes.py` 生成：**最上面是「⬇️ 下载」表**（服务端 / PC 安装版 /
+    PC 便携 / 安卓手机 / 安卓 TV，点名即下、带大小），中间写本版改动，**增量 / 清单 / 签名说明
+    和排障信息全部塞进 `<details>` 折叠块**。GitCode 的 Markdown 支持 `details` / `summary`
+    （官方帮助文档有专节），块内 Markdown 要留空行才会渲染。
+  - 落款流程：`make_release_notes.py --version ... --changes-file ... --no-delta --min-shell ... --out body.md`
+    → `patch_release.py --tag v<version> --name "ColaNasOs <version>" --body-file body.md --latest`。
 - 增量发布上传顺序：**服务端全量包 → `dist_release/assets/*` 增量资产 → `update.json` / `.sig` / `.sig.json` 最后**。顺序错了就是「清单先到、包没传完」的 404 地狱。
 - 发布后回读：每个 `urls[]` 用 `curl -r 0-15` 验 206；再用 GitCode contents API 取 `release/update.json` 和 `release/update.json.sig.json`，确认匿名可取且 base64 解码出真 JSON。
 - `tool/release/publish.js --dir=dist_release --tag=v<version> --platform=gitcode` 是仓库自带的一键上传+回读实现，需要 `GITCODE_TOKEN`；本 Skill 的 `gitcode_release.py` 走同样的预签名上传，但显式代理且强校验 size/digest。
@@ -303,6 +313,8 @@ python .workbuddy/skills/colanas-release/scripts/gitcode_release.py \
 | --- | --- |
 | `scripts/github_release.py` | 仅显式要求 GitHub 时使用：Release 创建、附件上传、size 校验、verify-only |
 | `scripts/gitcode_release.py` | 默认使用：GitCode Release 创建、官方预签名两步上传、空附件处理、size/digest 强校验 |
+| `scripts/make_release_notes.py` | 生成 Release 正文：顶部下载表（全量包）+ 本版改动 + `<details>` 折叠的资产说明与排障 |
+| `scripts/patch_release.py` | 更新已存在 Release 的标题 / 正文 / `release_status=latest` |
 
 ## References
 
