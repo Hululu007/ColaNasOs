@@ -29,6 +29,7 @@ import websocket from '@fastify/websocket';
 import { attachTerminal } from '../src/modules/system/pty';
 import { filesRoot } from '../src/modules/files/fs-root';
 import { resolveApiToken } from '../src/modules/auth/api-token';
+import { loadLiveAuth } from '../src/modules/auth/live-auth';
 import { BASE_MIGRATIONS } from './migrations/base';
 import { MIGRATION_ORDER } from './migrations/manifest';
 import {
@@ -460,10 +461,28 @@ export async function startKernel(opts: KernelOptions) {
     }
 
     let payload = verifyToken(raw, secret);
+    const isJwt = payload !== null;
     // 长期访问令牌（Scoped Token）：JWT 校验失败时按 hash 查表；撤销/过期即失效
     if (!payload) payload = await resolveApiToken(db, raw);
     if (!payload) {
       return reply.code(401).send({ error: Err.unauthorized, message: 'invalid or expired token' });
+    }
+
+    // 账号级实时授权：JWT 里的 scopes 是签发时的快照，管理员改权限 / 禁用账号后
+    // 旧 token 里的值不会变。这里以库里的账号为准 —— 改完权限下一个请求就生效，
+    // 不用重新登录换 token。访问令牌（cnt_）的 scopes 是它自己的子集，不能拿账号
+    // 全量覆盖（否则等于提权），所以只对 JWT 走这一层。
+    if (isJwt) {
+      const live = await loadLiveAuth(db, payload.sub);
+      // 账号行不存在（开发令牌 dev-token 的 uid 不在账号表里、已删号的旧 token）：
+      // 退回 token 自己的 scopes，不在这里硬拒 —— 否则会把开发与测试链路一并打断。
+      // 只有「账号确实存在且被禁用」才立即 403。
+      if (live) {
+        if (live.disabled) {
+          return reply.code(403).send({ error: Err.forbidden, message: 'account disabled' });
+        }
+        payload = { ...payload, scopes: live.scopes };
+      }
     }
 
     const scope = req.routeOptions.config?.scope;

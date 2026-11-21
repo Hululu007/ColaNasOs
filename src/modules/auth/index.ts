@@ -7,6 +7,7 @@ import { isFullAccess, readPolicy, writePolicy, type AccessPolicy } from '../../
 import type { ServerModule } from '../../../kernel/types';
 import { Err } from '../../../kernel/errors';
 import { hashApiToken, newApiToken } from './api-token';
+import { invalidateLiveAuth, loadLiveAuth } from './live-auth';
 import { renderDeviceAuthorizePage } from './device-authorize-page';
 
 /**
@@ -909,11 +910,15 @@ export const accounts: ServerModule = {
           `.execute(k.db)
         ).rows;
         const policy = readPolicy(k.config, uid);
+        // scopes 以库里实时值为准：JWT 里的那份是登录时的快照，改权限后不会变。
+        // 客户端刷新这个接口就能拿到最新权限，不必重新登录。
+        const live = await loadLiveAuth(k.db, uid);
+        const scopes = live?.scopes ?? user?.scopes ?? [];
         return {
           id: uid,
           username: rows[0]?.username ?? '',
-          scopes: user?.scopes ?? [],
-          isAdmin: isFullAccess(user),
+          scopes,
+          isAdmin: scopes.includes('*') || isFullAccess(user),
           allowedApps: policy.apps ?? null,
           pathRules: policy.paths ?? [],
         };
@@ -1143,6 +1148,8 @@ export const accounts: ServerModule = {
         const body = (req.body || {}) as { id?: string; disabled?: boolean };
         if (!body.id) return reply.code(404).send({ error: Err.notFound, message: 'id required' });
         await sql`update auth_users set disabled = ${body.disabled ? 1 : 0} where id = ${body.id}`.execute(k.db);
+        // 禁用 / 启用立即生效：清缓存后下一个请求就按新状态判定
+        invalidateLiveAuth(body.id);
         return { ok: true };
       },
     );
@@ -1353,6 +1360,8 @@ export const accounts: ServerModule = {
               update auth_users set scopes = ${JSON.stringify(scopes)} where id = ${row.id}
             `.execute(k.db);
             changes.push('scopes');
+            // 权限改了：清掉实时授权缓存，下一个请求立即按新权限判定（无需重新登录）
+            invalidateLiveAuth(row.id);
           }
         }
         if (changes.length > 0) {

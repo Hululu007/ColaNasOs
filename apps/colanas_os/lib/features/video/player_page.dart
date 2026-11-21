@@ -346,6 +346,10 @@ class _PlayerPageState extends State<PlayerPage> {
   /// 否则返回键会被「先收控制层」的逻辑永远拦住。
   bool _allowPop = false;
 
+  /// TV 选项小窗（字幕 / 音轨 / 倍速 / 画质 / 信息）是否开着。
+  /// 返回键按「小窗 → 操作栏 → 退出播放页」三层处理，见 [_tvBack]。
+  bool _tvPanelOpen = false;
+
   /// 按钮行的横向滚动锚点（索引变化时滚到可见）
 
   /// 已转出的总时长（毫秒）：进度条上「已加载」那一段画到这里。
@@ -5122,19 +5126,33 @@ class _PlayerPageState extends State<PlayerPage> {
     if (next != _tvIndex) setState(() => _tvIndex = next);
   }
 
-  /// 返回键语义（TV）：直接退出播放页，回到刚才的栏目。
+  /// 返回键语义（TV）：分层返回，逐级退出而不是一下子跳回栏目。
+  ///
+  /// 顺序：**选项小窗 → 操作栏 → 播放页**。
+  /// - 字幕 / 音轨等小窗开着：只关小窗，操作栏保留；
+  /// - 操作栏显示着：只收起操作栏，回到全屏观看；
+  /// - 都没有了：才真正退出播放页。
   ///
   /// 系统返回（PopScope）和 goBack 键事件可能同一次按键都送到这里，
-  /// 150ms 内只算一次，避免「按一下返回退出两页」。
+  /// 150ms 内只算一次，避免「按一下退两层」。
   void _tvBack() {
     final now = DateTime.now();
     final last = _lastTvBackAt;
     if (last != null && now.difference(last).inMilliseconds < 150) return;
     _lastTvBackAt = now;
-    _hideTimer?.cancel();
-    if (_controls) {
-      setState(() => _controls = false);
+
+    // ① 选项小窗开着：关小窗，留在播放页（操作栏该在还在）。
+    if (_tvPanelOpen) {
+      Navigator.of(context).maybePop();
+      return;
     }
+    // ② 操作栏显示：收起操作栏，回到全屏观看。
+    if (_controls) {
+      _hideTimer?.cancel();
+      setState(() => _controls = false);
+      return;
+    }
+    // ③ 已经是全屏、且没有小窗：退出播放页。
     _allowPop = true;
     setState(() {});
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -5150,7 +5168,7 @@ class _PlayerPageState extends State<PlayerPage> {
   /// - 操作栏显示时：默认落在进度行（左右依然是跳时间，OK 收起操作栏）；
   ///   再按一次下进入按钮行，左右选字幕 / 音轨 / 画质等，OK 执行选中的按钮，
   ///   上从按钮行回到进度行、进度行再往上收起操作栏；
-  /// - 返回：任何时候都退出播放页；选项面板自己处理返回，不会走到这里。
+  /// - 返回：分层——先关选项小窗，再收操作栏，都没有才退出播放页（见 [_tvBack]）。
   KeyEventResult _onTvKey(KeyEvent event) {
     if (event is KeyUpEvent) return KeyEventResult.ignored;
     final k = event.logicalKey;
@@ -5460,8 +5478,32 @@ class _PlayerPageState extends State<PlayerPage> {
     ];
   }
 
+  /// 统一的电视选项小窗入口：包一层 `_tvPanelOpen` 标志，返回键才能先关小窗。
+  Future<String?> _showTvPanel(
+    BuildContext _, {
+    required String title,
+    required List<TvPanelOption> options,
+    String? hint,
+    String? status,
+    int columns = 3,
+  }) async {
+    _tvPanelOpen = true;
+    try {
+      return await TvPlayerPanel.show(
+        context,
+        title: title,
+        options: options,
+        hint: hint,
+        status: status,
+        columns: columns,
+      );
+    } finally {
+      _tvPanelOpen = false;
+    }
+  }
+
   Future<void> _tvInfoPanel() async {
-    await TvPlayerPanel.show(
+    await _showTvPanel(
       context,
       title: tr('player.mediaInfo'),
       options: _tvInfoOptions(),
@@ -5472,7 +5514,7 @@ class _PlayerPageState extends State<PlayerPage> {
 
   Future<void> _tvSpeedPanel() async {
     const speeds = <double>[0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
-    final picked = await TvPlayerPanel.show(
+    final picked = await _showTvPanel(
       context,
       title: tr('player.speed'),
       options: [
@@ -5521,7 +5563,7 @@ class _PlayerPageState extends State<PlayerPage> {
           selected: VideoSubtitlePrefs.instance.position == i,
         ),
     ];
-    final picked = await TvPlayerPanel.show(
+    final picked = await _showTvPanel(
       context,
       title: tr('player.tv.subtitleTitle'),
       options: options,
@@ -5583,7 +5625,7 @@ class _PlayerPageState extends State<PlayerPage> {
       if (source.isEmpty && tracks.isEmpty)
         TvPanelOption(value: '__none', label: tr('player.noAudioTracks')),
     ];
-    final picked = await TvPlayerPanel.show(
+    final picked = await _showTvPanel(
       context,
       title: tr('player.audioTrack'),
       options: options,
@@ -5600,7 +5642,7 @@ class _PlayerPageState extends State<PlayerPage> {
         ? defaultTranscodeCodec()
         : _codec;
     final options = presetsForSource(_srcHeight).where((p) => !p.copy).toList();
-    final picked = await TvPlayerPanel.show(
+    final picked = await _showTvPanel(
       context,
       title: tr('player.quality'),
       options: [

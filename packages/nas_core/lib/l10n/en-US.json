@@ -1977,6 +1977,7 @@
     "sync.wizard.pickDir": "Choose folder",
     "sync.wizard.prev": "Back",
     "sync.wizard.probeEscape": "NAS path escapes the files root; use a relative path",
+    "sync.wizard.probeNoPerm": "This folder is not granted to your account; ask an admin to add read/write access under Accounts → Folder access",
     "sync.wizard.probeReadonly": "NAS folder is not writable; choose another folder or grant access in Files",
     "sync.wizard.ready": "Ready",
     "sync.wizard.realtime": "Sync on change (watch)",

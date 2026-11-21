@@ -90,6 +90,18 @@ class ApiSession {
   /// `null` = 没配应用白名单，按 scopes 兜底；空集 = 一个应用都不给。
   /// 登录 / 恢复会话时都会刷新，管理员改了授权后子账号重开客户端即生效。
   Set<String>? allowedApps;
+
+  /// 服务端 `/auth/me` 返回的**实时** scopes。
+  ///
+  /// JWT 里的 scopes 是签发时的快照，管理员改权限后旧 token 不会变。这里存服务端
+  /// 库里的最新值，[scopes] 优先用它 —— 配合 [refreshAccess] 与前台恢复刷新，
+  /// 改完权限不用重新登录就能看到新入口。
+  Set<String>? serverScopes;
+
+  /// 权限快照版本号：每次 [refreshAccess] 成功 +1。导航 / 工作台监听它重建，
+  /// 否则 `allowedApps` / `scopes` 变了界面不会跟着变。
+  final ValueNotifier<int> accessRevision = ValueNotifier<int>(0);
+
   bool isAdminFromServer = false;
   final HttpTransport _accessHttp = HttpTransport(
     timeout: const Duration(seconds: 8),
@@ -134,6 +146,7 @@ class ApiSession {
         token = null;
         username = null;
         allowedApps = null;
+        serverScopes = null;
         isAdminFromServer = false;
         authState.value = false;
         events.stop();
@@ -334,8 +347,13 @@ class ApiSession {
     }
   }
 
-  /// 当前 token 的 scopes（JWT payload）；未登录 / 解析失败为空集
+  /// 当前 token 的 scopes：优先用服务端 `/auth/me` 的实时值，没有才解析 JWT。
+  ///
+  /// JWT payload 只是登录时的快照；服务端鉴权已按库里的账号权限判定，这里跟着
+  /// 用同一份，界面入口才和「实际能调用的接口」一致。
   Set<String> get scopes {
+    final live = serverScopes;
+    if (live != null) return live;
     final raw = token;
     if (raw == null) return const {};
     try {
@@ -377,7 +395,12 @@ class ApiSession {
       if (data is! Map) return;
       final apps = data['allowedApps'];
       allowedApps = apps is List ? apps.map((e) => '$e').toSet() : null;
+      final liveScopes = data['scopes'];
+      serverScopes =
+          liveScopes is List ? liveScopes.map((e) => '$e').toSet() : null;
       isAdminFromServer = data['isAdmin'] == true;
+      // 快照变了要通知导航 / 工作台重建，否则新授权的应用入口要等重开客户端才出现。
+      accessRevision.value++;
     } catch (_) {
       // 老服务端没有这个接口 / 暂时不可达：保持按 scopes 推导
     }
@@ -389,6 +412,7 @@ class ApiSession {
     token = null;
     username = null;
     allowedApps = null;
+    serverScopes = null;
     isAdminFromServer = false;
     authState.value = false;
     // 登出只清凭证，不改「自动登录」偏好：下次打开仍应预填账号，用户勾过就继续记住

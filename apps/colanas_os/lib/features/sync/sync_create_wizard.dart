@@ -333,9 +333,14 @@ class _SyncCreateWizardState extends State<SyncCreateWizard> {
       );
       if (probe['allowed'] == false) {
         if (!mounted) return;
+        final msg = '${probe['message'] ?? ''}';
         setState(() {
           _step = 2;
-          _error = tr('sync.wizard.probeEscape');
+          // `permission` = 该目录没授权给当前账号（服务端 probe 已按 ACL 拦下），
+          // 其余情况才是路径越界；两种提示要分开，用户才知道去改授权还是换路径。
+          _error = msg == 'permission'
+              ? tr('sync.wizard.probeNoPerm')
+              : tr('sync.wizard.probeEscape');
         });
         return;
       }
@@ -377,9 +382,14 @@ class _SyncCreateWizardState extends State<SyncCreateWizard> {
       Navigator.pop(context, true);
     } catch (e) {
       if (!mounted) return;
+      final raw = '$e';
       setState(() {
         _saving = false;
-        _error = '$e';
+        // 目录未授权时服务端回 403（remoteDir requires write/read permission）。
+        // 直接甩英文异常用户不知道怎么办，换成可照做的提示。
+        _error = raw.contains('403')
+            ? tr('sync.wizard.probeNoPerm')
+            : raw;
       });
     }
   }

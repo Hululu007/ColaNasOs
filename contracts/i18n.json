@@ -2707,6 +2707,7 @@
     "sync.wizard.pickDir": {},
     "sync.wizard.prev": {},
     "sync.wizard.probeEscape": {},
+    "sync.wizard.probeNoPerm": {},
     "sync.wizard.probeReadonly": {},
     "sync.wizard.ready": {},
     "sync.wizard.realtime": {},

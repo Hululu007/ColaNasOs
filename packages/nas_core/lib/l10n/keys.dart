@@ -2014,6 +2014,7 @@ class I18nKeys {
   static const syncWizardPickDir = 'sync.wizard.pickDir';
   static const syncWizardPrev = 'sync.wizard.prev';
   static const syncWizardProbeEscape = 'sync.wizard.probeEscape';
+  static const syncWizardProbeNoPerm = 'sync.wizard.probeNoPerm';
   static const syncWizardProbeReadonly = 'sync.wizard.probeReadonly';
   static const syncWizardReady = 'sync.wizard.ready';
   static const syncWizardRealtime = 'sync.wizard.realtime';
@@ -3118,4 +3119,4 @@ class I18nKeys {
 }
 
 /// 契约键总数（生成时确定），供完整性自检使用。
-const int i18nKeyCount = 3067;
+const int i18nKeyCount = 3068;

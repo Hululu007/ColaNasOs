@@ -450,27 +450,43 @@ class _VideoDuplicatesPageState extends State<VideoDuplicatesPage> {
               ),
             ),
           NasRefreshButton(onPressed: _busy ? null : _load),
-          if (_selected.isNotEmpty) ...[
-            TextButton(
-              onPressed: _busy ? null : () => setState(_selected.clear),
-              child: Text(tr('video.dup.clearSelection')),
-            ),
-            FilledButton.icon(
-              onPressed: _busy ? null : _deleteSelected,
-              icon: const Icon(Icons.delete_outline, size: 18),
-              label: Text(
-                tr('video.dup.deleteSelected', {'count': '${_selected.length}'}),
-              ),
-            ),
-            const SizedBox(width: NasTokens.spaceSm),
-          ],
         ],
       ),
-      body: _loading
-          ? const NasLoading()
-          : _error != null
-              ? NasErrorState(message: _error!, onRetry: _load)
-              : _body(context),
+      body: Column(
+        children: [
+          // 多选操作走统一选择条：手机窄屏会自动把动作收成图标，不再挤爆 AppBar。
+          if (_selected.isNotEmpty) _selectionBar(context),
+          Expanded(
+            child: _loading
+                ? const NasLoading()
+                : _error != null
+                    ? NasErrorState(message: _error!, onRetry: _load)
+                    : _body(context),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 多选操作条：复用 `nas_ui` 的 NasSelectionBar，窄屏自动收成图标。
+  Widget _selectionBar(BuildContext context) {
+    return NasSelectionBar(
+      title: tr('video.list.selected', {'count': '${_selected.length}'}),
+      onClose: () => setState(_selected.clear),
+      actions: [
+        NasSelectionAction(
+          label: tr('video.dup.clearSelection'),
+          icon: Icons.deselect,
+          onPressed: () => setState(_selected.clear),
+        ),
+        NasSelectionAction(
+          label: tr('video.dup.deleteSelected', {'count': '${_selected.length}'}),
+          icon: Icons.delete_outline,
+          danger: true,
+          enabled: !_busy,
+          onPressed: _deleteSelected,
+        ),
+      ],
     );
   }
 

@@ -56,7 +56,7 @@ class AppShell extends StatefulWidget {
   State<AppShell> createState() => _AppShellState();
 }
 
-class _AppShellState extends State<AppShell> {
+class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   /// 当前选中项：`home`（工作台）或 App id
   String _selected = 'home';
 
@@ -105,6 +105,28 @@ class _AppShellState extends State<AppShell> {
     WidgetsBinding.instance.addPostFrameCallback((_) => _maybeShowGuide());
     // 开发版重叠守卫：内核若检测到另一个实例在跑，后台任务会被跳过，界面要明确告知
     unawaited(DevOverlapStatus.refresh());
+    // 权限快照变化时重建导航：管理员改了账号权限，界面入口要跟着变，而不是等重开客户端
+    ApiSession.instance.accessRevision.addListener(_onAccessChanged);
+    // 前台恢复时主动刷新一次授权（详见 didChangeAppLifecycleState）
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  /// 权限快照变了：重建导航；当前页若已被收回权限，退回第一个可见应用。
+  void _onAccessChanged() {
+    if (!mounted) return;
+    setState(() {
+      final ids = _ids;
+      if (ids.isNotEmpty && !ids.contains(_selected)) _selected = ids.first;
+    });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // 回到前台就刷一次授权快照：管理员刚在别处改完权限，切回来即可看到新入口，
+    // 不必重新登录（服务端 `/auth/me` 已返回库里实时的 scopes / 应用白名单）。
+    if (state == AppLifecycleState.resumed) {
+      unawaited(ApiSession.instance.refreshAccess());
+    }
   }
 
   /// 重叠模式横幅（仅开发态出现；正式版 `/ready` 恒为 enabled=true，永不渲染）
@@ -194,6 +216,8 @@ class _AppShellState extends State<AppShell> {
 
   @override
   void dispose() {
+    ApiSession.instance.accessRevision.removeListener(_onAccessChanged);
+    WidgetsBinding.instance.removeObserver(this);
     if (AppShell.openAppRequest == _open) AppShell.openAppRequest = null;
     AppNavShell.onExitToHome = null;
     super.dispose();

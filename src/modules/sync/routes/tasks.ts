@@ -515,6 +515,11 @@ export async function registerSyncTasks(app: FastifyInstance, k: KernelApi, h: S
         } catch {
           return { exists: false, writable: false, allowed: false, message: 'remoteDir escapes root' };
         }
+        // 路径 ACL：同步要写远端目录，没授权就在这里拦下，别等 upsert 时才报 403。
+        // 只读账号建不了上传任务，probe 也按 write 口径判断（建任务本就需要写）。
+        if (!pathAllowed(req, body.remoteDir || '', 'write')) {
+          return { exists: false, writable: false, allowed: false, message: 'permission' };
+        }
         const exists = fs.existsSync(abs) && fs.statSync(abs).isDirectory();
         let writable = false;
         if (exists) {

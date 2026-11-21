@@ -1939,6 +1939,7 @@
     "sync.wizard.pickDir": "选择目录",
     "sync.wizard.prev": "上一步",
     "sync.wizard.probeEscape": "NAS 路径越界，请使用文件根内的相对路径",
+    "sync.wizard.probeNoPerm": "该目录没有授权给当前账号：请让管理员在「账号 → 目录权限」里为它添加读写授权后再试",
     "sync.wizard.probeReadonly": "NAS 目录不可写，请换一个目录或先在文件应用里授权",
     "sync.wizard.ready": "就绪",
     "sync.wizard.realtime": "按需同步（实时监听）",
