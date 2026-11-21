@@ -48,6 +48,12 @@ docs/_archive/
 docs/audio/
 .codeartsdoer/
 .workbuddy/
+# 发版 Skill 是团队可复用资产，单独放行；其余 .workbuddy/ 内容仍不入库
+!.workbuddy/
+.workbuddy/*
+!.workbuddy/skills/
+.workbuddy/skills/*
+!.workbuddy/skills/colanas-release/
 .dumate/
 .codegraph/
 .arts/
