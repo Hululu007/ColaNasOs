@@ -138,6 +138,8 @@ git tag -a v1.3.17 -m "ColaNasOs 1.3.17" && git push gitcode v1.3.17
 npm run smoke:update
 ```
 
-结果：自动基线 `D10316`，变化 6 个文件，增量资产 5 个 / 1.30 MB，全量 577,564,064 B（SHA256 `58cb29d3…636ccd`）。`verify:fast` 26/26、`installer.check` 35/35、`smoke:update` 28/28；Release 9 个自有资产 size/digest 全匹配，下载直链 206，contents API 清单与签名可解码。
+结果：自动基线 `D10316`，变化 6 个文件，增量资产 5 个 / 1.30 MB，全量 577,569,173 B（SHA256 `421b4df2…18dd`）。`verify:fast` 26/26、`installer.check` 35/35、`smoke:update` 28/28；Release 9 个自有资产 size/digest 全匹配，下载直链 206，contents API 清单与签名可解码。
+
+发完发现清单源 `@@` 拼接少一个斜杠会 404，补修后重建服务端、隔离目录重算增量与清单，删掉 Release 上旧资产后重传；最终包名未变，哈希以上面为准。
 
 中途修了两条发版工具 lint：`no-useless-assignment`（基线探测初始值）与 `buildDelta` 的未使用 `id` 参数；都单独按功能提交。

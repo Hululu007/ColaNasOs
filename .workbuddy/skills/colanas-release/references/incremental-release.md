@@ -58,8 +58,9 @@ node tool/release/release.js \
 ## 1.3.17 实战数字
 
 - 基线：`D10316`（1.3.16），变化 6 个文件，增量资产 5 个 / 1.30 MB。
-- 全量服务端：577,564,064 B，SHA256 `58cb29d365d58e48f2f26a024aaab7905ef480f62a056de8162bd8019f636ccd`。
+- 全量服务端：577,569,173 B，SHA256 `421b4df272bb2602ef5ec6284f52f7c783192c8ecc497373e133b4b2661d18dd`。
 - Release `v1.3.17`：9 个自有资产 + 4 个源码包；下载直链与 contents API 回读全通过。
+- 发完发现 contents API 路径少一个斜杠（`contentsrelease/...`），修掉后重建服务端并重算增量/清单，Release 上旧资产按 API 删除后重传。
 - 冒烟：`smoke:update` 28/28。
 
 ## 坑位
@@ -67,4 +68,5 @@ node tool/release/release.js \
 - electron-builder 下载偶尔被代理中断（`server aborted pending request` / 600s request timeout），重试即可；走 `http://127.0.0.1:21578`，验收前 unset 代理。
 - 同一工作树里有并发发版时，`dist_release/` 会被互相覆盖；用隔离 `--out=` 目录，必要时 `--reuse-version-dir`。
 - GitCode 同名附件不能覆盖；资产名带内容摘要就是为了避开这个问题。需要换掉同名资产时先按 API 删除再上传。
+- 清单源 `<API 根>@@<仓库内路径>` 的 `@@` 两侧都要归一化斜杠，否则拼成 `contentsrelease/update.json`，平台返 404，客户端只看到「全部更新源失败」。
 - 硬链接不能原地写；`version.json` 不能在发布后重写，否则切指针前全量校验对不上。

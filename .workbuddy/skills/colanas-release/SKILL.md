@@ -33,7 +33,7 @@ agent_created: true
 10. **默认只推 GitCode**：不主动 `git push origin`，不主动创建 GitHub Release。只有用户明确要求时才推 GitHub；用户没说就当没要求。
 11. **服务端一律全量 + 增量**：`release.js` 自动取上一版 `D<NNN>` 作基线，不传 `--from` 也不静默退化成只发全量；真要只发全量必须 `--no-delta` 并在提交信息写明原因。全量包是首次安装和跨版本兜底，不能撤。
 12. **清单最后上传**：资产全部就位后再传 `update.json` / `.sig` / `.sig.json`；传完必须回读 URL（或 GitCode contents API）确认能拿到真 JSON。
-13. **GitCode raw 不可用**：`raw.gitcode.com` 匿名访问返 403「暂不支持预览」；清单源走公开仓库 contents API，签名优先 `.sig.json`（`.sig` 只在取不到时回落）。
+13. **GitCode raw 不可用**：`raw.gitcode.com` 匿名访问返 403「暂不支持预览」；清单源走公开仓库 contents API，签名优先 `.sig.json`（`.sig` 只在取不到时回落）。`<API 根>@@<仓库内路径>` 两侧斜杠必须归一化，否则拼成 `contentsrelease/...` 直接 404。
 
 ## Workflow decision tree
 
