@@ -172,7 +172,7 @@ if (dartVersion) {
   if (clientPub && /kAppVersionCode\s*=\s*\d+/.test(nextDart)) {
     nextDart = nextDart.replace(
       /kAppVersionCode\s*=\s*\d+/,
-      `kAppVersionCode = ${clientPub.pub.build}`,
+      `kAppVersionCode = ${setArg ? clientPub.pub.build + 1 : clientPub.pub.build}`,
     );
   }
   fs.writeFileSync(dartVersionPath, nextDart, 'utf-8');
