@@ -1,0 +1,108 @@
+{
+  "schema": 1,
+  "channel": "pre",
+  "releasedAt": "2026-11-21T14:06:18.614Z",
+  "keyId": "k2026a",
+  "notes": {
+    "zh": "开发版：修安卓音频滤镜崩溃、手机/平板 HDR 片改走系统播放器直推（能真输出杜比）、新增预发布更新通道。"
+  },
+  "components": {
+    "server": {
+      "semver": "1.3.21",
+      "version": 10321,
+      "delta": {
+        "from": [
+          "1.3.20"
+        ],
+        "files": [
+          {
+            "path": "web/main.dart.js",
+            "size": 6143009,
+            "sha256": "ae4fb6acad109dda604568f5c7faeadf62246740acaab3814ce393d96181b874",
+            "br": {
+              "size": 1282044,
+              "sha256": "a0da0c3fae00cb223e5c0245f93e4c3fac06896c4e1d6580f7e126ee51061e83"
+            },
+            "urls": [
+              "https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.21/0-ae4fb6acad10-main.dart.js.br"
+            ]
+          }
+        ],
+        "bundles": [
+          {
+            "name": "smallfiles-2294743a6662.brb",
+            "size": 353,
+            "sha256": "2294743a6662c11d103e27589a1fdf1154d1bb552b95fcd56062a4c75e1c910b",
+            "members": [
+              "version.json",
+              "web/.last_build_id",
+              "web/version.json"
+            ],
+            "urls": [
+              "https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.21/smallfiles-2294743a6662.brb"
+            ]
+          }
+        ],
+        "urlBase": [
+          "https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.21"
+        ],
+        "manifest": {
+          "size": 65455,
+          "sha256": "772dbf4ee2408dde00d25c63556b28acc14314adf4a1a16c456e450e37446101",
+          "urls": [
+            "https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.21/manifest-D10321-772dbf4ee240.json"
+          ]
+        }
+      },
+      "full": {
+        "size": 577574572,
+        "sha256": "f5727378f688cce582db178afaa2acf247a4bdae86460b3549532324b4da103f",
+        "urls": [
+          "https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.21/ColaNasOs-Server-1.3.21-Setup.exe"
+        ]
+      }
+    },
+    "client_pc": {
+      "semver": "1.3.21",
+      "version": 10321,
+      "versionCode": 42,
+      "assets": {
+        "setup": {
+          "size": 30643840,
+          "sha256": "cd0abd43c6585c392d593e6e64cd4065e37847c62305b5aeb3b4a21ffb33cf76",
+          "urls": [
+            "https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.21/ColaNasOs-Client-1.3.21-Setup.exe"
+          ]
+        },
+        "portable": {
+          "size": 40537280,
+          "sha256": "55fda33d6ea5bf0d6fe44a849fc2f56646fc20bce38eaa343cf09e09cb267f30",
+          "urls": [
+            "https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.21/ColaNasOs-Client-1.3.21-windows-x64.zip"
+          ]
+        }
+      }
+    },
+    "client_android": {
+      "semver": "1.3.21",
+      "version": 10321,
+      "versionCode": 42,
+      "assets": {
+        "apk": {
+          "size": 46949315,
+          "sha256": "6764cf693bf07241ffb42158955c0bc8575a638cf9114c92e3179dc98031fd6f",
+          "urls": [
+            "https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.21/ColaNasOs-Client-1.3.21-android-arm64.apk"
+          ]
+        },
+        "apk_tv": {
+          "size": 46949315,
+          "sha256": "4dfddefb4f306b88bc01001b7b7ca607cb9ebce4723dceb01ac43155ab0a5804",
+          "urls": [
+            "https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.21/ColaNasOs-Client-1.3.21-android-arm64-tv.apk"
+          ]
+        }
+      }
+    }
+  }
+}

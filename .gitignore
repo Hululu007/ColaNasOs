@@ -56,6 +56,7 @@ docs/audio/
 !.workbuddy/skills/
 .workbuddy/skills/*
 !.workbuddy/skills/colanas-release/
+!.workbuddy/skills/colanas-promote/
 .dumate/
 .codegraph/
 .arts/

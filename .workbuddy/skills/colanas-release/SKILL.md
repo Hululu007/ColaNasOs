@@ -228,6 +228,32 @@ $PY $S --repo cocacola23/ColaNasOs --tag v<version> --dist dist_release \
 
 `--proxy ""` 表示直连；550 MB 全量包实测直连可传（走 `127.0.0.1:21578` 反而更慢）。脚本会逐项核对远端 `size` 与 sha256，任何一项不符就非零退出。
 
+## Phase 4B：发预发布版（开发期默认）
+
+用户默认只要**预发布**；只有他明说「发正式版」才进正式通道（转正与清理见 `colanas-promote` Skill）。
+
+与 Phase 4A 只差一处：`release.js` 和 `gitcode_release.py` 都加 `--pre`。
+
+```bash
+node tool/release/release.js \
+  --out=dist_release --tag=v<version> \
+  --url-base=https://gitcode.com/cocacola23/ColaNasOs/releases/download/v<version> \
+  --setup=dist_installer/ColaNasOs-Server-<version>-Setup.exe \
+  --notes-zh="<说明>" --manifest-out=release --pre
+```
+
+- 产物是 `release/update-pre.json`（`channel: "pre"`）+ `.sig` + `.sig.json`，**不动** `update.json`。
+- 只发服务端时同样要回填 `client_pc` / `client_android` 并重签 `update-pre.json` 三件套 ——
+  组件缺失对预发布通道一样致命。
+- 上传顺序不变（全量 → 增量 → 客户端 → 清单最后），只是清单换名成 `update-pre.json*`。
+- `gitcode_release.py` 带 `--pre` 时 Release 状态是 `pre`；已存在的 Release 会被复用，
+  状态不会自动改 —— 要改状态用 `scripts/patch_release.py`。
+- 提交 `release/update-pre.json` 三件套并 `git push gitcode main` 后，勾了「接收预发布版」的
+  设备（服务端设置 `channel=pre`）才能看到这版；没勾的完全无感。
+
+⚠️ **发预发布不会碰正式清单**，但 `release.js` 仍会用同一个 `dist_release` 生成版本目录 ——
+不会造成污染，不要为了「隔离」把版本目录复制一份，那会让增量基线算错。
+
 ## Phase 5：GitHub Release（仅用户明确要求时执行）
 
 默认跳过本阶段。只有用户明确说「也推 GitHub / GitHub 也发 Release」时才执行，并同时补 `git push origin main` 与 `git push origin v<version>`。
