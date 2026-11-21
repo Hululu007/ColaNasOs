@@ -114,3 +114,30 @@ python .workbuddy/skills/colanas-release/scripts/gitcode_release.py \
 - 临时 Release `v1.3.14-uploadtest` 需要网页手工删除。
 
 新脚本提供 `--clean-empty`，可在用户明确确认后通过 API 删除空附件；默认仍使用 `-v2` 新文件名，避免误删。
+
+## 8. 1.3.17 服务端全量 + 增量实战
+
+客户端代码自 1.3.16 起没有改动，这版只发服务端；清单里保留 PC 1.3.15 与安卓/TV 1.3.16。
+
+```bash
+node tool/version.js --set=1.3.17
+npm run version:check && npm run sbom && npm run sbom.check
+build-web.bat
+npm run dist                      # 挂 http://127.0.0.1:21578，非沙箱
+flutter analyze lib
+npm run verify:fast
+npm run installer.check && npm run version:check && npm run sbom.check
+node tool/release/release.js \
+  --out=dist_release --tag=v1.3.17 \
+  --url-base=https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.17 \
+  --setup=dist_installer/ColaNasOs-Server-1.3.17-Setup.exe \
+  --notes-zh="服务端全量与 1.3.16→1.3.17 增量" --manifest-out=release
+git push gitcode main
+git tag -a v1.3.17 -m "ColaNasOs 1.3.17" && git push gitcode v1.3.17
+# 上传：全量 exe → dist_release/assets/* → update.json*（最后）
+npm run smoke:update
+```
+
+结果：自动基线 `D10316`，变化 6 个文件，增量资产 5 个 / 1.30 MB，全量 577,564,064 B（SHA256 `58cb29d3…636ccd`）。`verify:fast` 26/26、`installer.check` 35/35、`smoke:update` 28/28；Release 9 个自有资产 size/digest 全匹配，下载直链 206，contents API 清单与签名可解码。
+
+中途修了两条发版工具 lint：`no-useless-assignment`（基线探测初始值）与 `buildDelta` 的未使用 `id` 参数；都单独按功能提交。
