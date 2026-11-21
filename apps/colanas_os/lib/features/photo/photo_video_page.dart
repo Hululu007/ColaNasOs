@@ -166,10 +166,14 @@ class _PhotoVideoPageState extends State<PhotoVideoPage> {
   /// 响应端也能做的两条音频处理（服务端转码参数在这里对应到 libmpv 滤镜）。
   Future<void> _applyAudio() async {
     // 响度归一：dynaudnorm 是实时滤镜，边播边把音量拉平，不需要预扫。
-    _setProp('af', _normalize ? 'lavfi=[dynaudnorm=f=250:g=15]' : '');
+    // 滤镜名直接写（`dynaudnorm=...`）——`lavfi=[...]` 是 ffmpeg 命令行写法，
+    // 安卓的 libmpv 会报 `Audio filter initialized failed!`。
+    _setProp('af', _normalize ? _normalizeFilter : '');
     // 降混：把 5.1/7.1 混成双声道（耳机 / 笔记本扬声器不会丢中置人声以外的声道）
     _setProp('audio-channels', _downmix ? 'stereo' : 'auto');
   }
+
+  static const String _normalizeFilter = 'dynaudnorm=f=250:g=15';
 
   void _safe(VoidCallback fn) {
     if (!mounted) return;

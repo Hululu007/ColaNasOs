@@ -550,6 +550,12 @@ class _PlayerPageState extends State<PlayerPage> {
   /// 但播放器随后会继续 —— 直接弹「播放失败」是误报（SMB 转码起播时高发）。
   int _benignRetries = 0;
 
+  /// 本机 libmpv 的音频滤镜链起不来（安卓 libmpv 报警
+  /// `Audio filter initialized failed!`）：置真之后这一场播放不再挂
+  /// `af` / `audio-channels`，保证片子能播，只是没有响度归一与降混。
+  /// 只在同一个播放页内有效，下次进播放器会重新试一次。
+  bool _audioFilterDowngraded = false;
+
   /// 本次播放内不再缓存会话地址：服务端建会话时会把同一部片还在跑的旧会话
   /// 取消掉（换档），本地缓存拿到的可能是已取消的半个播放列表。
   /// 已转完的档位由服务端 `dupe` 直接复用，多一次请求但不会拿到坏地址。
@@ -767,6 +773,12 @@ class _PlayerPageState extends State<PlayerPage> {
       }
       if (_isBenignPlaybackError(message)) {
         _retryAfterBenignError(message);
+        return;
+      }
+      // 音频滤镜挂不上是「可选效果」失败，不是片子放不了：
+      // 关掉滤镜重开，别把人挡在「播放失败」页外面。
+      if (_isAudioFilterError(message)) {
+        _downgradeAudioFilter(message);
         return;
       }
       setState(() => _error = message);
@@ -1935,6 +1947,14 @@ class _PlayerPageState extends State<PlayerPage> {
     }
   }
 
+  /// 响度归一用的音频滤镜链。
+  ///
+  /// libmpv 的 `af` 直接吃 ffmpeg 滤镜名（`dynaudnorm=f=250:g=15`）。
+  /// `lavfi=[...]` 是 ffmpeg **命令行**的写法 —— 安卓的 libmpv 构建会报
+  /// `Audio filter initialized failed!`，整片直接进失败页（真机日志佐证：
+  /// `preset=original session=null`，直连一开播就死在音频滤镜初始化上）。
+  static const String _normalizeFilter = 'dynaudnorm=f=250:g=15';
+
   /// 直连时音频处理在播放器本地做（libmpv 自带滤镜链）；
   /// 转码流的音频已由服务端处理好，必须清掉滤镜，避免双重处理。
   void _applyDirectAudio() {
@@ -1944,16 +1964,50 @@ class _PlayerPageState extends State<PlayerPage> {
     final local = !_isTranscode;
     final normalize =
         local &&
+        !_audioFilterDowngraded &&
         PlayPreferences.audioNormalizeEnabled(
           widget.compat?['audioNormalize'] == true,
         );
-    // `lavfi=[...]` 这种写法在桌面与安卓的 media_kit 构建里都已验证可用
-    // （照片页的短视频音轨走的是同一条）。
-    _setMpvProp('af', normalize ? 'lavfi=[dynaudnorm=f=250:g=15]' : '');
+    _setMpvProp('af', normalize ? _normalizeFilter : '');
     _setMpvProp(
       'audio-channels',
-      local && PlayPreferences.audioDownmix ? 'stereo' : 'auto',
+      local && !_audioFilterDowngraded && PlayPreferences.audioDownmix
+          ? 'stereo'
+          : 'auto',
     );
+  }
+
+  /// 音频滤镜起不来，不该让整片播不了。
+  ///
+  /// 清掉 `af`、声道恢复自动，再原地（带播放位置）重开一次；这一轮的
+  /// [`_applyDirectAudio`] 会看到降级标志直接不挂滤镜。
+  /// 只降级一次：关掉滤镜仍然失败，说明是别的原因，交给正常失败页。
+  void _downgradeAudioFilter(String message) {
+    if (_audioFilterDowngraded) {
+      setState(() => _error = message);
+      return;
+    }
+    _audioFilterDowngraded = true;
+    _setMpvProp('af', '');
+    _setMpvProp('audio-channels', 'auto');
+    ClientLogger.instance.warn(
+      '音频滤镜不可用（${message.trim()}）→ 关掉响度归一 / 降混重开',
+      route: 'player.audio/${_sessionId ?? 'direct'}',
+    );
+    final target = _url;
+    if (target.isEmpty) {
+      setState(() => _error = message);
+      return;
+    }
+    final pos = _playbackPosition;
+    unawaited(_openUrl(target, seekTo: pos > Duration.zero ? pos : null));
+  }
+
+  /// libavfilter 初始化失败（安卓 libmpv 缺滤镜 / 语法不认）。
+  static bool _isAudioFilterError(String message) {
+    final m = message.toLowerCase();
+    return m.contains('audio filter') ||
+        (m.contains('filter') && m.contains('initializ'));
   }
 
   bool get _audioProcessingRequested =>
