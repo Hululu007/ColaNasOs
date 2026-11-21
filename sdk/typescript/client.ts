@@ -1792,9 +1792,54 @@ export class ColanasClient {
     return this.request('POST', '/api/v1/system/tls', params, 'body');
   }
 
-  /** 检查本地版本目录（当前版本 / 最新版本） */
+  /** 清理更新下载缓存 */
+  async systemUpdateCacheClear(params: Record<string, any> = {}): Promise<any> {
+    return this.request('POST', '/api/v1/system/update/cache/clear', params, 'body');
+  }
+
+  /** 取消更新（保留已下载片段，可续传） */
+  async systemUpdateCancel(params: Record<string, any> = {}): Promise<any> {
+    return this.request('POST', '/api/v1/system/update/cancel', params, 'body');
+  }
+
+  /** 检查更新（服务端增量 / 客户端整包；默认 6 小时缓存） */
   async systemUpdateCheck(params: Record<string, any> = {}): Promise<any> {
     return this.request('GET', '/api/v1/system/update/check', params, 'query');
+  }
+
+  /** 更新设置 / 离线包目录 / 缓存占用 */
+  async systemUpdateConfig(params: Record<string, any> = {}): Promise<any> {
+    return this.request('GET', '/api/v1/system/update/config', params, 'query');
+  }
+
+  /** 保存更新设置 */
+  async systemUpdateConfigSave(params: Record<string, any> = {}): Promise<any> {
+    return this.request('PUT', '/api/v1/system/update/config', params, 'body');
+  }
+
+  /** 开始更新服务端（增量优先，失败回退全量） */
+  async systemUpdateInstall(params: Record<string, any> = {}): Promise<any> {
+    return this.request('POST', '/api/v1/system/update/install', params, 'body');
+  }
+
+  /** 导入离线更新包（update/inbox/<目录>/） */
+  async systemUpdateOffline(params: Record<string, any> = {}): Promise<any> {
+    return this.request('POST', '/api/v1/system/update/offline', params, 'body');
+  }
+
+  /** 重启内核使更新生效 */
+  async systemUpdateRestart(params: Record<string, any> = {}): Promise<any> {
+    return this.request('POST', '/api/v1/system/update/restart', params, 'body');
+  }
+
+  /** 回滚到上一版本（允许降级） */
+  async systemUpdateRollback(params: Record<string, any> = {}): Promise<any> {
+    return this.request('POST', '/api/v1/system/update/rollback', params, 'body');
+  }
+
+  /** 更新任务进度 */
+  async systemUpdateStatus(params: Record<string, any> = {}): Promise<any> {
+    return this.request('GET', '/api/v1/system/update/status', params, 'query');
   }
 
   /** 取消任务（pending 立即停；running 由 handler 的检查点退出） */

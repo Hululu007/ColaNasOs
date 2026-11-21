@@ -1443,9 +1443,45 @@ class ColanasClient:
         """上传 HTTPS 证书与私钥（PEM；重启后启用）"""
         return self._request("POST", "/api/v1/system/tls", params, "body")
 
+    def system_update_cache_clear(self, **params):
+        """清理更新下载缓存"""
+        return self._request("POST", "/api/v1/system/update/cache/clear", params, "body")
+
+    def system_update_cancel(self, **params):
+        """取消更新（保留已下载片段，可续传）"""
+        return self._request("POST", "/api/v1/system/update/cancel", params, "body")
+
     def system_update_check(self, **params):
-        """检查本地版本目录（当前版本 / 最新版本）"""
+        """检查更新（服务端增量 / 客户端整包；默认 6 小时缓存）"""
         return self._request("GET", "/api/v1/system/update/check", params, "query")
+
+    def system_update_config(self, **params):
+        """更新设置 / 离线包目录 / 缓存占用"""
+        return self._request("GET", "/api/v1/system/update/config", params, "query")
+
+    def system_update_config_save(self, **params):
+        """保存更新设置"""
+        return self._request("PUT", "/api/v1/system/update/config", params, "body")
+
+    def system_update_install(self, **params):
+        """开始更新服务端（增量优先，失败回退全量）"""
+        return self._request("POST", "/api/v1/system/update/install", params, "body")
+
+    def system_update_offline(self, **params):
+        """导入离线更新包（update/inbox/<目录>/）"""
+        return self._request("POST", "/api/v1/system/update/offline", params, "body")
+
+    def system_update_restart(self, **params):
+        """重启内核使更新生效"""
+        return self._request("POST", "/api/v1/system/update/restart", params, "body")
+
+    def system_update_rollback(self, **params):
+        """回滚到上一版本（允许降级）"""
+        return self._request("POST", "/api/v1/system/update/rollback", params, "body")
+
+    def system_update_status(self, **params):
+        """更新任务进度"""
+        return self._request("GET", "/api/v1/system/update/status", params, "query")
 
     def tasks_cancel(self, **params):
         """取消任务（pending 立即停；running 由 handler 的检查点退出）"""

@@ -9582,42 +9582,6 @@ class SystemDbCompactResponse {
       };
 }
 
-class SystemUpdateCheckResponse {
-  final String? currentId;
-  final int? currentVersion;
-  final String? latestId;
-  final int? latestVersion;
-  final bool hasUpdate;
-  final int versions;
-
-  const SystemUpdateCheckResponse({
-    required this.currentId,
-    required this.currentVersion,
-    required this.latestId,
-    required this.latestVersion,
-    required this.hasUpdate,
-    required this.versions,
-  });
-
-  factory SystemUpdateCheckResponse.fromJson(Map<String, dynamic> json) => SystemUpdateCheckResponse(
-        currentId: json['currentId'] as String?,
-        currentVersion: json['currentVersion'] as int?,
-        latestId: json['latestId'] as String?,
-        latestVersion: json['latestVersion'] as int?,
-        hasUpdate: json['hasUpdate'] as bool,
-        versions: json['versions'] as int,
-      );
-
-  Map<String, dynamic> toJson() => <String, dynamic>{
-        'currentId': currentId,
-        'currentVersion': currentVersion,
-        'latestId': latestId,
-        'latestVersion': latestVersion,
-        'hasUpdate': hasUpdate,
-        'versions': versions,
-      };
-}
-
 class SystemTlsInfoResponse {
   final bool hasCert;
   final String subject;
@@ -9715,6 +9679,330 @@ class SystemLogsResponse {
         'limit': limit,
         'offset': offset,
         'hasMore': hasMore,
+      };
+}
+
+class SystemUpdateErrorResponse {
+  final String error;
+  final String? message;
+  final String? code;
+  final String? traceId;
+
+  const SystemUpdateErrorResponse({
+    required this.error,
+    this.message,
+    this.code,
+    this.traceId,
+  });
+
+  factory SystemUpdateErrorResponse.fromJson(Map<String, dynamic> json) => SystemUpdateErrorResponse(
+        error: json['error'] as String,
+        message: json['message'] == null ? null : json['message'] as String,
+        code: json['code'] == null ? null : json['code'] as String,
+        traceId: json['traceId'] == null ? null : json['traceId'] as String,
+      );
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+        'error': error,
+        if (message != null) 'message': message!,
+        if (code != null) 'code': code!,
+        if (traceId != null) 'traceId': traceId!,
+      };
+}
+
+class SystemUpdateCheckResponse {
+  final String? currentId;
+  final int? currentVersion;
+  final String? latestId;
+  final int? latestVersion;
+  final bool hasUpdate;
+  final int versions;
+  final String currentSemver;
+  final String latestSemver;
+  final String releasedAt;
+  final Map<String, dynamic> notes;
+  final String mode;
+  final int deltaBytes;
+  final bool needsReshell;
+  final bool managed;
+  final String minShell;
+  final bool cached;
+  final int checkedAt;
+  final String error;
+  final Map<String, dynamic>? client;
+
+  const SystemUpdateCheckResponse({
+    required this.currentId,
+    required this.currentVersion,
+    required this.latestId,
+    required this.latestVersion,
+    required this.hasUpdate,
+    required this.versions,
+    required this.currentSemver,
+    required this.latestSemver,
+    required this.releasedAt,
+    required this.notes,
+    required this.mode,
+    required this.deltaBytes,
+    required this.needsReshell,
+    required this.managed,
+    required this.minShell,
+    required this.cached,
+    required this.checkedAt,
+    required this.error,
+    this.client,
+  });
+
+  factory SystemUpdateCheckResponse.fromJson(Map<String, dynamic> json) => SystemUpdateCheckResponse(
+        currentId: json['currentId'] as String?,
+        currentVersion: json['currentVersion'] as int?,
+        latestId: json['latestId'] as String?,
+        latestVersion: json['latestVersion'] as int?,
+        hasUpdate: json['hasUpdate'] as bool,
+        versions: json['versions'] as int,
+        currentSemver: json['currentSemver'] as String,
+        latestSemver: json['latestSemver'] as String,
+        releasedAt: json['releasedAt'] as String,
+        notes: json['notes'] as Map<String, dynamic>,
+        mode: json['mode'] as String,
+        deltaBytes: json['deltaBytes'] as int,
+        needsReshell: json['needsReshell'] as bool,
+        managed: json['managed'] as bool,
+        minShell: json['minShell'] as String,
+        cached: json['cached'] as bool,
+        checkedAt: json['checkedAt'] as int,
+        error: json['error'] as String,
+        client: json['client'] == null ? null : json['client'] as Map<String, dynamic>,
+      );
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+        'currentId': currentId,
+        'currentVersion': currentVersion,
+        'latestId': latestId,
+        'latestVersion': latestVersion,
+        'hasUpdate': hasUpdate,
+        'versions': versions,
+        'currentSemver': currentSemver,
+        'latestSemver': latestSemver,
+        'releasedAt': releasedAt,
+        'notes': notes,
+        'mode': mode,
+        'deltaBytes': deltaBytes,
+        'needsReshell': needsReshell,
+        'managed': managed,
+        'minShell': minShell,
+        'cached': cached,
+        'checkedAt': checkedAt,
+        'error': error,
+        if (client != null) 'client': client!,
+      };
+}
+
+class SystemUpdateJob {
+  final String phase;
+  final int percent;
+  final int loaded;
+  final int total;
+  final int speed;
+  final String asset;
+  final String source;
+  final String message;
+  final String error;
+  final String hint;
+  final int startedAt;
+  final int updatedAt;
+  final String targetId;
+  final String mode;
+
+  const SystemUpdateJob({
+    required this.phase,
+    required this.percent,
+    required this.loaded,
+    required this.total,
+    required this.speed,
+    required this.asset,
+    required this.source,
+    required this.message,
+    required this.error,
+    required this.hint,
+    required this.startedAt,
+    required this.updatedAt,
+    required this.targetId,
+    required this.mode,
+  });
+
+  factory SystemUpdateJob.fromJson(Map<String, dynamic> json) => SystemUpdateJob(
+        phase: json['phase'] as String,
+        percent: json['percent'] as int,
+        loaded: json['loaded'] as int,
+        total: json['total'] as int,
+        speed: json['speed'] as int,
+        asset: json['asset'] as String,
+        source: json['source'] as String,
+        message: json['message'] as String,
+        error: json['error'] as String,
+        hint: json['hint'] as String,
+        startedAt: json['startedAt'] as int,
+        updatedAt: json['updatedAt'] as int,
+        targetId: json['targetId'] as String,
+        mode: json['mode'] as String,
+      );
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+        'phase': phase,
+        'percent': percent,
+        'loaded': loaded,
+        'total': total,
+        'speed': speed,
+        'asset': asset,
+        'source': source,
+        'message': message,
+        'error': error,
+        'hint': hint,
+        'startedAt': startedAt,
+        'updatedAt': updatedAt,
+        'targetId': targetId,
+        'mode': mode,
+      };
+}
+
+class SystemUpdateJobResponse {
+  final SystemUpdateJob job;
+
+  const SystemUpdateJobResponse({
+    required this.job,
+  });
+
+  factory SystemUpdateJobResponse.fromJson(Map<String, dynamic> json) => SystemUpdateJobResponse(
+        job: SystemUpdateJob.fromJson(json['job'] as Map<String, dynamic>),
+      );
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+        'job': job.toJson(),
+      };
+}
+
+class SystemUpdateOkResponse {
+  final bool ok;
+  final SystemUpdateJob? job;
+  final String? id;
+
+  const SystemUpdateOkResponse({
+    required this.ok,
+    this.job,
+    this.id,
+  });
+
+  factory SystemUpdateOkResponse.fromJson(Map<String, dynamic> json) => SystemUpdateOkResponse(
+        ok: json['ok'] as bool,
+        job: json['job'] == null ? null : SystemUpdateJob.fromJson(json['job'] as Map<String, dynamic>),
+        id: json['id'] == null ? null : json['id'] as String,
+      );
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+        'ok': ok,
+        if (job != null) 'job': job!.toJson(),
+        if (id != null) 'id': id!,
+      };
+}
+
+class SystemUpdateConfigResponse {
+  final List<String> manifestUrls;
+  final String channel;
+  final bool autoCheck;
+  final String versionDir;
+  final String inboxDir;
+  final List<Map<String, dynamic>> offline;
+  final int cacheBytes;
+  final int cacheFiles;
+
+  const SystemUpdateConfigResponse({
+    required this.manifestUrls,
+    required this.channel,
+    required this.autoCheck,
+    required this.versionDir,
+    required this.inboxDir,
+    required this.offline,
+    required this.cacheBytes,
+    required this.cacheFiles,
+  });
+
+  factory SystemUpdateConfigResponse.fromJson(Map<String, dynamic> json) => SystemUpdateConfigResponse(
+        manifestUrls: (json['manifestUrls'] as List<dynamic>).cast<String>(),
+        channel: json['channel'] as String,
+        autoCheck: json['autoCheck'] as bool,
+        versionDir: json['versionDir'] as String,
+        inboxDir: json['inboxDir'] as String,
+        offline: (json['offline'] as List<dynamic>).cast<Map<String, dynamic>>(),
+        cacheBytes: json['cacheBytes'] as int,
+        cacheFiles: json['cacheFiles'] as int,
+      );
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+        'manifestUrls': manifestUrls,
+        'channel': channel,
+        'autoCheck': autoCheck,
+        'versionDir': versionDir,
+        'inboxDir': inboxDir,
+        'offline': offline,
+        'cacheBytes': cacheBytes,
+        'cacheFiles': cacheFiles,
+      };
+}
+
+class SystemUpdateConfigBody {
+  final List<String>? manifestUrls;
+  final String? channel;
+  final bool? autoCheck;
+
+  const SystemUpdateConfigBody({
+    this.manifestUrls,
+    this.channel,
+    this.autoCheck,
+  });
+
+  factory SystemUpdateConfigBody.fromJson(Map<String, dynamic> json) => SystemUpdateConfigBody(
+        manifestUrls: json['manifestUrls'] == null ? null : (json['manifestUrls'] as List<dynamic>).cast<String>(),
+        channel: json['channel'] == null ? null : json['channel'] as String,
+        autoCheck: json['autoCheck'] == null ? null : json['autoCheck'] as bool,
+      );
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+        if (manifestUrls != null) 'manifestUrls': manifestUrls!,
+        if (channel != null) 'channel': channel!,
+        if (autoCheck != null) 'autoCheck': autoCheck!,
+      };
+}
+
+class SystemUpdateInstallBody {
+  final bool? force;
+
+  const SystemUpdateInstallBody({
+    this.force,
+  });
+
+  factory SystemUpdateInstallBody.fromJson(Map<String, dynamic> json) => SystemUpdateInstallBody(
+        force: json['force'] == null ? null : json['force'] as bool,
+      );
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+        if (force != null) 'force': force!,
+      };
+}
+
+class SystemUpdateOfflineBody {
+  final String name;
+
+  const SystemUpdateOfflineBody({
+    required this.name,
+  });
+
+  factory SystemUpdateOfflineBody.fromJson(Map<String, dynamic> json) => SystemUpdateOfflineBody(
+        name: json['name'] as String,
+      );
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+        'name': name,
       };
 }
 

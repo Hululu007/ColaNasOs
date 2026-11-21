@@ -10508,41 +10508,6 @@
           }
         }
       },
-      "SystemUpdateCheckResponse": {
-        "type": "object",
-        "required": [
-          "currentId",
-          "currentVersion",
-          "latestId",
-          "latestVersion",
-          "hasUpdate",
-          "versions"
-        ],
-        "properties": {
-          "currentId": {
-            "type": "string",
-            "nullable": true
-          },
-          "currentVersion": {
-            "type": "integer",
-            "nullable": true
-          },
-          "latestId": {
-            "type": "string",
-            "nullable": true
-          },
-          "latestVersion": {
-            "type": "integer",
-            "nullable": true
-          },
-          "hasUpdate": {
-            "type": "boolean"
-          },
-          "versions": {
-            "type": "integer"
-          }
-        }
-      },
       "SystemTlsInfoResponse": {
         "type": "object",
         "required": [
@@ -10648,6 +10613,357 @@
           },
           "hasMore": {
             "type": "boolean"
+          }
+        }
+      },
+      "SystemUpdateErrorResponse": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          },
+          "traceId": {
+            "type": "string"
+          }
+        }
+      },
+      "SystemUpdateCheckResponse": {
+        "type": "object",
+        "required": [
+          "currentId",
+          "currentVersion",
+          "latestId",
+          "latestVersion",
+          "hasUpdate",
+          "versions",
+          "currentSemver",
+          "latestSemver",
+          "releasedAt",
+          "notes",
+          "mode",
+          "deltaBytes",
+          "needsReshell",
+          "managed",
+          "minShell",
+          "cached",
+          "checkedAt",
+          "error"
+        ],
+        "properties": {
+          "currentId": {
+            "type": "string",
+            "nullable": true
+          },
+          "currentVersion": {
+            "type": "integer",
+            "nullable": true
+          },
+          "latestId": {
+            "type": "string",
+            "nullable": true
+          },
+          "latestVersion": {
+            "type": "integer",
+            "nullable": true
+          },
+          "hasUpdate": {
+            "type": "boolean"
+          },
+          "versions": {
+            "type": "integer"
+          },
+          "currentSemver": {
+            "type": "string"
+          },
+          "latestSemver": {
+            "type": "string"
+          },
+          "releasedAt": {
+            "type": "string"
+          },
+          "notes": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "mode": {
+            "type": "string"
+          },
+          "deltaBytes": {
+            "type": "integer"
+          },
+          "needsReshell": {
+            "type": "boolean"
+          },
+          "managed": {
+            "type": "boolean"
+          },
+          "minShell": {
+            "type": "string"
+          },
+          "cached": {
+            "type": "boolean"
+          },
+          "checkedAt": {
+            "type": "integer"
+          },
+          "error": {
+            "type": "string"
+          },
+          "client": {
+            "type": "object",
+            "required": [
+              "component",
+              "hasUpdate",
+              "latestSemver",
+              "latestVersionCode",
+              "assets"
+            ],
+            "properties": {
+              "component": {
+                "type": "string"
+              },
+              "hasUpdate": {
+                "type": "boolean"
+              },
+              "latestSemver": {
+                "type": "string"
+              },
+              "latestVersionCode": {
+                "type": "integer"
+              },
+              "assets": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "kind",
+                    "size",
+                    "sha256",
+                    "urls"
+                  ],
+                  "properties": {
+                    "kind": {
+                      "type": "string"
+                    },
+                    "size": {
+                      "type": "integer"
+                    },
+                    "sha256": {
+                      "type": "string"
+                    },
+                    "urls": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "SystemUpdateJob": {
+        "type": "object",
+        "required": [
+          "phase",
+          "percent",
+          "loaded",
+          "total",
+          "speed",
+          "asset",
+          "source",
+          "message",
+          "error",
+          "hint",
+          "startedAt",
+          "updatedAt",
+          "targetId",
+          "mode"
+        ],
+        "properties": {
+          "phase": {
+            "type": "string"
+          },
+          "percent": {
+            "type": "integer"
+          },
+          "loaded": {
+            "type": "integer"
+          },
+          "total": {
+            "type": "integer"
+          },
+          "speed": {
+            "type": "integer"
+          },
+          "asset": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          },
+          "hint": {
+            "type": "string"
+          },
+          "startedAt": {
+            "type": "integer"
+          },
+          "updatedAt": {
+            "type": "integer"
+          },
+          "targetId": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string"
+          }
+        }
+      },
+      "SystemUpdateJobResponse": {
+        "type": "object",
+        "required": [
+          "job"
+        ],
+        "properties": {
+          "job": {
+            "$ref": "#/components/schemas/SystemUpdateJob"
+          }
+        }
+      },
+      "SystemUpdateOkResponse": {
+        "type": "object",
+        "required": [
+          "ok"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "job": {
+            "$ref": "#/components/schemas/SystemUpdateJob"
+          },
+          "id": {
+            "type": "string"
+          }
+        }
+      },
+      "SystemUpdateConfigResponse": {
+        "type": "object",
+        "required": [
+          "manifestUrls",
+          "channel",
+          "autoCheck",
+          "versionDir",
+          "inboxDir",
+          "offline",
+          "cacheBytes",
+          "cacheFiles"
+        ],
+        "properties": {
+          "manifestUrls": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "channel": {
+            "type": "string"
+          },
+          "autoCheck": {
+            "type": "boolean"
+          },
+          "versionDir": {
+            "type": "string"
+          },
+          "inboxDir": {
+            "type": "string"
+          },
+          "offline": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "name",
+                "size",
+                "mtime"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "size": {
+                  "type": "integer"
+                },
+                "mtime": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "cacheBytes": {
+            "type": "integer"
+          },
+          "cacheFiles": {
+            "type": "integer"
+          }
+        }
+      },
+      "SystemUpdateConfigBody": {
+        "type": "object",
+        "properties": {
+          "manifestUrls": {
+            "maxItems": 8,
+            "type": "array",
+            "items": {
+              "maxLength": 500,
+              "type": "string"
+            }
+          },
+          "channel": {
+            "maxLength": 20,
+            "type": "string"
+          },
+          "autoCheck": {
+            "type": "boolean"
+          }
+        }
+      },
+      "SystemUpdateInstallBody": {
+        "type": "object",
+        "properties": {
+          "force": {
+            "type": "boolean"
+          }
+        }
+      },
+      "SystemUpdateOfflineBody": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "maxLength": 200,
+            "type": "string"
           }
         }
       },
@@ -38045,32 +38361,6 @@
         }
       }
     },
-    "/api/v1/system/update/check": {
-      "get": {
-        "operationId": "systemUpdateCheck",
-        "summary": "检查本地版本目录（当前版本 / 最新版本）",
-        "tags": [
-          "system"
-        ],
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Default Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SystemUpdateCheckResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/v1/system/logs": {
       "get": {
         "operationId": "systemLogs",
@@ -38252,6 +38542,409 @@
                       "type": "boolean"
                     }
                   }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/system/update/check": {
+      "get": {
+        "operationId": "systemUpdateCheck",
+        "summary": "检查更新（服务端增量 / 客户端整包；默认 6 小时缓存）",
+        "tags": [
+          "system"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "server"
+                  ]
+                },
+                {
+                  "type": "string",
+                  "enum": [
+                    "client_pc"
+                  ]
+                },
+                {
+                  "type": "string",
+                  "enum": [
+                    "client_android"
+                  ]
+                }
+              ]
+            },
+            "in": "query",
+            "name": "component",
+            "required": false
+          },
+          {
+            "schema": {
+              "maxLength": 32,
+              "type": "string"
+            },
+            "in": "query",
+            "name": "current",
+            "required": false,
+            "description": "客户端当前 semver"
+          },
+          {
+            "schema": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "in": "query",
+            "name": "currentCode",
+            "required": false
+          },
+          {
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "1"
+                  ]
+                },
+                {
+                  "type": "string",
+                  "enum": [
+                    "0"
+                  ]
+                }
+              ]
+            },
+            "in": "query",
+            "name": "force",
+            "required": false
+          }
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemUpdateCheckResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/system/update/install": {
+      "post": {
+        "operationId": "systemUpdateInstall",
+        "summary": "开始更新服务端（增量优先，失败回退全量）",
+        "tags": [
+          "system"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SystemUpdateInstallBody"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemUpdateJobResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemUpdateErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/system/update/status": {
+      "get": {
+        "operationId": "systemUpdateStatus",
+        "summary": "更新任务进度",
+        "tags": [
+          "system"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemUpdateJobResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/system/update/cancel": {
+      "post": {
+        "operationId": "systemUpdateCancel",
+        "summary": "取消更新（保留已下载片段，可续传）",
+        "tags": [
+          "system"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemUpdateJobResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/system/update/rollback": {
+      "post": {
+        "operationId": "systemUpdateRollback",
+        "summary": "回滚到上一版本（允许降级）",
+        "tags": [
+          "system"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemUpdateOkResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemUpdateErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/system/update/restart": {
+      "post": {
+        "operationId": "systemUpdateRestart",
+        "summary": "重启内核使更新生效",
+        "tags": [
+          "system"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemUpdateOkResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/system/update/config": {
+      "get": {
+        "operationId": "systemUpdateConfig",
+        "summary": "更新设置 / 离线包目录 / 缓存占用",
+        "tags": [
+          "system"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemUpdateConfigResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "systemUpdateConfigSave",
+        "summary": "保存更新设置",
+        "tags": [
+          "system"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SystemUpdateConfigBody"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemUpdateConfigResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/system/update/cache/clear": {
+      "post": {
+        "operationId": "systemUpdateCacheClear",
+        "summary": "清理更新下载缓存",
+        "tags": [
+          "system"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "freedBytes",
+                    "files"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "freedBytes": {
+                      "type": "integer"
+                    },
+                    "files": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/system/update/offline": {
+      "post": {
+        "operationId": "systemUpdateOffline",
+        "summary": "导入离线更新包（update/inbox/<目录>/）",
+        "tags": [
+          "system"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SystemUpdateOfflineBody"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemUpdateOkResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemUpdateErrorResponse"
                 }
               }
             }

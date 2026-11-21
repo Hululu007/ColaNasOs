@@ -2812,15 +2812,6 @@ export type SystemDbCompactResponse = {
   "freedBytes": number;
 };
 
-export type SystemUpdateCheckResponse = {
-  "currentId": string;
-  "currentVersion": number;
-  "latestId": string;
-  "latestVersion": number;
-  "hasUpdate": boolean;
-  "versions": number;
-};
-
 export type SystemTlsInfoResponse = {
   "hasCert": boolean;
   "subject": string;
@@ -2848,6 +2839,102 @@ export type SystemLogsResponse = {
   "limit": number;
   "offset": number;
   "hasMore": boolean;
+};
+
+export type SystemUpdateErrorResponse = {
+  "error": string;
+  "message"?: string;
+  "code"?: string;
+  "traceId"?: string;
+};
+
+export type SystemUpdateCheckResponse = {
+  "currentId": string;
+  "currentVersion": number;
+  "latestId": string;
+  "latestVersion": number;
+  "hasUpdate": boolean;
+  "versions": number;
+  "currentSemver": string;
+  "latestSemver": string;
+  "releasedAt": string;
+  "notes": Record<string, unknown>;
+  "mode": string;
+  "deltaBytes": number;
+  "needsReshell": boolean;
+  "managed": boolean;
+  "minShell": string;
+  "cached": boolean;
+  "checkedAt": number;
+  "error": string;
+  "client"?: {
+    "component": string;
+    "hasUpdate": boolean;
+    "latestSemver": string;
+    "latestVersionCode": number;
+    "assets": {
+      "kind": string;
+      "size": number;
+      "sha256": string;
+      "urls": string[];
+    }[];
+  };
+};
+
+export type SystemUpdateJob = {
+  "phase": string;
+  "percent": number;
+  "loaded": number;
+  "total": number;
+  "speed": number;
+  "asset": string;
+  "source": string;
+  "message": string;
+  "error": string;
+  "hint": string;
+  "startedAt": number;
+  "updatedAt": number;
+  "targetId": string;
+  "mode": string;
+};
+
+export type SystemUpdateJobResponse = {
+  "job": SystemUpdateJob;
+};
+
+export type SystemUpdateOkResponse = {
+  "ok": boolean;
+  "job"?: SystemUpdateJob;
+  "id"?: string;
+};
+
+export type SystemUpdateConfigResponse = {
+  "manifestUrls": string[];
+  "channel": string;
+  "autoCheck": boolean;
+  "versionDir": string;
+  "inboxDir": string;
+  "offline": {
+    "name": string;
+    "size": number;
+    "mtime": number;
+  }[];
+  "cacheBytes": number;
+  "cacheFiles": number;
+};
+
+export type SystemUpdateConfigBody = {
+  "manifestUrls"?: string[];
+  "channel"?: string;
+  "autoCheck"?: boolean;
+};
+
+export type SystemUpdateInstallBody = {
+  "force"?: boolean;
+};
+
+export type SystemUpdateOfflineBody = {
+  "name": string;
 };
 
 export type TransferSession = {

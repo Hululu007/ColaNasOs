@@ -55,6 +55,17 @@ export function activeProxyInfo(): {
   return { proxy: '', source: 'direct' };
 }
 
+/**
+ * 当前应当使用的 dispatcher（设置页代理 → 环境变量 → null 直连）。
+ *
+ * 下载器走 `undici.request` 而不是 `fetch`：需要「按块超时」这种 fetch 拿不到的能力，
+ * 而且 fetch 的 body 是 Web Stream，中途取消会踩 undici 的 parser 断言（实测能把
+ * 整个内核进程打断）。`request` 给的是 Node Readable，配 `bodyTimeout` 即可。
+ */
+export function proxyDispatcher(): import('undici').Dispatcher | null {
+  return agent ?? envProxyAgent();
+}
+
 /** 与全局 `fetch` 同签名，带代理时自动走 dispatcher */
 export async function proxyFetch(
   url: string,

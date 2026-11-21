@@ -4,6 +4,13 @@ import fs from 'node:fs';
 import { WatchdogSupervisor } from '../kernel/watchdog-supervisor';
 import type { WatchdogMetrics } from '../kernel/watchdog';
 import { isAutostartEnabled, setAutostart, syncAutostart } from './autostart';
+import {
+  dataDirOf,
+  nativeModulePaths,
+  prepareBoot,
+  resolveKernelEntry,
+  seedIfNeeded,
+} from './versioned';
 
 /**
  * 「服务端」外壳：**纯托盘 + 内核守护**，不创建任何窗口。
@@ -21,6 +28,8 @@ import { isAutostartEnabled, setAutostart, syncAutostart } from './autostart';
  */
 
 const PORT = Number(process.env.PORT || 7788);
+/** 数据目录：与内核同一口径（`COLORNAS_DATA_DIR` 优先，否则 %APPDATA%\colanas_os_server） */
+const dataDir = dataDirOf();
 /** 实际监听端口：内核按 config 的 httpPort 监听后通过 `listening` 消息回传 */
 let kernelPort = PORT;
 const kernelUrl = (): string => `http://127.0.0.1:${kernelPort}`;
@@ -123,6 +132,24 @@ function resourcesDir(): string {
   return app.isPackaged ? process.resourcesPath : path.join(__dirname, '..', '..', 'resources');
 }
 
+/** 播种来源：安装目录里的内核 / Web / 契约 / sidecar */
+function seedSources(): Parameters<typeof seedIfNeeded>[1] {
+  const root = path.join(__dirname, '..', '..');
+  return {
+    kernelDir: path.join(__dirname, '..', 'kernel'),
+    electronHost: path.join(__dirname, 'kernel-host.js'),
+    webDir: app.isPackaged
+      ? path.join(process.resourcesPath, 'web')
+      : path.join(root, 'apps', 'colanas_os', 'build', 'web'),
+    contractsDir: app.isPackaged
+      ? path.join(process.resourcesPath, 'contracts')
+      : path.join(root, 'contracts'),
+    sidecarsDir: app.isPackaged
+      ? path.join(process.resourcesPath, 'sidecars')
+      : path.join(root, 'sidecars'),
+  };
+}
+
 function startKernel(): void {
   if (quitting) return;
   trace('startKernel');
@@ -133,37 +160,71 @@ function startKernel(): void {
   // 未显式指定 PORT（运维 / 冒烟）时让内核读取 config 的 httpPort；
   // 显式 PORT 仍然优先，避免破坏测试对固定端口的依赖。
   if (!process.env.PORT) delete env.PORT;
+
+  /**
+   * 内核从哪跑：
+   *   - 有 `versions/current` → 从版本目录跑（增量更新的前提，见 ADR-0006）；
+   *   - 否则退回安装目录里的内核（老安装 / 开发态）。
+   * 版本目录里的 web / contracts / sidecars 也一并指过去：一次更新只换版本目录，
+   * 安装目录里只剩壳、模型、ffmpeg 这些「不该被更新流程碰」的资产。
+   */
+  const entry = resolveKernelEntry(dataDir, path.join(__dirname, 'kernel-host.js'));
+
   if (app.isPackaged) {
-    env.COLANAS_WEB_DIR = path.join(process.resourcesPath, 'web');
-    env.COLANAS_CONTRACTS_DIR = path.join(process.resourcesPath, 'contracts');
-    // 地名与行政区划随包分发：安装版的记忆页 / 地图才能显示省市区。
+    // 安装包形态：模型 / ffmpeg / 地名库等不参与版本，永远从 resources 取
     const geoDir = path.join(process.resourcesPath, 'geo');
     env.COLANAS_GEONAMES = path.join(geoDir, 'geonames.sqlite');
     env.COLANAS_CHINA_DIVISIONS = path.join(geoDir, 'china-divisions.json');
-    // 内置 transmission-daemon：内核在没配置外部下载器时直接拉起它
     env.COLANAS_TRANSMISSION_BIN_DIR = path.join(process.resourcesPath, 'transmission-daemon');
-    // 内置 transmission Web UI（静态）：内核 /transmission/web/* 从这里读
     env.COLANAS_TRANSMISSION_WEB_DIR = path.join(process.resourcesPath, 'transmission-web');
-    // 缩略图 / 转码依赖：装机版把 ffmpeg 与 sidecar 放在 resources 下（asar 外），
-    // 内核按 cwd 相对路径找不到它们 —— 结果所有 `?size=` 缩略图 503、界面整片没封面。
-    const mediaSidecar = path.join(process.resourcesPath, 'sidecars', 'media', 'main.js');
-    if (fs.existsSync(mediaSidecar)) env.COLANAS_MEDIA_SIDECAR = mediaSidecar;
+    const modelsDir = path.join(process.resourcesPath, 'models');
+    if (fs.existsSync(modelsDir)) env.COLANAS_MODEL_DIR = modelsDir;
     const ffmpegExe = path.join(
       process.resourcesPath,
       'ffmpeg',
       process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg',
     );
     if (fs.existsSync(ffmpegExe)) env.COLANAS_FFMPEG = ffmpegExe;
-    const modelsDir = path.join(process.resourcesPath, 'models');
-    if (fs.existsSync(modelsDir)) env.COLANAS_MODEL_DIR = modelsDir;
+    if (!entry.versioned) {
+      env.COLANAS_WEB_DIR = path.join(process.resourcesPath, 'web');
+      env.COLANAS_CONTRACTS_DIR = path.join(process.resourcesPath, 'contracts');
+      const mediaSidecar = path.join(process.resourcesPath, 'sidecars', 'media', 'main.js');
+      if (fs.existsSync(mediaSidecar)) env.COLANAS_MEDIA_SIDECAR = mediaSidecar;
+    }
   }
 
-  kernel = utilityProcess.fork(path.join(__dirname, 'kernel-host.js'), [], {
+  if (entry.versioned && entry.dir) {
+    const web = path.join(entry.dir, 'web');
+    if (fs.existsSync(path.join(web, 'index.html'))) env.COLANAS_WEB_DIR = web;
+    const contracts = path.join(entry.dir, 'contracts');
+    if (fs.existsSync(contracts)) env.COLANAS_CONTRACTS_DIR = contracts;
+    // 缩略图 / 转码 sidecar 也在版本目录里：它随内核一起更新
+    const mediaSidecar = path.join(entry.dir, 'sidecars', 'media', 'main.js');
+    if (fs.existsSync(mediaSidecar)) env.COLANAS_MEDIA_SIDECAR = mediaSidecar;
+    else if (app.isPackaged) {
+      const packagedSidecar = path.join(process.resourcesPath, 'sidecars', 'media', 'main.js');
+      if (fs.existsSync(packagedSidecar)) env.COLANAS_MEDIA_SIDECAR = packagedSidecar;
+    }
+  }
+
+  // 版本目录里没有 node_modules：原生模块（better-sqlite3 / node-pty …）
+  // 按 Electron ABI 编译，住在安装目录里，靠 NODE_PATH 指回去。
+  const nodePaths = nativeModulePaths(app.isPackaged, path.join(__dirname, '..', '..'));
+  if (nodePaths.length > 0) {
+    env.NODE_PATH = [env.NODE_PATH, ...nodePaths].filter(Boolean).join(path.delimiter);
+  }
+  // 版本号与版本目录 id：内核用它判断「当前是哪一版」，也写进 boot.json
+  env.COLANAS_APP_VERSION = app.getVersion();
+  env.COLANAS_SHELL_VERSION = process.versions.electron;
+  if (entry.id) env.COLANAS_VERSION_ID = entry.id;
+  env.COLANAS_DATA_DIR = dataDir;
+
+  kernel = utilityProcess.fork(entry.host, [], {
     stdio: 'inherit',
     serviceName: 'colanas-kernel',
     env,
   });
-  trace(`kernel forked pid=${kernel.pid}`);
+  trace(`kernel forked pid=${kernel.pid} host=${entry.host} versioned=${entry.versioned}`);
 
   kernel.on('message', (msg: unknown) => {
     const payload = msg as { type?: string; metrics?: WatchdogMetrics; port?: number } | null;
@@ -196,6 +257,17 @@ function startKernel(): void {
     kernelReady = false;
     tray?.setToolTip(trayTip('内核重启中'));
     if (quitting) return;
+
+    /**
+     * 退出码 0 = 内核自己要求重启（重启按钮 / 切完版本生效）。
+     * 这类重启不该计入「崩溃次数」，否则连续点两次重启就把 5 次额度耗光。
+     * 自愈计数在 boot.json 里由壳和内核一起维护，与这个计数器互不干扰。
+     */
+    if (code === 0) {
+      crashes = 0;
+      setTimeout(startKernel, 300);
+      return;
+    }
 
     crashes += 1;
     if (crashes > MAX_RESTARTS) {
@@ -357,6 +429,25 @@ app.whenReady().then(() => {
   // 托盘勾选状态来源是数据目录里的设置；顺带按当前 exe 路径对账系统启动项
   const autostart = syncAutostart();
   console.log(`[shell] ColaNasOs 服务端 ${app.getVersion()} 启动（开机自启=${autostart ? '开' : '关'}）`);
+
+  /**
+   * 拆壳播种 + 自愈判定（只在打包态，或显式 `COLONAS_VERSIONED_KERNEL=1` 时启用）。
+   *
+   * 开发态不启用：`dist/` 每次 tsc 都会变，从版本目录跑会让开发循环失效。
+   */
+  const versionedKernel = app.isPackaged || process.env.COLANAS_VERSIONED_KERNEL === '1';
+  if (versionedKernel) {
+    try {
+      seedIfNeeded(dataDir, seedSources());
+    } catch (err) {
+      trace(`seed failed: ${String(err)}`);
+      console.error('[shell] 版本目录播种失败，本次仍从安装目录启动', err);
+    }
+    const decision = prepareBoot(dataDir);
+    if (decision.message) console.log(`[shell] 启动判定：${decision.message}`);
+    trace(`boot=${decision.action} id=${decision.id ?? '-'}`);
+  }
+
   startKernel();
   createTray();
 

@@ -205,6 +205,14 @@ Section "\${APP_NAME}" SecMain
   WriteRegStr HKCU "\${UNINST_KEY}" "InstallLocation" "$INSTDIR"
   WriteRegDWORD HKCU "\${UNINST_KEY}" "NoModify" 1
   WriteRegDWORD HKCU "\${UNINST_KEY}" "NoRepair" 1
+
+  ; 静默安装（/S）不会走完成页，MUI_FINISHPAGE_RUN 也就不会触发 ——
+  ; 应用内自动更新走的就是静默安装，装完必须自己把客户端拉回来，
+  ; 否则用户看到的是「应用被卸载了」。COLANAS_RELAUNCH 由客户端拉起安装器时设置。
+  ReadEnvStr $0 "COLANAS_RELAUNCH"
+  \${If} $0 == "1"
+    Exec '"$INSTDIR\\\${APP_EXE}"'
+  \${EndIf}
 SectionEnd
 
 Section "Uninstall"

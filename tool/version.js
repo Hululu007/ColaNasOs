@@ -83,7 +83,8 @@ function readDartVersion() {
   if (!fs.existsSync(dartVersionPath)) return null;
   const text = fs.readFileSync(dartVersionPath, 'utf-8');
   const m = /kAppVersion\s*=\s*'([^']+)'/.exec(text);
-  return { text, name: m && m[1] };
+  const c = /kAppVersionCode\s*=\s*(\d+)/.exec(text);
+  return { text, name: m && m[1], code: c ? Number(c[1]) : null };
 }
 
 const product = parseProduct();
@@ -102,6 +103,11 @@ if (ohos.code !== wantOhosCode) mismatches.push(`ohos.versionCode=${ohos.code}`)
 if (ohosPkg && ohosPkg.name !== product.raw) mismatches.push(`ohos.entry=${ohosPkg.name}`);
 if (dartVersion && dartVersion.name !== product.raw) {
   mismatches.push(`app_version.dart=${dartVersion.name}`);
+}
+// 构建号：安卓自动更新按它比大小，必须与 pubspec 的 `+B` 一致
+const clientPubspec = pubspecs.find((a) => a.id === 'colanas_os');
+if (dartVersion && clientPubspec && dartVersion.code !== clientPubspec.pub.build) {
+  mismatches.push(`app_version.code=${dartVersion.code}≠${clientPubspec.pub.build}`);
 }
 
 if (checkOnly) {
@@ -157,10 +163,18 @@ if (ohosPkg) {
 
 /** 5. 关于页展示常量 */
 if (dartVersion) {
-  const nextDart = dartVersion.text.replace(
+  let nextDart = dartVersion.text.replace(
     /kAppVersion\s*=\s*'[^']+'/,
     `kAppVersion = '${target.raw}'`,
   );
+  // 构建号取客户端 pubspec 的 `+B`：安卓比较版本靠它
+  const clientPub = pubspecs.find((a) => a.id === 'colanas_os');
+  if (clientPub && /kAppVersionCode\s*=\s*\d+/.test(nextDart)) {
+    nextDart = nextDart.replace(
+      /kAppVersionCode\s*=\s*\d+/,
+      `kAppVersionCode = ${clientPub.pub.build}`,
+    );
+  }
   fs.writeFileSync(dartVersionPath, nextDart, 'utf-8');
 }
 

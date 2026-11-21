@@ -49,8 +49,39 @@ export function parseVersionId(id: string): number | null {
   return m ? Number(m[1]) : null;
 }
 
-/** 稳定序列化：键排序 + 固定字段，签名与校验必须用同一份字节 */
-export function canonicalPayload(version: number, files: Record<string, string>): Buffer {
+export interface ProductVersion {
+  semver: string;
+  /** major*10000 + minor*100 + patch（1.3.13 → 10313） */
+  version: number;
+}
+
+/**
+ * 产品版本号来源（按可信度排序）：
+ *   1. `COLANAS_APP_VERSION`：外壳启动内核时由 `app.getVersion()` 注入，最准；
+ *   2. 仓库 `package.json`：开发态 / 版本目录里的代码跑在同级目录树时可直接读；
+ *   3. 都没有 → 0.0.0（只影响「有没有新版本」的判断，不会误升级）。
+ */
+export function resolvePackageVersion(): ProductVersion {
+  const fromEnv = String(process.env.COLANAS_APP_VERSION || '').trim();
+  if (/^\d+\.\d+\.\d+$/.test(fromEnv)) return { semver: fromEnv, version: semverCode(fromEnv) };
+  for (const rel of ['../package.json', '../../package.json', '../../../package.json']) {
+    try {
+      const raw = JSON.parse(fs.readFileSync(path.resolve(__dirname, rel), 'utf8')) as { version?: string };
+      const ver = String(raw.version || '');
+      if (/^\d+\.\d+\.\d+$/.test(ver)) return { semver: ver, version: semverCode(ver) };
+    } catch {
+      /* 下一层 */
+    }
+  }
+  return { semver: '0.0.0', version: 0 };
+}
+
+function semverCode(semver: string): number {
+  const [a, b, c] = semver.split('.').map((n) => Number(n) || 0);
+  return a * 10_000 + b * 100 + c;
+}
+
+/** 稳定序列化：键排序 + 固定字段，签名与校验必须用同一份字节 */export function canonicalPayload(version: number, files: Record<string, string>): Buffer {
   const sorted: Record<string, string> = {};
   for (const k of Object.keys(files).sort()) sorted[k] = files[k];
   return Buffer.from(JSON.stringify({ version, files: sorted }), 'utf8');

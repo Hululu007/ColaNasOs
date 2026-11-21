@@ -3116,7 +3116,39 @@ class I18nKeys {
   static const settingsStartInTrayUnsupported = 'settings.startInTrayUnsupported';
   // ---- tray ----
   static const trayStartInTray = 'tray.startInTray';
+  // ---- update ----
+  static const updateTitle = 'update.title';
+  static const updateNow = 'update.now';
+  static const updateLater = 'update.later';
+  static const updateRetry = 'update.retry';
+  static const updateCancel = 'update.cancel';
+  static const updateCheck = 'update.check';
+  static const updateChecking = 'update.checking';
+  static const updateNone = 'update.none';
+  static const updateNoneWithVersion = 'update.noneWithVersion';
+  static const updateSize = 'update.size';
+  static const updateVerifying = 'update.verifying';
+  static const updateInstalling = 'update.installing';
+  static const updateFailed = 'update.failed';
+  static const updateRestartHint = 'update.restartHint';
+  static const updateSectionTitle = 'update.sectionTitle';
+  static const updateClientTitle = 'update.clientTitle';
+  static const updateClientAvailable = 'update.clientAvailable';
+  static const updateServerTitle = 'update.serverTitle';
+  static const updateServerAvailable = 'update.serverAvailable';
+  static const updateServerInstall = 'update.serverInstall';
+  static const updateServerRestart = 'update.serverRestart';
+  static const updateRestartNow = 'update.restartNow';
+  static const updateServerReady = 'update.serverReady';
+  static const updateRestartingServer = 'update.restartingServer';
+  static const updateModeDelta = 'update.modeDelta';
+  static const updateModeFull = 'update.modeFull';
+  static const updateNeedsReshell = 'update.needsReshell';
+  static const updateRollback = 'update.rollback';
+  static const updateAutoCheck = 'update.autoCheck';
+  static const updateAutoCheckHint = 'update.autoCheckHint';
+  static const updateVersionDir = 'update.versionDir';
 }
 
 /// 契约键总数（生成时确定），供完整性自检使用。
-const int i18nKeyCount = 3068;
+const int i18nKeyCount = 3099;

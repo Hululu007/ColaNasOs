@@ -19,6 +19,7 @@ import '../../core/i18n_setup.dart';
 import '../../core/perf_diagnostics.dart';
 import '../../core/session.dart';
 import '../../core/settings_store.dart';
+import '../update/update_section.dart';
 import 'help_page.dart';
 import 'style_preview_page.dart';
 import '../../shell/mobile_frame.dart';
@@ -71,8 +72,6 @@ class _SettingsPageState extends State<SettingsPage> {
   bool _clearingCache = false;
   bool _compactingDb = false;
 
-  String? _updateText;
-  bool _checkingUpdate = false;
   bool _restarting = false;
 
   /// 二级导航当前分组：server / appearance / logs / other / about
@@ -475,28 +474,6 @@ class _SettingsPageState extends State<SettingsPage> {
         messenger,
         tr('common.errorWith', {'error': '${_hint(e) ?? e}'}),
       );
-    }
-  }
-
-  Future<void> _checkUpdate() async {
-    setState(() => _checkingUpdate = true);
-    try {
-      final res = await ApiSession.instance.client.systemUpdateCheck();
-      if (!mounted) return;
-      setState(() {
-        _updateText = res.hasUpdate
-            ? tr('settings.updateAvailable', {
-                'version': '${res.latestVersion}',
-              })
-            : tr('settings.updateNone');
-        _checkingUpdate = false;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _updateText = '${_hint(e) ?? e}';
-        _checkingUpdate = false;
-      });
     }
   }
 
@@ -1558,34 +1535,18 @@ class _SettingsPageState extends State<SettingsPage> {
         ),
       ),
       const SizedBox(height: NasTokens.spaceSm),
-      Wrap(
-        spacing: NasTokens.spaceSm,
-        runSpacing: NasTokens.spaceXs,
-        children: [
-          OutlinedButton.icon(
-            onPressed: _checkingUpdate ? null : _checkUpdate,
-            icon: const Icon(Icons.system_update_alt, size: 18),
-            label: Text(
-              _checkingUpdate ? tr('common.loading') : tr('settings.update'),
-            ),
-          ),
-          OutlinedButton.icon(
-            onPressed: () => ApiSession.instance.logout(),
-            icon: const Icon(Icons.logout),
-            label: Text(tr('ui.settings.016')),
-          ),
-        ],
+      OutlinedButton.icon(
+        onPressed: () => ApiSession.instance.logout(),
+        icon: const Icon(Icons.logout),
+        label: Text(tr('ui.settings.016')),
       ),
-      if (_updateText != null) ...[
-        const SizedBox(height: NasTokens.spaceXs),
-        Text(
-          _updateText!,
-          style: TextStyle(
-            fontSize: NasTokens.fontCaption,
-            color: context.nasTextSecondary,
-          ),
-        ),
-      ],
+      const SizedBox(height: NasTokens.spaceMd),
+      Text(
+        tr('update.sectionTitle'),
+        style: const TextStyle(fontWeight: FontWeight.w600),
+      ),
+      const SizedBox(height: NasTokens.spaceSm),
+      const UpdateSection(),
       const SizedBox(height: NasTokens.spaceMd),
       Text(
         tr('settings.legal'),

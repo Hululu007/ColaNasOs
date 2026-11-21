@@ -8,6 +8,7 @@ import { filesRoot, resolveInRoot } from '../files/fs-root';
 import type { ServerModule } from '../../../kernel/types';
 import { Err } from '../../../kernel/errors';
 import { registerSystemSettings } from './settings';
+import { registerSystemUpdate } from './update';
 import { registerDevClientLog } from './dev-log';
 import { registerPerfReport } from './perf-report';
 import { gpuProbe } from '../../../kernel/gpu-probe';
@@ -472,6 +473,8 @@ export const system: ServerModule = {
 
     // 全局设置 / 缓存清理 / 重启 / 更新检查（配置中心）
     registerSystemSettings(app, k);
+    // 自动更新：检查 / 增量安装 / 回滚 / 离线包 / 资产缓存
+    registerSystemUpdate(app, k);
 
     // 客户端性能诊断上报：装机版也要能用（用户点开开关才会上报）。
     // hide:true → 不进契约 / 不生成 client / SDK 产物不变。

@@ -25,6 +25,8 @@ import '../features/sync/sync_engine.dart';
 import '../features/sync/sync_scheduler.dart';
 import '../features/sync/sync_tray_bridge.dart';
 import '../features/tv/tv_shell.dart';
+import '../features/update/update_dialog.dart';
+import '../features/update/update_service.dart';
 import 'app_shell.dart';
 import 'desktop_tray.dart';
 
@@ -103,7 +105,22 @@ Future<void> runColanasApp({
   await _ensureClientId();
   await initI18n();
   mark('i18n');
+  /**
+   * 登录成功即检查客户端更新（方案 §8.1）：与首页数据并行发出，不阻塞进主页。
+   *
+   * 客户端是「打开才用」的，所以只在这一刻查一次 —— 不做后台定时轮询。
+   * 6 小时节流写在 `UpdateService.checkOnLogin` 里（同一设备重复登录不重复查）。
+   */
+  ApiSession.instance.authState.addListener(() {
+    if (ApiSession.instance.authState.value) {
+      unawaited(UpdateService.instance.checkOnLogin());
+    }
+  });
   await ApiSession.instance.restore();
+  if (ApiSession.instance.authState.value) {
+    // 自动登录已经在 restore 里完成：监听器加得比它晚，这里补一次
+    unawaited(UpdateService.instance.checkOnLogin());
+  }
   mark('session');
   // 前端异常也进服务端日志：日志页只有一份，排查时不用两头找。
   // 传端标识，dev 批量日志里能区分是完整端还是相册/音乐/同步端。
@@ -251,7 +268,8 @@ class ColaNasApp extends StatelessWidget {
               ),
             );
           },
-          home: ValueListenableBuilder<bool>(
+          home: UpdatePromptHost(
+            child: ValueListenableBuilder<bool>(
             valueListenable: ApiSession.instance.autoLoginChecking,
             builder: (context, checking, _) {
               if (checking) {
@@ -273,6 +291,7 @@ class ColaNasApp extends StatelessWidget {
                 },
               );
             },
+          ),
           ),
         );
       },

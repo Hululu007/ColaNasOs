@@ -137,7 +137,11 @@
     "verify:full": "node tool/verify.js --full",
     "version:check": "node tool/version.js --check",
     "version:sync": "node tool/version.js",
-    "transmission:bin": "node tool/fetch-transmission-win.js"
+    "transmission:bin": "node tool/fetch-transmission-win.js",
+    "smoke:update": "node tool/check/update-smoke.js",
+    "release:version": "node tool/release/release.js",
+    "release:publish": "node tool/release/publish.js",
+    "release:offline": "node tool/release/offline.js"
   },
   "devDependencies": {
     "@electron/rebuild": "^4.0.0",

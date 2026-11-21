@@ -5,7 +5,6 @@ import { Type } from '@sinclair/typebox';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { secured } from '../../../kernel/route';
 import type { KernelApi } from '../../../kernel/types';
-import { Updater } from '../../../kernel/updater';
 import {
   readSystemSettings,
   writeSystemSettings,
@@ -113,18 +112,6 @@ const DbCompactResponse = Type.Object(
   },
   { $id: 'SystemDbCompactResponse' },
 );
-const UpdateCheckResponse = Type.Object(
-  {
-    currentId: Type.Union([Type.String(), Type.Null()]),
-    currentVersion: Type.Union([Type.Integer(), Type.Null()]),
-    latestId: Type.Union([Type.String(), Type.Null()]),
-    latestVersion: Type.Union([Type.Integer(), Type.Null()]),
-    hasUpdate: Type.Boolean(),
-    versions: Type.Integer(),
-  },
-  { $id: 'SystemUpdateCheckResponse' },
-);
-
 const TlsInfoResponse = Type.Object(
   {
     hasCert: Type.Boolean(),
@@ -179,7 +166,6 @@ const SCHEMAS = [
   CacheInfoResponse,
   RestartResponse,
   DbCompactResponse,
-  UpdateCheckResponse,
   TlsInfoResponse,
   TlsUploadBody,
   LogsResponse,
@@ -596,32 +582,6 @@ export function registerSystemSettings(app: FastifyInstance, k: KernelApi): void
         process.exit(0);
       }, 400);
       return reply.send({ ok: true });
-    },
-  );
-
-  app.get(
-    '/api/v1/system/update/check',
-    secured('system:read', {
-      schema: {
-        operationId: 'systemUpdateCheck',
-        tags: TAG,
-        summary: '检查本地版本目录（当前版本 / 最新版本）',
-        response: { 200: ref('SystemUpdateCheckResponse') },
-      },
-    }),
-    async () => {
-      const updater = new Updater(k.paths.dataDir);
-      const list = updater.list();
-      const cur = updater.current();
-      const latest = list.length > 0 ? list[list.length - 1] : null;
-      return {
-        currentId: cur?.id ?? null,
-        currentVersion: cur?.version ?? null,
-        latestId: latest?.id ?? null,
-        latestVersion: latest?.version ?? null,
-        hasUpdate: latest !== null && (!cur || latest.version > cur.version),
-        versions: list.length,
-      };
     },
   );
 

@@ -1,8 +1,13 @@
 package com.colanas.os
 
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
+import android.provider.Settings
 import android.view.Display
+import androidx.core.content.FileProvider
+import java.io.File
 import com.ryanheise.audioservice.AudioServiceActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -16,6 +21,7 @@ class MainActivity : AudioServiceActivity() {
         private const val BACKUP_CHANNEL = "com.colanas.os/photo_backup"
         private const val DISPLAY_CHANNEL = "com.colanas.os/display_caps"
         private const val DOWNLOAD_CHANNEL = "com.colanas.os/offline_download"
+        private const val UPDATE_CHANNEL = "com.colanas.os/update"
         private const val REQ_NOTIFICATIONS = 1001
     }
 
@@ -88,6 +94,29 @@ class MainActivity : AudioServiceActivity() {
                 }
             }
 
+        /**
+         * 客户端自更新：把下载好的 APK 交给**系统安装器**。
+         *
+         * 安卓不给普通应用静默安装的权限（那需要系统签名或设备管理器），
+         * 所以这里能做的最多是：校验签名一致 → 申请「安装未知应用」→ 起 Intent。
+         * 任何一步失败都返回明确错误码，Dart 侧据此给「去授权 / 复制链接」的兜底。
+         */
+        MethodChannel(messenger, UPDATE_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "installApk" -> {
+                        val filePath = call.argument<String>("path")
+                        if (filePath.isNullOrEmpty()) {
+                            result.error("E_ARGS", "缺少安装包路径", null)
+                            return@setMethodCallHandler
+                        }
+                        installApk(File(filePath), result)
+                    }
+                    "canInstall" -> result.success(canInstallUnknownApps())
+                    else -> result.notImplemented()
+                }
+            }
+
         // 电视 HDR 能力：播放器按它决定「直连原画」还是「服务端色调映射转码」。
         // 只读能力，不改任何播放状态；老系统 / 通道异常时返回空数组，
         // Dart 侧按「能力未知」处理（不退化成「不支持」）。
@@ -114,6 +143,59 @@ class MainActivity : AudioServiceActivity() {
             val caps = display.hdrCapabilities ?: return@runCatching emptyList<Int>()
             caps.supportedHdrTypes?.toList() ?: emptyList()
         }.getOrDefault(emptyList())
+    }
+
+    /** 新包签名必须与当前应用一致，否则就是被换了包的钓鱼更新 */
+    private fun sameSigner(file: File): Boolean {
+        return runCatching {
+            val flags = PackageManager.GET_SIGNING_CERTIFICATES
+            val info = packageManager.getPackageArchiveInfo(file.absolutePath, flags) ?: return false
+            val incoming = info.signingInfo?.apkContentsSigners ?: return false
+            val mine = packageManager.getPackageInfo(packageName, flags).signingInfo?.apkContentsSigners
+                ?: return false
+            incoming.any { a -> mine.any { b -> a.toCharsString() == b.toCharsString() } }
+        }.getOrDefault(false)
+    }
+
+    private fun canInstallUnknownApps(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return true
+        return packageManager.canRequestPackageInstalls()
+    }
+
+    private fun installApk(file: File, result: MethodChannel.Result) {
+        if (!file.exists() || file.length() <= 0L) {
+            result.error("E_NO_FILE", "安装包不存在", null)
+            return
+        }
+        if (!sameSigner(file)) {
+            // 签名不一致：宁可报错也不让用户装上假包
+            result.error("E_SIGNATURE", "安装包签名与应用不一致，已拒绝安装", null)
+            return
+        }
+        if (!canInstallUnknownApps()) {
+            // 引导到「安装未知应用」授权页；用户回来再点更新即可
+            runCatching {
+                startActivity(
+                    Intent(
+                        Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                        Uri.parse("package:$packageName"),
+                    ),
+                )
+            }
+            result.error("E_PERMISSION", "请先允许本应用安装未知应用", null)
+            return
+        }
+        runCatching {
+            val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "application/vnd.android.package-archive")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(intent)
+        }.fold(
+            onSuccess = { result.success(true) },
+            onFailure = { result.error("E_INTENT", "拉起系统安装器失败: ${it.message}", null) },
+        )
     }
 
     private fun notificationGranted(): Boolean {

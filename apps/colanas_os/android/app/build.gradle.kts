@@ -68,6 +68,8 @@ android {
 }
 
 dependencies {
+    // 客户端自更新：FileProvider 把下载好的 APK 以 content:// 交给系统安装器
+    implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.media3:media3-exoplayer:1.10.0")
     implementation("androidx.media3:media3-exoplayer-hls:1.10.0")
     implementation("androidx.media3:media3-ui:1.10.0")

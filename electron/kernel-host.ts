@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { startKernel } from '../kernel';
 import { initDataDir } from '../kernel/updater';
+import { markHealthy } from '../kernel/update/boot';
 import type { WatchdogMetrics } from '../kernel/watchdog';
 
 const base = process.env.APPDATA || path.join(os.homedir(), '.config');
@@ -37,15 +38,24 @@ void startKernel({
   dataDir,
   port: Number(process.env.PORT || 7788),
   onBeat,
-  onListening: parentPort
-    ? (port: number) => {
-        try {
-          parentPort.postMessage({ type: 'listening', port });
-        } catch {
-          /* 外壳已退出：忽略 */
-        }
-      }
-    : undefined,
+  onListening: (port: number) => {
+    /**
+     * 「健康」的判据是**内核自己上报 listening**，不是「进程活着」——
+     * 卡在迁移死循环里的内核进程也是活的，但它永远不健康，重启多少次都没用。
+     * 这里记一笔，外壳的 boot.json 就不再把它算进「连续启动失败」。
+     */
+    try {
+      markHealthy(dataDir, process.env.COLANAS_VERSION_ID || null);
+    } catch {
+      /* 记账失败不影响启动 */
+    }
+    if (!parentPort) return;
+    try {
+      parentPort.postMessage({ type: 'listening', port });
+    } catch {
+      /* 外壳已退出：忽略 */
+    }
+  },
 }).then((k) => {
   /**
    * 外壳「退出应用」时发来的优雅关闭请求。

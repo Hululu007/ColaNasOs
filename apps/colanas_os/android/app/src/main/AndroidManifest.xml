@@ -18,6 +18,8 @@
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO"/>
     <uses-permission android:name="android.permission.ACCESS_MEDIA_LOCATION"/>
+    <!-- 客户端自更新：下载 APK 后交给系统安装器（不申请则 Intent 直接被拦） -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
     <uses-permission
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32"/>
@@ -35,6 +37,16 @@
         android:icon="@mipmap/ic_launcher"
         android:banner="@drawable/tv_banner"
         android:usesCleartextTraffic="true">
+        <!-- 自更新下载的 APK 在应用私有目录里，必须经 FileProvider 才能给系统安装器读 -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths"/>
+        </provider>
         <activity
             android:name=".MainActivity"
             android:exported="true"

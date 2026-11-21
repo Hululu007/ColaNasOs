@@ -2626,12 +2626,6 @@ class ApiClient {
     return SystemRestartResponse.fromJson(_asMap(_decode(res)));
   }
 
-  /// 检查本地版本目录（当前版本 / 最新版本）
-  Future<SystemUpdateCheckResponse> systemUpdateCheck() async {
-    final res = await transport.send('GET', _uri('/api/v1/system/update/check'), headers: await _headers());
-    return SystemUpdateCheckResponse.fromJson(_asMap(_decode(res)));
-  }
-
   /// 服务端日志分页（logs/kernel.log，时间倒序；第 1 页为最新）
   Future<SystemLogsResponse> systemLogs({int? limit, int? offset, int? lines, String? file, dynamic level}) async {
     final query = <String, String>{
@@ -2649,6 +2643,72 @@ class ApiClient {
   Future<Map<String, dynamic>> systemClientLog({required Map<String, dynamic> body}) async {
     final res = await transport.send('POST', _uri('/api/v1/system/client-log'), headers: await _headers(jsonBody: true), body: utf8.encode(jsonEncode(body)));
     return _asMap(_decode(res));
+  }
+
+  /// 检查更新（服务端增量 / 客户端整包；默认 6 小时缓存）
+  Future<SystemUpdateCheckResponse> systemUpdateCheck({dynamic component, String? current, int? currentCode, dynamic force}) async {
+    final query = <String, String>{
+      if (component != null) 'component': component,
+      if (current != null) 'current': current,
+      if (currentCode != null) 'currentCode': '$currentCode',
+      if (force != null) 'force': force,
+    };
+    final res = await transport.send('GET', _uri('/api/v1/system/update/check', query), headers: await _headers());
+    return SystemUpdateCheckResponse.fromJson(_asMap(_decode(res)));
+  }
+
+  /// 开始更新服务端（增量优先，失败回退全量）
+  Future<SystemUpdateJobResponse> systemUpdateInstall({required SystemUpdateInstallBody body}) async {
+    final res = await transport.send('POST', _uri('/api/v1/system/update/install'), headers: await _headers(jsonBody: true), body: utf8.encode(jsonEncode(body.toJson())));
+    return SystemUpdateJobResponse.fromJson(_asMap(_decode(res)));
+  }
+
+  /// 更新任务进度
+  Future<SystemUpdateJobResponse> systemUpdateStatus() async {
+    final res = await transport.send('GET', _uri('/api/v1/system/update/status'), headers: await _headers());
+    return SystemUpdateJobResponse.fromJson(_asMap(_decode(res)));
+  }
+
+  /// 取消更新（保留已下载片段，可续传）
+  Future<SystemUpdateJobResponse> systemUpdateCancel() async {
+    final res = await transport.send('POST', _uri('/api/v1/system/update/cancel'), headers: await _headers());
+    return SystemUpdateJobResponse.fromJson(_asMap(_decode(res)));
+  }
+
+  /// 回滚到上一版本（允许降级）
+  Future<SystemUpdateOkResponse> systemUpdateRollback() async {
+    final res = await transport.send('POST', _uri('/api/v1/system/update/rollback'), headers: await _headers());
+    return SystemUpdateOkResponse.fromJson(_asMap(_decode(res)));
+  }
+
+  /// 重启内核使更新生效
+  Future<SystemUpdateOkResponse> systemUpdateRestart() async {
+    final res = await transport.send('POST', _uri('/api/v1/system/update/restart'), headers: await _headers());
+    return SystemUpdateOkResponse.fromJson(_asMap(_decode(res)));
+  }
+
+  /// 更新设置 / 离线包目录 / 缓存占用
+  Future<SystemUpdateConfigResponse> systemUpdateConfig() async {
+    final res = await transport.send('GET', _uri('/api/v1/system/update/config'), headers: await _headers());
+    return SystemUpdateConfigResponse.fromJson(_asMap(_decode(res)));
+  }
+
+  /// 保存更新设置
+  Future<SystemUpdateConfigResponse> systemUpdateConfigSave({required SystemUpdateConfigBody body}) async {
+    final res = await transport.send('PUT', _uri('/api/v1/system/update/config'), headers: await _headers(jsonBody: true), body: utf8.encode(jsonEncode(body.toJson())));
+    return SystemUpdateConfigResponse.fromJson(_asMap(_decode(res)));
+  }
+
+  /// 清理更新下载缓存
+  Future<Map<String, dynamic>> systemUpdateCacheClear() async {
+    final res = await transport.send('POST', _uri('/api/v1/system/update/cache/clear'), headers: await _headers());
+    return _asMap(_decode(res));
+  }
+
+  /// 导入离线更新包（update/inbox/<目录>/）
+  Future<SystemUpdateOkResponse> systemUpdateOffline({required SystemUpdateOfflineBody body}) async {
+    final res = await transport.send('POST', _uri('/api/v1/system/update/offline'), headers: await _headers(jsonBody: true), body: utf8.encode(jsonEncode(body.toJson())));
+    return SystemUpdateOkResponse.fromJson(_asMap(_decode(res)));
   }
 
   /// 传输会话列表（全部来源：本机 / 其他设备 / 其他用户）

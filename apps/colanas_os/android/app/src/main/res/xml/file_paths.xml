@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  客户端自更新：下载的 APK 落在 cache 目录，安装器需要 content:// 才能读。
+  只暴露 cache 与 files 两个子目录，其余一律不共享。
+-->
+<paths>
+    <cache-path name="update_cache" path="." />
+    <files-path name="update_files" path="." />
+    <external-cache-path name="update_external_cache" path="." />
+</paths>

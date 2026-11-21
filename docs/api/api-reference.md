@@ -1,7 +1,7 @@
 # API 参考
 
 > 由 `tool/gen-api-doc.js` 从 `contracts/openapi.json` 生成，**请勿手改**；改契约后执行 `npm run api:doc`。
-> 当前：**427 个路径 / 455 个操作 / 19 个域**。鉴权统一为 `Authorization: Bearer <jwt>`，媒体直链另支持 `?token=`（5 分钟）。
+> 当前：**435 个路径 / 464 个操作 / 19 个域**。鉴权统一为 `Authorization: Bearer <jwt>`，媒体直链另支持 `?token=`（5 分钟）。
 
 ## 域索引
 
@@ -20,7 +20,7 @@
 - **pt**（`pt`）· 26 个操作 · [跳转](#pt)
 - **RSS 订阅**（`rss`）· 15 个操作 · [跳转](#rss)
 - **同步**（`sync`）· 17 个操作 · [跳转](#sync)
-- **系统监控**（`system`）· 20 个操作 · [跳转](#system)
+- **系统监控**（`system`）· 29 个操作 · [跳转](#system)
 - **tasks**（`tasks`）· 5 个操作 · [跳转](#tasks)
 - **transfer**（`transfer`）· 8 个操作 · [跳转](#transfer)
 - **影视**（`video`）· 74 个操作 · [跳转](#video)
@@ -2551,11 +2551,69 @@ HTTPS 证书状态（用户上传证书方案） · `systemTlsInfo`
 
 - 响应：200 `SystemRestartResponse`
 
+#### `POST /api/v1/system/update/cache/clear`
+
+清理更新下载缓存 · `systemUpdateCacheClear`
+
+- 响应：200 object
+
+#### `POST /api/v1/system/update/cancel`
+
+取消更新（保留已下载片段，可续传） · `systemUpdateCancel`
+
+- 响应：200 `SystemUpdateJobResponse`
+
 #### `GET /api/v1/system/update/check`
 
-检查本地版本目录（当前版本 / 最新版本） · `systemUpdateCheck`
+检查更新（服务端增量 / 客户端整包；默认 6 小时缓存） · `systemUpdateCheck`
 
+- 参数：`component` · 查询 · enum(server, client_pc, client_android) · 可选<br>`current` · 查询 · string · 可选<br>`currentCode` · 查询 · integer · 可选<br>`force` · 查询 · enum(1, 0) · 可选
 - 响应：200 `SystemUpdateCheckResponse`
+
+#### `GET /api/v1/system/update/config`
+
+更新设置 / 离线包目录 / 缓存占用 · `systemUpdateConfig`
+
+- 响应：200 `SystemUpdateConfigResponse`
+
+#### `PUT /api/v1/system/update/config`
+
+保存更新设置 · `systemUpdateConfigSave`
+
+- 请求体：（空对象）
+- 响应：200 `SystemUpdateConfigResponse`
+
+#### `POST /api/v1/system/update/install`
+
+开始更新服务端（增量优先，失败回退全量） · `systemUpdateInstall`
+
+- 请求体：（空对象）
+- 响应：200 `SystemUpdateJobResponse` · 错误 409
+
+#### `POST /api/v1/system/update/offline`
+
+导入离线更新包（update/inbox/<目录>/） · `systemUpdateOffline`
+
+- 请求体：（空对象）
+- 响应：200 `SystemUpdateOkResponse` · 错误 400
+
+#### `POST /api/v1/system/update/restart`
+
+重启内核使更新生效 · `systemUpdateRestart`
+
+- 响应：200 `SystemUpdateOkResponse`
+
+#### `POST /api/v1/system/update/rollback`
+
+回滚到上一版本（允许降级） · `systemUpdateRollback`
+
+- 响应：200 `SystemUpdateOkResponse` · 错误 400
+
+#### `GET /api/v1/system/update/status`
+
+更新任务进度 · `systemUpdateStatus`
+
+- 响应：200 `SystemUpdateJobResponse`
 
 #### `GET /health`
 

@@ -109,6 +109,7 @@ const STEPS = [
   { script: 'smoke:ai', label: 'AI 推理（会话串行 / EP 白名单）', est: 1450 },
   { script: 'smoke:media', label: '缩略图 / 转码会话复用', est: 49400 },
   { script: 'smoke:updater', label: '版本目录 / 签名 / 防降级', est: 600 },
+  { script: 'smoke:update', label: '增量更新（下载 / 硬链接组装 / 切指针 / 自愈 / 离线包）', est: 9000 },
   { script: 'smoke:dart-pkgs', label: 'Dart 包 analyze / test', est: 86000 },
   { script: 'smoke:system', label: '系统监控 / 进程', est: 6150 },
   { script: 'smoke:https', label: 'HTTPS 入口（用户上传证书）', est: 8000 },
