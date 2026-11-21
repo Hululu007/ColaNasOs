@@ -1,10 +1,10 @@
 {
   "schema": 1,
   "channel": "stable",
-  "releasedAt": "2026-11-21T09:05:28.357Z",
+  "releasedAt": "2026-11-21T09:18:59.114Z",
   "keyId": "k2026a",
   "notes": {
-    "zh": "1.3.16：服务端与安卓手机/TV 包；播放器直连与 HLS 重试位置修复。"
+    "zh": "1.3.16：服务端与安卓手机/TV 包；播放器直连与 HLS 重试位置修复，自动更新清单可正常从 GitCode 拉取。"
   },
   "components": {
     "server": {
@@ -30,17 +30,19 @@
         ],
         "bundles": [
           {
-            "name": "smallfiles-ba787bc93ad9.brb",
-            "size": 4294,
-            "sha256": "ba787bc93ad9ee03bc33cc112085d6bb215754009ed3248b4c7511584203268e",
+            "name": "smallfiles-76b6f1e41b2e.brb",
+            "size": 18833,
+            "sha256": "76b6f1e41b2eef8add02487f686e13f257ca2aae59fd8f3b22038c4ee131b641",
             "members": [
               "kernel/sidecar/media-bridge.js",
+              "kernel/update/service.js",
+              "kernel/updater.js",
               "version.json",
               "web/.last_build_id",
               "web/version.json"
             ],
             "urls": [
-              "https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.16/smallfiles-ba787bc93ad9.brb"
+              "https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.16/smallfiles-76b6f1e41b2e.brb"
             ]
           }
         ],
@@ -49,15 +51,15 @@
         ],
         "manifest": {
           "size": 65455,
-          "sha256": "b37bcc12d41aa0d55689f82d7a5fb5efaf496e0536330e4c879a5e9be796640c",
+          "sha256": "3ae872ea6995b988259019c4e364eb96c2e83c50344ef529f12383b025738f11",
           "urls": [
-            "https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.16/manifest-D10316-b37bcc12d41a.json"
+            "https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.16/manifest-D10316-3ae872ea6995.json"
           ]
         }
       },
       "full": {
-        "size": 577564244,
-        "sha256": "ba5952e5a2a08f42617b30e4e8698bf8cd3b7ab9523e16bc477e79c64f861c34",
+        "size": 577564073,
+        "sha256": "3591e145aa9503608835fb92d785eecc28a3985a79071889cc63ee62947041b8",
         "urls": [
           "https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.16/ColaNasOs-Server-1.3.16-Setup.exe"
         ]
