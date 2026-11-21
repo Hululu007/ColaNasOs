@@ -39,17 +39,19 @@ agent_created: true
 16. **从 asar 里抽二进制必须用 `original-fs`**：Electron 给 `fs` 打了 asar 补丁，路径以 `.asar` 结尾时按「asar 内部条目」解析，`fs.openSync('<resources>/app.asar')` 直接抛 `ENOENT, not found in ...\resources\app.asar`。纯 Node 下能读、打包后必失败（摊平 `node_modules` 就踩过这条，异常还被 catch 吞掉，表现成「修复完全没生效」）。写法：`require('original-fs')`，纯 Node 环境 catch 回落普通 `fs`；失败信息必须落到 `<dataDir>/logs/shell.log`，GUI 外壳没有控制台，`console.error` 等于没写。
 17. **默认发预发布，除非用户说「发正式版」**（用户 2026-11-21 定）：开发期的版本一律 `--pre` —— 清单写 `release/update-pre.json`（`channel: "pre"`），Release 标 `release_status=pre`。只有用户明确要求正式版时才发 `release/update.json` + `latest`。正式版清单决定了所有没勾「接收预发布」的设备看到什么，别拿它当日常测试通道。
 18. **转正用同一个 tag 原地改，不要新建 Release**：GitCode 的 `DELETE /repos/{repo}/releases/{tag}` 返 **405 METHOD_NOT_ALLOWED**（平台不支持删除 Release），所以「发正式版时自动删掉旧预发布」做不到脚本化。正确流程：同一个 tag 重跑 `release.js`（不带 `--pre`）→ 补 `update.json` 三件套 + 全量包 → `scripts/patch_release.py --tag=... --latest` 把状态转正、正文改掉。历史遗留的预发布 Release 只能网页手工删，脚本里不要写自动删逻辑。
-19. **版本号：两段是正式版，三段是预览版**（用户 2026-11-21 定，最终口径）：
-    - **正式版 `X.Y`**：`1.4`、`1.5`、`1.6`。对外只写两段（tag `v1.4`、标题「ColaNasOs 1.4」）。
-      内部仍写成 `X.Y.0`（npm / pubspec 不认两段），所以 `package.json` 是 `1.4.0`、
-      `version` 数字是 `1004000`。
-    - **预览版 `X.Y.Z`**：`1.3.21`、`1.3.22`、`1.4.1`… 三段都算预览，patch 位就是「第几次预览」。
-    - 版本比较天然成立：`1.4.0`(1004000) > `1.3.22`(1003022)，正式版永远大于它之前的预览版。
-    - 发新正式版时 patch 归零（`1.3.x` → `1.4.0`），不要出现 `1.4.1` 当正式版。
-20. **GitHub 只接正式版**：预览版一律只发 GitCode。GitHub 上永远只有 `v1.4` / `v1.5`
-    这种两段正式版，`X.Y.Z` 的三段版本一个都不要推过去。GitCode 上的三段预览版攒多了
-    （以及升到新正式版之后的所有旧 `X.Y.*`）一次性网页删掉 —— 用户的说法是
-    「以后就在 GitCode 上直接删掉所有 1.3.x，直接升到 1.4」。
+19. **版本号：`patch = 0` 是正式版，`patch > 0` 都是预览版**（用户 2026-11-21 定稿，最终口径）：
+    - **正式版 `X.Y.0`**：`1.4.0`、`1.5.0`。GitHub 只接这一类。
+    - **预览版 `X.Y.N`（N ≥ 1）**：上一个正式版之上的第 N 次预览 —— 发了 `1.4.0` 之后就是
+      `1.4.1`、`1.4.2`、`1.4.3`…；发 `1.5.0` 之后从 `1.5.1` 重新计数。
+    - 三段写法两边都合法（npm / pubspec 只认三段），版本比较天然成立：
+      `1.5.0` > `1.4.9` > `1.4.0`。
+    - 判据只有一条：**patch 是不是 0**。不要再引入第四段、也不要写两段 tag。
+20. **GitHub 只接 `X.Y.0`**：预览版一律只发 GitCode。GitHub 上的 Release 列表永远是
+    `v1.4.0` / `v1.5.0` 这种干净的正式版本。
+21. **发新正式版时清理上一轮的预览版**：`1.5.0` 一发，把 `1.4.1`、`1.4.2`、`1.4.3`… 全部删掉
+    （用户原话：「把上一个 Release 的 1.4.1、1.4.2 到后面这些都删掉」）。
+    判断依据是版本号小于当前正式版且 patch > 0，不要靠状态字段猜；当前正式清单 / 预发布清单
+    指着的那个版本要留下（删了正在用的设备会 404）。具体命令见 `colanas-promote` Phase 5。
 
 ## Workflow decision tree
 

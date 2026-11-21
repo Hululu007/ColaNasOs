@@ -40,14 +40,16 @@ TEST_TAG = re.compile(r"(test|tmp|probe|check|try|demo|draft)", re.I)
 
 
 def version_segments(tag: str) -> int:
-    """tag 里数字段数：`v1.4` = 2（正式版），`v1.3.21` = 3（预览版）。
-
-    用户 2026-11-21 定的口径：两段是正式版，三段都是预览版。
-    """
+    """tag 里数字段数，只用来识别异常命名（正常应该是 3 段）。"""
     m = re.search(r"(\d+(?:\.\d+)+)", tag or "")
     if not m:
         return 0
     return len(m.group(1).split("."))
+
+
+def is_stable(ver: tuple[int, int, int] | None) -> bool:
+    """patch == 0 就是正式版（用户 2026-11-21 定的唯一判据）。"""
+    return ver is not None and ver[2] == 0
 
 
 def list_releases(opener, token: str, repo: str) -> list[dict]:
@@ -121,22 +123,20 @@ def main() -> None:
         segs = version_segments(tag)
         if TEST_TAG.search(tag):
             verdict, why = "ORPHAN", "tag 名像发版自检 / 试上传"
-        elif segs == 2:
-            verdict, why = "KEEP", "两段 = 正式版"
+        elif segs != 3:
+            verdict, why = "KEEP", f"命名不是三段（{segs} 段），人工确认"
         elif not sized:
             verdict, why = "ORPHAN", "没有附件"
-        elif segs >= 3 and stable and ver and ver == stable:
-            verdict, why = "KEEP", "三段预览版，但当前正式清单还指着它（先发正式版再删）"
-        elif segs >= 3 and pre and ver and ver == pre:
-            verdict, why = "KEEP", "三段预览版，但预发布清单正指着它"
-        elif segs >= 3:
-            verdict, why = "DELETABLE", "三段 = 预览版，可删"
-        elif status == "latest":
-            verdict, why = "KEEP", "状态是 latest"
-        elif args.older_than_stable and stable and ver and ver < stable:
-            verdict, why = "OLD", f"历史正式版（低于 {'.'.join(map(str, stable))}）"
+        elif is_stable(ver):
+            verdict, why = "KEEP", "正式版（patch=0）"
+        elif stable and ver and ver == stable:
+            verdict, why = "KEEP", "当前正式清单指着它"
+        elif pre and ver and ver == pre:
+            verdict, why = "KEEP", "预发布清单正指着它"
+        elif stable and ver and ver < stable:
+            verdict, why = "DELETABLE", f"上一轮的预览版（低于正式版 {'.'.join(map(str, stable))}）"
         else:
-            verdict, why = "KEEP", f"历史正式版（状态 {status}）"
+            verdict, why = "PRE", "预览版（比当前正式版新，正在开发中）"
 
         rows.append(
             {
