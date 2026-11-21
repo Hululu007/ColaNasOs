@@ -150,6 +150,6 @@ npm run gen:template     # 重建内核迁移模板（迁移改了会自动失�
 - `web/flutter_bootstrap.js` 里的 `{{flutter_js}}` / `{{flutter_build_config}}` 是构建期占位符，已在 `.prettierignore` + `eslint.config.mjs` 中忽略，不要格式化它。
 - `web/index.html` 不要改写 `window._flutter`（会让真正的 loader 永不创建，整页白屏）。
 
-## 6. 双平台发版 / Release / 附件上传
+## 6. 发版 / Release / 附件上传（默认只推 GitCode）
 
-统一加载 `.workbuddy/skills/colanas-release/SKILL.md`：里面固化了版本同步、构建顺序、GitHub/GitCode 双端 push + tag、Release 创建、附件上传与强校验。其他 AI 编程工具没有 Skill 加载机制时，直接把该目录当发版 playbook 读取即可。
+统一加载 `.workbuddy/skills/colanas-release/SKILL.md`：里面固化了版本同步、构建顺序、**默认只 push GitCode + tag**、Release 创建、附件上传与强校验。⛔ 不主动推 GitHub、不主动创建 GitHub Release；只有用户明确说「推 GitHub」才额外执行。其他 AI 编程工具没有 Skill 加载机制时，直接把该目录当发版 playbook 读取即可。

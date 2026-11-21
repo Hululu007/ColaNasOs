@@ -15,7 +15,7 @@
 - 日常不要跑全量 `npm run verify`（除非提交前或跨域改动），更不要等 CI。
 - **CI 只在打 `v*` tag 或手动 `workflow_dispatch` 时跑**，日常 `git push` 不触发。
 - release 构建必须带 `--no-wasm-dry-run`（`build-web.bat` 已内置）。
-- 双平台发版 / Release / 附件上传：读 `.workbuddy/skills/colanas-release/SKILL.md`，脚本在 `scripts/`。
+- 发版 / Release / 附件上传：读 `.workbuddy/skills/colanas-release/SKILL.md`，脚本在 `scripts/`；默认只推 GitCode，GitHub 必须用户明确要求才推。
 - 门禁选择器规则在 `tool/verify.js` 的 `MODULE_RULES`；未识别路径会自动退回全量。
 
 <details>

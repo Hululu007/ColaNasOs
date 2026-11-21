@@ -52,7 +52,7 @@ npm run sbom.check
 - APK：`lib/arm64-v8a/libapp.so` 存在。手机包和 TV 包体积可能一样，必须比较 `libapp.so` 哈希。
 - 中文串在 dart2js / AOT 产物里会被转义，不要用中文 grep 判断；用 route 串、仓库 URL 这类 ASCII 指纹。
 
-## 4. 本地提交与双端推送
+## 4. 本地提交与默认只推 GitCode
 
 按功能拆 commit，每次只显式 `git add` 该功能路径。不要用 `git add -A`：工作树长期有数百个在途文件。
 
@@ -61,21 +61,18 @@ git status --short
 git add -- package.json apps/colanas_os/pubspec.yaml apps/colanas_os/lib/core/app_version.dart ...
 git commit -F RELEASE_COMMIT_MSG.txt
 
-git push origin main
 git push gitcode main
-
 git tag -a v1.3.14 -m "ColaNasOs 1.3.14"
-git push origin v1.3.14
 git push gitcode v1.3.14
 ```
 
-`origin` 是 GitHub，`gitcode` 是 GitCode。不要替换 `origin`。
+⛔ 用户没明确说「推 GitHub」时，不要执行 `git push origin main` 或 `git push origin v1.3.14`。`origin` 只是 GitHub 远端记录，不要替换。
 
 `contracts/apps.json`、`contracts/messages/*.json` 常有用户未提交编辑，禁止 `git checkout --`。需要找回历史版本时可从 `apps/colanas_os/build/web/assets/assets/i18n/*.json` 这类历史快照对照，再逐行改回。
 
-## 5. GitHub 附件上传
+## 5. GitHub 附件上传（仅显式要求时）
 
-13 分钟只上传了 550 MB 服务端附件，后续文件卡死；加 `http://127.0.0.1:21578` 后剩余 4 个附件 54 秒完成。脚本已默认使用该代理。
+13 分钟只上传了 550 MB 服务端附件，后续文件卡死；加 `http://127.0.0.1:21578` 后剩余 4 个附件 54 秒完成。脚本已默认使用该代理。默认发版不走这一节。
 
 ```bash
 FILES="ColaNasOs-Server-1.3.14-Setup.exe,ColaNasOs-Client-1.3.14-Setup.exe,ColaNasOs-Client-1.3.14-windows-x64.zip,ColaNasOs-Client-1.3.14-android-arm64.apk,ColaNasOs-Client-1.3.14-android-arm64-tv.apk"

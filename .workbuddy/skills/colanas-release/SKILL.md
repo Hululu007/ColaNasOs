@@ -1,6 +1,6 @@
 ---
 name: colanas-release
-description: 用于 ColaNasOs 发版、本地 Git 功能提交、GitHub/GitCode 双端 tag 推送、Release 创建与附件上传校验。当需要发布新版本、上传安装包/APK 到 Release、复用 1.3.14 发版流程，或处理 GitCode 附件 0 字节/同名上传失败时使用。其他 AI 编程工具可直接把本目录当作发版 playbook，脚本仅依赖 Python 3 标准库。
+description: 用于 ColaNasOs 发版、本地 Git 功能提交、GitCode 默认推送、Release 创建与附件上传校验。仅当用户明确要求时才推 GitHub；否则绝不主动 push origin。当需要发布新版本、上传安装包/APK 到 Release、复用 1.3.14/1.3.15 发版流程，或处理 GitCode 附件 0 字节/同名上传失败时使用。其他 AI 编程工具可直接把本目录当作发版 playbook，脚本仅依赖 Python 3 标准库。
 agent_created: true
 ---
 
@@ -8,11 +8,12 @@ agent_created: true
 
 ## Overview
 
-把一次 ColaNasOs 发版固化为可复现流程：版本号同步 → 四类产物构建与验收 → 本地按功能提交 → GitHub / GitCode 双端 push + tag → 两端 Release → 附件上传与强校验。脚本只依赖 Python 3 标准库，WorkBuddy、Claude Code、Cursor、Copilot 等能读仓库文件的工具都可使用。
+把一次 ColaNasOs 发版固化为可复现流程：版本号同步 → 产物构建与验收 → 本地按功能提交 → **默认只 push GitCode + tag** → GitCode Release → 附件上传与强校验。GitHub 属于显式例外，只有用户明确说「推 GitHub」时才执行。脚本只依赖 Python 3 标准库，WorkBuddy、Claude Code、Cursor、Copilot 等能读仓库文件的工具都可使用。
 
 ## When to use
 
-- 用户说「发版 / 发布版本 / Release / 上传附件 / 提交到 GitHub 和 GitCode」。
+- 用户说「发版 / 发布版本 / Release / 上传附件 / 提交到 GitCode」。
+- 用户明确说「也推 GitHub / GitHub 也发」时，才额外执行 GitHub 步骤。
 - 需要复用 1.3.14 那套服务端、PC 客户端、安卓手机 APK、安卓 TV APK 的发布方式。
 - GitCode Release 附件出现 `size=0`、空 sha256、`gitcode-cli` 显示成功但下载为空。
 - 只需要验证已有 Release 的附件，不需要重新上传。
@@ -28,15 +29,17 @@ agent_created: true
 7. **dev.bat 在跑时禁止构建 Web**：5173 走热重载，不要为了 7888 重建 `build/web`。
 8. **凭据不进版本库**：GitHub 用 `GITHUB_TOKEN` 或 git credential；GitCode 用环境变量或仓库 `.workbuddy/.env`（已 gitignore，脚本自动读取）。不要写进被提交的文件、日志或临时脚本。
 9. **附件必须强校验**：`gitcode-cli` 的 `✓` 不可信；最终以 API 返回的 `size` 和 `digest` 为准。
+10. **默认只推 GitCode**：不主动 `git push origin`，不主动创建 GitHub Release。只有用户明确要求时才推 GitHub；用户没说就当没要求。
 
 ## Workflow decision tree
 
 | 场景 | 执行 |
 | --- | --- |
-| 完整发版 | Phase 0 → 1 → 2 → 3 → 4 → 5 → 6 → 7 |
-| 代码已经提交，只发 Release | Phase 0 → 4 → 5 → 6 → 7 |
-| 只上传/修复附件 | Phase 0 → 5 或 6 → 7 |
-| 只验证附件 | `github_release.py --verify-only` / `gitcode_release.py --verify-only` |
+| 完整发版（默认） | Phase 0 → 1 → 2 → 3 → 4 → 6 → 7 |
+| 代码已提交，只发 Release | Phase 0 → 4 → 6 → 7 |
+| 只上传/修复附件 | Phase 0 → 6 → 7 |
+| 只验证附件 | `gitcode_release.py --verify-only` |
+| 用户明确要求推 GitHub | 先完成默认流程，再额外执行 Phase 5 + `git push origin main` + `git push origin v<version>` |
 
 ## Phase 0：确认输入
 
@@ -44,7 +47,7 @@ agent_created: true
 
 - 版本号：从 `package.json` 读当前值，补丁位 +1，例如 `1.3.14` → `1.3.15`。
 - tag：`v<version>`。
-- 远端：`origin` = `https://github.com/colaKot/ColaNasOs.git`；`gitcode` = `git@gitcode.com:cocacola23/ColaNasOs.git`。
+- 默认远端：`gitcode` = `git@gitcode.com:cocacola23/ColaNasOs.git`。`origin` = `https://github.com/colaKot/ColaNasOs.git` 只作记录，用户没明确要求时不动。
 - 产物目录：`dist_installer`。
 - 附件集合：以 `dist_installer` 中带本次版本号的真实文件为准；典型为：
   - `ColaNasOs-Server-<ver>-Setup.exe`
@@ -139,16 +142,18 @@ npm run sbom.check
 git status --short
 git add -- package.json apps/colanas_os/pubspec.yaml apps/colanas_os/lib/core/app_version.dart <其他本次改动>
 git commit -m "chore(release): 发布 v<version>"
-git push origin main
 git push gitcode main
 git tag -a v<version> -m "ColaNasOs <version>"
-git push origin v<version>
 git push gitcode v<version>
 ```
 
+⛔ 不要写 `git push origin main` / `git push origin v<version>`，除非用户明确说「推 GitHub」。
+
 按功能拆分提交时，每个 commit 只 `git add` 该功能相关路径。禁止把 `contracts/**` 的用户在途编辑卷进来。
 
-## Phase 5：GitHub Release
+## Phase 5：GitHub Release（仅用户明确要求时执行）
+
+默认跳过本阶段。只有用户明确说「也推 GitHub / GitHub 也发 Release」时才执行，并同时补 `git push origin main` 与 `git push origin v<version>`。
 
 脚本路径：`scripts/github_release.py`。凭据来自 `GITHUB_TOKEN`，缺失时从 `git credential fill` 读取 GitHub PAT。默认代理 `http://127.0.0.1:21578`；直连传 `--proxy ""`。
 
@@ -207,8 +212,8 @@ python .workbuddy/skills/colanas-release/scripts/gitcode_release.py \
 
 输出必须包含：
 
-1. 本地 commit 列表与两个远端的最新 commit / tag。
-2. 两端 Release URL。
+1. 本地 commit 列表与 GitCode 远端的最新 commit / tag；如用户明确要求推 GitHub，再补 GitHub 状态。
+2. GitCode Release URL；如用户明确要求，再补 GitHub Release URL。
 3. 每个附件的名称、大小、sha256 和验证结果。
 4. 上传后是否仍有旧的 0 字节附件；若有，列出名称和网页清理地址。
 5. 任何未自动完成的步骤（网页删除、官网同步等）。
@@ -217,8 +222,8 @@ python .workbuddy/skills/colanas-release/scripts/gitcode_release.py \
 
 | 脚本 | 用途 |
 | --- | --- |
-| `scripts/github_release.py` | GitHub Release 创建、附件上传、size 校验、verify-only |
-| `scripts/gitcode_release.py` | GitCode Release 创建、官方预签名两步上传、空附件处理、size/digest 强校验 |
+| `scripts/github_release.py` | 仅显式要求 GitHub 时使用：Release 创建、附件上传、size 校验、verify-only |
+| `scripts/gitcode_release.py` | 默认使用：GitCode Release 创建、官方预签名两步上传、空附件处理、size/digest 强校验 |
 
 ## References
 
