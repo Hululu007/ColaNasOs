@@ -304,7 +304,23 @@ function startKernel(): void {
 
     crashes += 1;
     if (crashes > MAX_RESTARTS) {
-      const msg = `内核连续退出 ${crashes} 次（最后一次退出码 ${code}），已停止自动重启。`;
+      /**
+       * 放弃重启之前必须先试一次自愈回滚。
+       *
+       * 否则用户拿到的是「一台死掉的服务」：boot.json 里明明记着这一版从没健康过，
+       * 上一版还好端端躺在 versions/ 里，却因为「不再重启」而永远用不上。
+       * 实测 1.3.17 就是这样：连续 3 次失败后指针仍指向坏版本，只能人工改 json。
+       */
+      const rolledBack = healBeforeRestart();
+      if (rolledBack) {
+        crashes = 0;
+        tray?.setToolTip(trayTip('已回滚到上一版，正在重启'));
+        setTimeout(startKernel, 500);
+        return;
+      }
+      const msg =
+        `内核连续退出 ${crashes} 次（最后一次退出码 ${code}），已停止自动重启。\n` +
+        `诊断日志：${path.join(dataDir, 'logs', 'kernel-console.log')}`;
       console.error('[shell]', msg);
       tray?.setToolTip(trayTip('内核已停止'));
       dialog.showErrorBox('ColaNasOs', msg);
@@ -362,8 +378,9 @@ function attachKernelConsole(proc: Electron.UtilityProcess): void {
  * 立刻重新 fork，如果新版本起不来，`attempts` 永远不涨，回滚也就永远不会发生 ——
  * 用户看到的是「重启 5 次后弹个错误框」，而不是「自动退回上一版」。
  */
-function healBeforeRestart(): void {
-  if (!versionedKernel) return;
+/** 重启内核之前先做一次自愈判定。返回是否真的发生了回滚。 */
+function healBeforeRestart(): boolean {
+  if (!versionedKernel) return false;
   try {
     const decision = prepareBoot(dataDir);
     if (decision.message) console.log(`[shell] 重启判定：${decision.message}`);
@@ -375,10 +392,12 @@ function healBeforeRestart(): void {
         `新版本连续启动失败，已自动回滚到 ${decision.id}。\n` +
           '更新包与旧版本目录都保留着，排查后可在「设置 → 更新」里重试。',
       );
+      return true;
     }
   } catch (err) {
     trace(`heal failed: ${String(err)}`);
   }
+  return false;
 }
 
 function stopKernel(): void {
