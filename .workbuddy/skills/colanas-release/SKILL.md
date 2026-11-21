@@ -34,6 +34,8 @@ agent_created: true
 11. **服务端一律全量 + 增量**：`release.js` 自动取上一版 `D<NNN>` 作基线，不传 `--from` 也不静默退化成只发全量；真要只发全量必须 `--no-delta` 并在提交信息写明原因。全量包是首次安装和跨版本兜底，不能撤。
 12. **清单最后上传**：资产全部就位后再传 `update.json` / `.sig` / `.sig.json`；传完必须回读 URL（或 GitCode contents API）确认能拿到真 JSON。
 13. **GitCode raw 不可用**：`raw.gitcode.com` 匿名访问返 403「暂不支持预览」；清单源走公开仓库 contents API，签名优先 `.sig.json`（`.sig` 只在取不到时回落）。`<API 根>@@<仓库内路径>` 两侧斜杠必须归一化，否则拼成 `contentsrelease/...` 直接 404。
+14. **外壳改动不进增量**：版本目录只有 `electron/kernel-host.js`，`electron/main.ts`（托盘、重启、自愈、日志落盘、更新器安装逻辑）住在 asar 里，**只能随全量包替换**。改了 `electron/**` 就必须发全量包，并在 Release 说明里写明「这条修复增量包不带」；需要强制所有人重装时给清单加 `--min-shell=<version>`，`checkServer` 会把 `mode` 直接压成 `full`。
+15. **`npm run dist` 之后重生成清单**：安装包字节一变，`full.sha256` 就变。顺序永远是「构建 → installer.check → release.js → 并客户端组件 → 重签 → 上传」，不要先出清单再补构建。
 
 ## Workflow decision tree
 
@@ -174,8 +176,10 @@ node tool/release/release.js \
   --notes-zh="<说明>" --manifest-out=release
 ```
 
-- 不传 `--from`：工具自动取输出目录里最高的旧 `D<NNN>` 作基线；找不到基线直接失败，不会退化成只发全量。多个候选版本时用 `--from` 显式指定。
+- 不传 `--from`：工具自动取输出目录里最高的旧 `D<NNN>` 作基线；找不到基线直接失败，不会退化成只发全量。多个候选版本时用 `--from` 显式指定。发版中途失败会留下半成品 `D<NNN>`，下次自动基线会挑到它，先删掉再重跑。
 - 补发已发布版本时加 `--reuse-version-dir`：复用那版已有的版本目录，不从当前 `dist/` 重建，避免把发版后的在途代码混进去。
+- 补发还要显式给版本号：`--semver=<X.Y.Z> --version-code=<原 B 值>`。发版成功后 `package.json` 已经 bump 到下一版，不带这两个参数会把新版本号写进旧清单。
+- ⛔ **不传 `--pc-setup` / `--apk` 等客户端参数时，`components.client_pc` 与 `components.client_android` 会被整个抹掉**（不是保留上一版），客户端从此收不到更新。只发服务端时必须按下面的脚本并回上一版组件。
 - 产物：`dist_release/D<NNN>/`（版本目录）、`dist_release/assets/*`（增量资产）、`dist_release/update.json(.sig/.sig.json)`。资产名内容寻址，例如 `0-<sha12>-main.dart.js.br`、`manifest-D<NNN>-<sha12>.json(.sig/.sig.json)`；不要沿用固定文件名。
 - `dist_release/upload.json` 是权威上传列表，逐项上传，不要凭记忆拼文件名。
 
@@ -200,6 +204,24 @@ for (const d of ["dist_release","release"]) {
 ```
 
 增量链路冒烟：`npm run smoke:update`（28 项，含篡改失败、自动降级全量、回滚、离线导入）。`installer.check` / `version:check` / `sbom.check` 照常跑。
+
+上传顺序固定：**全量包 → 增量资产 → 清单三件套**（清单必须最后，否则客户端拿到清单去下还没传完的资产）。
+
+```bash
+PY=python   # 本机可用 C:/Users/cola/.workbuddy/binaries/python/versions/3.13.12/python.exe
+S=.workbuddy/skills/colanas-release/scripts/gitcode_release.py
+
+$PY $S --repo cocacola23/ColaNasOs --tag v<version> --dist dist_installer \
+  --files "ColaNasOs-Server-<version>-Setup.exe" --proxy ""
+
+$PY $S --repo cocacola23/ColaNasOs --tag v<version> --dist dist_release/assets \
+  --files "$(ls dist_release/assets | tr '\n' ',' | sed 's/,$//')" --proxy ""
+
+$PY $S --repo cocacola23/ColaNasOs --tag v<version> --dist dist_release \
+  --files "update.json,update.json.sig,update.json.sig.json" --proxy ""
+```
+
+`--proxy ""` 表示直连；550 MB 全量包实测直连可传（走 `127.0.0.1:21578` 反而更慢）。脚本会逐项核对远端 `size` 与 sha256，任何一项不符就非零退出。
 
 ## Phase 5：GitHub Release（仅用户明确要求时执行）
 
