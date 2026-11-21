@@ -246,11 +246,17 @@ function startKernel(): void {
   env.COLANAS_DATA_DIR = dataDir;
 
   kernel = utilityProcess.fork(entry.host, [], {
-    stdio: 'inherit',
+    // ⛔ 不要用 `stdio: 'inherit'`：打包成 GUI 程序后没有控制台，内核写往
+    // stderr 的东西（启动期异常、MODULE_NOT_FOUND、迁移失败）会被直接丢掉。
+    // 实测代价：1.3.17 连续 3 次启动失败，`kernel.log` 里一行都没有，
+    // 只能靠 boot.json 的 attempts 计数猜，排障基本靠翻。
+    // 改成 pipe 后统一落到 `logs/kernel-console.log`。
+    stdio: ['ignore', 'pipe', 'pipe'],
     serviceName: 'colanas-kernel',
     env,
   });
   trace(`kernel forked pid=${kernel.pid} host=${entry.host} versioned=${entry.versioned}`);
+  attachKernelConsole(kernel);
 
   kernel.on('message', (msg: unknown) => {
     const payload = msg as { type?: string; metrics?: WatchdogMetrics; port?: number } | null;
@@ -310,6 +316,43 @@ function startKernel(): void {
     healBeforeRestart();
     setTimeout(startKernel, delay);
   });
+}
+
+/**
+ * 把内核的 stdout / stderr 落到 `logs/kernel-console.log`。
+ *
+ * 为什么要单独一个文件：pino 的 `kernel.log` 只记结构化日志，**进程级崩溃
+ * （require 失败、native 模块 ABI 不匹配、未捕获异常）走的是 stderr**，在
+ * 打包后的 GUI 外壳里原本完全看不见 —— 用户只看到「内核报错」弹框，而我们
+ * 连退出原因都拿不到。
+ *
+ * 只保留最近 2 MB：这是排障用的滚动尾巴，不需要历史。
+ */
+function attachKernelConsole(proc: Electron.UtilityProcess): void {
+  const dir = path.join(dataDir, 'logs');
+  const file = path.join(dir, 'kernel-console.log');
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    if (fs.existsSync(file) && fs.statSync(file).size > 2 * 1024 * 1024) {
+      fs.renameSync(file, `${file}.1`);
+    }
+    const sink = fs.createWriteStream(file, { flags: 'a' });
+    const onData = (chunk: Buffer | string) => {
+      try {
+        sink.write(chunk);
+      } catch {
+        /* 磁盘满 / 被占用：绝不能因此影响内核 */
+      }
+    };
+    proc.stdout?.on('data', onData);
+    proc.stderr?.on('data', onData);
+  } catch (err) {
+    trace(`attachKernelConsole failed: ${String(err)}`);
+    // 落盘失败也必须把管道抽干：pipe 模式的缓冲区满了会把内核**阻塞**，
+    // 那比丢日志严重得多。
+    proc.stdout?.resume();
+    proc.stderr?.resume();
+  }
 }
 
 /**
