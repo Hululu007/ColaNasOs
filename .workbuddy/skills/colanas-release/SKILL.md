@@ -114,9 +114,14 @@ unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy
 ```bash
 cd apps/colanas_os
 flutter build apk --release --target-platform android-arm64
+cp -f build/app/outputs/flutter-apk/app-release.apk ../dist_installer/ColaNasOs-Client-<ver>-android-arm64.apk
 flutter build apk --release --target-platform android-arm64 --target lib/main_tv.dart --dart-define=COLANAS_TV=1
+cp -f build/app/outputs/flutter-apk/app-release.apk ../dist_installer/ColaNasOs-Client-<ver>-android-arm64-tv.apk
 cd ../..
 ```
+
+两次构建共用 `app-release.apk` 输出路径：**每次构建完必须立刻复制**，否则 TV 包会覆盖手机包。
+两个 APK 的 zip 条目基本一致，只有 `lib/arm64-v8a/libapp.so` 不同，这是 TV define 生效的正常表现。
 
 ## Phase 4：验收、提交、推送
 
@@ -199,6 +204,9 @@ python .workbuddy/skills/colanas-release/scripts/gitcode_release.py \
 - 显式 `--clean-empty` 会先删除同名 0 字节附件，再用原文件名上传（这是远程删除操作，只在用户确认清理时使用）。
 - `--uploader cli` 可改用 `gitcode-cli`，但脚本仍会查 API 验证，不信任 `✓`。
 - 上传后核对远端 `size` 与本地一致；有 `digest` 时核对 sha256。不一致即失败。
+- Release 已存在时脚本只复用，不更新描述。要改描述用
+  `PATCH /api/v5/repos/{owner}/{repo}/releases/{tag}`，body 至少带 `name` 和 `body`
+  （可选 `release_status=latest`）。追加产物后应同步改描述，避免说明与附件矛盾。
 
 只验证：
 
