@@ -14,9 +14,11 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.Tracks
 import androidx.media3.common.VideoSize
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
@@ -98,7 +100,13 @@ private class TvMedia3Session(
     private val view: PlayerView,
 ) {
     private val handler = Handler(Looper.getMainLooper())
-    private val trackSelector = DefaultTrackSelector(context)
+
+    // 电视端必须开隧道模式：音视频同步与合成交给 SoC 的硬件通道，
+    // 否则 4K / HDR 片源会在应用层做一遍同步与拷贝，表现为持续掉帧。
+    private val trackSelector =
+        DefaultTrackSelector(context).apply {
+            setParameters(parameters.buildUpon().setTunnelingEnabled(true).build())
+        }
     private val player: ExoPlayer
     private var eventSink: EventChannel.EventSink? = null
     private var videoDecoder = ""
@@ -123,11 +131,22 @@ private class TvMedia3Session(
                 .setAllowCrossProtocolRedirects(true)
         val mediaSourceFactory =
             DefaultMediaSourceFactory(DefaultDataSource.Factory(context, httpFactory))
+        // 解码器回退：某些电视的杜比视界 / HEVC 10bit 硬解实例初始化失败时，
+        // 允许 ExoPlayer 继续尝试其它硬件解码器，而不是直接黑屏报错。
+        val renderersFactory =
+            DefaultRenderersFactory(context)
+                .setEnableDecoderFallback(true)
+                .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF)
         player =
-            ExoPlayer.Builder(context)
+            ExoPlayer.Builder(context, renderersFactory)
                 .setTrackSelector(trackSelector)
                 .setMediaSourceFactory(mediaSourceFactory)
+                // 24p 片源在 60Hz 面板上会出现 3:2 抖动；尽量让电视切到匹配刷新率。
+                .setVideoChangeFrameRateStrategy(
+                    C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_ONLY_IF_SEAMLESS,
+                )
                 .build()
+        player.setVideoScalingMode(C.VIDEO_SCALING_MODE_SCALE_TO_FIT)
         player.setAudioAttributes(
             AudioAttributes.Builder()
                 .setUsage(C.USAGE_MEDIA)
@@ -148,6 +167,25 @@ private class TvMedia3Session(
                 }
 
                 override fun onVideoSizeChanged(videoSize: VideoSize) {
+                    emitState()
+                }
+
+                override fun onTracksChanged(tracks: Tracks) {
+                    // 电视扬声器只能解 PCM / AC3 / EAC3 这类常见音轨；
+                    // TrueHD、DTS-HD MA 这类没有平台解码器的音轨如果被选中，
+                    // 表现是「有画面没声音」。这里主动报错，让 Dart 侧切到
+                    // 服务端转码（视频直通 + 音频转 AAC），而不是让用户对着无声画面。
+                    val audioGroups = tracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
+                    if (audioGroups.isNotEmpty() && audioGroups.none { it.isSupported }) {
+                        val mime =
+                            audioGroups.firstOrNull()
+                                ?.takeIf { it.length > 0 }
+                                ?.getTrackFormat(0)
+                                ?.sampleMimeType
+                                ?: "unknown"
+                        emitState("no suitable decoder for audio: $mime")
+                        return
+                    }
                     emitState()
                 }
 

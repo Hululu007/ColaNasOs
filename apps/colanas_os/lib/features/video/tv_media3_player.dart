@@ -1,7 +1,9 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 
 class TvMedia3State {
@@ -309,16 +311,35 @@ class _TvMedia3PlayerSurfaceState extends State<TvMedia3PlayerSurface> {
     if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
       return const SizedBox.shrink();
     }
+    // 必须走 Hybrid Composition（真实 Surface），不能用默认的 AndroidView：
+    // 默认实现是 Texture Layer Hybrid Composition，会把原生 PlayerView 抓成
+    // 纹理再交给 Flutter 合成 —— 4K 每帧多一次拷贝，电视芯片直接掉帧；
+    // 而且纹理只保留 SDR 像素，HDR / 杜比视界的元数据在这里就丢了。
     return Stack(
       fit: StackFit.expand,
-      children: [
-        AndroidView(
+      children: <Widget>[
+        PlatformViewLink(
           viewType: TvMedia3PlayerController._viewType,
-          creationParams: const <String, Object?>{},
-          creationParamsCodec: const StandardMessageCodec(),
-          onPlatformViewCreated: (id) {
-            _viewId = id;
-            unawaited(widget.controller.attach(id));
+          surfaceFactory: (context, controller) => AndroidViewSurface(
+            controller: controller as AndroidViewController,
+            hitTestBehavior: PlatformViewHitTestBehavior.opaque,
+            gestureRecognizers: const <Factory<OneSequenceGestureRecognizer>>{},
+          ),
+          onCreatePlatformView: (params) {
+            final controller = PlatformViewsService.initExpensiveAndroidView(
+              id: params.id,
+              viewType: TvMedia3PlayerController._viewType,
+              layoutDirection: Directionality.of(context),
+              creationParams: const <String, Object?>{},
+              creationParamsCodec: const StandardMessageCodec(),
+              onFocus: () => params.onFocusChanged(true),
+            );
+            controller.addOnPlatformViewCreatedListener((id) {
+              _viewId = id;
+              unawaited(widget.controller.attach(id));
+            });
+            controller.create();
+            return controller;
           },
         ),
         if (widget.onTap != null)
