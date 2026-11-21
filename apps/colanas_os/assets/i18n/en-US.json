@@ -3101,6 +3101,9 @@
     "update.autoCheck": "Check every 6 hours",
     "update.autoCheckHint": "Off by default: the NAS may be transcoding or seeding; checks happen when the UI is opened",
     "update.versionDir": "Version directory: {dir}",
-    "update.tvHint": "Remote: left/right to choose, OK to confirm, Back to close"
+    "update.tvHint": "Remote: left/right to choose, OK to confirm, Back to close",
+    "update.fullReady": "Installer downloaded — run it to finish the update",
+    "update.checkFailed": "Check failed · tap to retry",
+    "update.noAsset": "No auto-installable package in this release; download it from the project page"
   }
 }

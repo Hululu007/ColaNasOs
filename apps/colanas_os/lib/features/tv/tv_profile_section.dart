@@ -162,7 +162,7 @@ class _TvProfileSectionState extends State<TvProfileSection> {
     }
     if (status.phase == UpdatePhase.verifying) return tr('update.verifying');
     if (status.phase == UpdatePhase.installing) return tr('update.installing');
-    if (status.phase == UpdatePhase.failed) return tr('update.retry');
+    if (status.phase == UpdatePhase.failed) return tr('update.checkFailed');
     if (info != null && info.hasUpdate) {
       return tr('update.clientAvailable', {'version': info.latestSemver});
     }

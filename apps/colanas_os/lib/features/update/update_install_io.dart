@@ -47,8 +47,9 @@ class IoUpdateInstaller implements UpdateInstaller {
   }) async {
     _cancelled = false;
     final dir = await _downloadDir();
-    final name = 'colanas-update-${asset.kind}-${asset.sha256.substring(0, 8)}'
-        '${Platform.isWindows ? '.exe' : Platform.isAndroid ? '.apk' : '.bin'}';
+    // 扩展名要跟资产类型走：便携版是 zip，套上 .exe 会被当成安装程序直接启动
+    final ext = _extFor(asset);
+    final name = 'colanas-update-${asset.kind}-${asset.sha256.substring(0, 8)}$ext';
     final target = File('${dir.path}${Platform.pathSeparator}$name');
     final part = File('${target.path}.part');
 
@@ -158,6 +159,18 @@ class IoUpdateInstaller implements UpdateInstaller {
     }
   }
 
+  /// 安装包的扩展名：优先取清单 URL 上的真实后缀
+  String _extFor(UpdateAsset asset) {
+    for (final url in asset.urls) {
+      final path = Uri.tryParse(url)?.path ?? '';
+      final dot = path.lastIndexOf('.');
+      if (dot > 0 && path.length - dot <= 6) return path.substring(dot).toLowerCase();
+    }
+    if (Platform.isWindows) return '.exe';
+    if (Platform.isAndroid) return '.apk';
+    return '.bin';
+  }
+
   Future<String> _hashOf(File file) async {
     final digest = await sha256.bind(file.openRead()).first;
     return digest.toString();
@@ -170,6 +183,9 @@ class IoUpdateInstaller implements UpdateInstaller {
       return;
     }
     if (Platform.isWindows) {
+      if (!path.toLowerCase().endsWith('.exe')) {
+        throw UnsupportedError('这个平台只支持安装版自动更新，请手动下载更新包');
+      }
       // 静默安装：`/S` 不弹界面；`COLANAS_RELAUNCH=1` 让 NSIS 装完自动把新客户端拉起来
       // （安装器的 Section 末尾读这个变量，见 tool/build-client-installer.js）
       await Process.start(

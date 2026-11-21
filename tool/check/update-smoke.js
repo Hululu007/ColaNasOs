@@ -52,6 +52,9 @@ function makeBuild(name, opts) {
   const dir = path.join(work, name);
   write(path.join(dir, 'kernel', 'index.js'), `// ${name} kernel v${opts.version}\nmodule.exports = ${opts.version};\n`);
   write(path.join(dir, 'kernel', 'modules', 'photo.js'), `// photo v${opts.version}\n`);
+  // 内核的模块实现（编译后是 require("../src/modules/…")）：版本目录少了它起不来，
+  // 2026-11-21 复查就是栽在这里，所以冒烟必须覆盖到
+  write(path.join(dir, 'src', 'modules', 'system', 'index.js'), `// system module v${opts.version}\n`);
   write(path.join(dir, 'web', 'index.html'), '<html><body>colanas</body></html>');
   // 大文件：随机内容 + 少量固定前缀，保证 brotli 有效果且每次发版都变
   const big = Buffer.concat([Buffer.from('/* main.dart.js */\n'.repeat(50)), crypto.randomBytes(400 * 1024)]);
@@ -136,7 +139,7 @@ async function waitJob(svc, timeoutMs = 60_000) {
   for (const [rel, digest] of Object.entries(next.manifest.files)) {
     if (old.manifest.files[rel] !== digest) changed.push(rel);
   }
-  check('只列出变化的文件', changed.length === 4, `changed=${changed.join(',')}`);
+  check('只列出变化的文件', changed.length === 5, `changed=${changed.join(',')}`);
 
   const files = [];
   const small = [];
@@ -238,6 +241,11 @@ async function waitJob(svc, timeoutMs = 60_000) {
     L.sha256FileHex(path.join(versionsDir, 'D102', 'web', 'main.dart.js')) === next.manifest.files['web/main.dart.js'],
     '',
   );
+  check(
+    '版本目录带 src/（拆壳后可独立启动）',
+    fs.existsSync(path.join(versionsDir, 'D102', 'src', 'modules', 'system', 'index.js')),
+    '',
+  );
   const unchanged = path.join(versionsDir, 'D102', 'contracts', 'locales.json');
   const stat = fs.statSync(unchanged);
   check('未变化文件是硬链接（不占空间）', stat.nlink >= 2, `nlink=${stat.nlink}`);
@@ -270,6 +278,42 @@ async function waitJob(svc, timeoutMs = 60_000) {
   const badPtr = JSON.parse(fs.readFileSync(path.join(badData, 'versions', 'current.json'), 'utf8'));
   check('失败后指针仍是 D101', badPtr.id === 'D101', badPtr.id);
   check('失败后没有留下半个版本目录', !fs.existsSync(path.join(badData, 'versions', 'D103')), '');
+
+  // ---- 增量失败 → 自动降级全量 --------------------------------------
+  // 场景：基线被用户改过 / 包坏了。增量必然失败，但有全量包就该继续，
+  // 而不是把「更新失败」丢给用户（方案 §9.6）。
+  const setupBytes = Buffer.concat([Buffer.from('MZ-fake-setup\n'), crypto.randomBytes(2048)]);
+  fs.writeFileSync(path.join(release, 'setup.exe'), setupBytes);
+  const fullUpdate = JSON.parse(JSON.stringify(update));
+  fullUpdate.components.server.version = 104;
+  fullUpdate.components.server.semver = '0.1.4';
+  // 故意写错摘要：增量一定校验不过
+  fullUpdate.components.server.delta.files[0].sha256 = 'f'.repeat(64);
+  fullUpdate.components.server.full = {
+    size: setupBytes.length,
+    sha256: L.sha256Hex(setupBytes),
+    urls: [`http://127.0.0.1:${port}/setup.exe`],
+  };
+  const fullSigned = signUpdate(fullUpdate);
+  fs.writeFileSync(path.join(release, 'update-full.json'), fullSigned.text);
+  fs.writeFileSync(path.join(release, 'update-full.json.sig'), fullSigned.sig);
+
+  process.env.COLANAS_UPDATE_MANIFEST = `http://127.0.0.1:${port}/update-full.json`;
+  const fbData = path.join(work, 'data-fallback');
+  fs.mkdirSync(fbData, { recursive: true });
+  L.copyTree(path.join(old.dir), path.join(fbData, 'versions', 'D101'));
+  fs.writeFileSync(path.join(fbData, 'versions', 'current.json'), JSON.stringify({ id: 'D101' }));
+  const fbSvc = new UpdateService({ dataDir: fbData });
+  await fbSvc.install({ force: true });
+  const fbJob = await waitJob(fbSvc);
+  check('增量失败自动降级全量', fbJob.phase === 'ready' && fbJob.mode === 'full', `${fbJob.phase}/${fbJob.mode}`);
+  check(
+    '全量包已下载并校验',
+    Boolean(fbJob.hint) && fs.existsSync(fbJob.hint) && L.sha256FileHex(fbJob.hint) === L.sha256Hex(setupBytes),
+    fbJob.hint ? path.basename(fbJob.hint) : '(无路径)',
+  );
+  const fbPtr = JSON.parse(fs.readFileSync(path.join(fbData, 'versions', 'current.json'), 'utf8'));
+  check('降级全量时不动指针', fbPtr.id === 'D101', fbPtr.id);
 
   // ---- boot.json 自愈 --------------------------------------------------
   const bootDir = path.join(work, 'boot');

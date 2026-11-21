@@ -64,7 +64,9 @@ export interface ProductVersion {
 export function resolvePackageVersion(): ProductVersion {
   const fromEnv = String(process.env.COLANAS_APP_VERSION || '').trim();
   if (/^\d+\.\d+\.\d+$/.test(fromEnv)) return { semver: fromEnv, version: semverCode(fromEnv) };
-  for (const rel of ['../package.json', '../../package.json', '../../../package.json']) {
+  // 拆壳后的内核跑在 `<dataDir>/versions/D<ver>/kernel`，同级的 version.json
+  // 才是它的真实版本（环境变量没注入时靠这条兜底）
+  for (const rel of ['../version.json', '../package.json', '../../package.json', '../../../package.json']) {
     try {
       const raw = JSON.parse(fs.readFileSync(path.resolve(__dirname, rel), 'utf8')) as { version?: string };
       const ver = String(raw.version || '');

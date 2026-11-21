@@ -56,6 +56,13 @@ let watchdogTimer: NodeJS.Timeout | null = null;
 let watchdogGaveUp = false;
 
 let kernel: Electron.UtilityProcess | null = null;
+/**
+ * 是否启用「版本目录内核 / 播种 / 自愈」。
+ *
+ * 提成模块级变量：崩溃重启与看门狗重启都要走同一套自愈判定，
+ * 而它们是在 `whenReady` 之后才发生的。
+ */
+let versionedKernel = false;
 let tray: Tray | null = null;
 let quitting = false;
 let crashes = 0;
@@ -137,6 +144,7 @@ function seedSources(): Parameters<typeof seedIfNeeded>[1] {
   const root = path.join(__dirname, '..', '..');
   return {
     kernelDir: path.join(__dirname, '..', 'kernel'),
+    srcDir: path.join(__dirname, '..', 'src'),
     electronHost: path.join(__dirname, 'kernel-host.js'),
     webDir: app.isPackaged
       ? path.join(process.resourcesPath, 'web')
@@ -213,9 +221,27 @@ function startKernel(): void {
   if (nodePaths.length > 0) {
     env.NODE_PATH = [env.NODE_PATH, ...nodePaths].filter(Boolean).join(path.delimiter);
   }
-  // 版本号与版本目录 id：内核用它判断「当前是哪一版」，也写进 boot.json
-  env.COLANAS_APP_VERSION = app.getVersion();
-  env.COLANAS_SHELL_VERSION = process.versions.electron;
+  /**
+   * 两个版本号别混：
+   *   COLANAS_SHELL_VERSION = **外壳**的产品版本（`app.getVersion()`），
+   *     清单里的 `minShell` 就是跟它比 —— 跟 Electron 版本比毫无意义；
+   *   COLANAS_APP_VERSION   = **正在跑的内核**版本：拆壳后用版本目录的
+   *     `version.json`，没拆壳时等于安装包版本。
+   */
+  env.COLANAS_SHELL_VERSION = app.getVersion();
+  env.COLANAS_ELECTRON_VERSION = process.versions.electron;
+  let kernelSemver = app.getVersion();
+  if (entry.versioned && entry.dir) {
+    try {
+      const meta = JSON.parse(fs.readFileSync(path.join(entry.dir, 'version.json'), 'utf8')) as {
+        semver?: string;
+      };
+      if (meta.semver) kernelSemver = meta.semver;
+    } catch {
+      /* 版本目录缺 version.json：退回安装包版本 */
+    }
+  }
+  env.COLANAS_APP_VERSION = kernelSemver;
   if (entry.id) env.COLANAS_VERSION_ID = entry.id;
   env.COLANAS_DATA_DIR = dataDir;
 
@@ -265,6 +291,7 @@ function startKernel(): void {
      */
     if (code === 0) {
       crashes = 0;
+      healBeforeRestart();
       setTimeout(startKernel, 300);
       return;
     }
@@ -280,8 +307,35 @@ function startKernel(): void {
 
     const delay = Math.min(1000 * 2 ** (crashes - 1), 8000);
     console.error(`[shell] kernel exited (code=${code}), restart #${crashes} in ${delay}ms`);
+    healBeforeRestart();
     setTimeout(startKernel, delay);
   });
+}
+
+/**
+ * 重启内核之前先做一次自愈判定。
+ *
+ * 只在 `whenReady` 评估一次是不够的：切完版本内核主动退出（exit 0）后外壳会
+ * 立刻重新 fork，如果新版本起不来，`attempts` 永远不涨，回滚也就永远不会发生 ——
+ * 用户看到的是「重启 5 次后弹个错误框」，而不是「自动退回上一版」。
+ */
+function healBeforeRestart(): void {
+  if (!versionedKernel) return;
+  try {
+    const decision = prepareBoot(dataDir);
+    if (decision.message) console.log(`[shell] 重启判定：${decision.message}`);
+    trace(`heal action=${decision.action} id=${decision.id ?? '-'}`);
+    if (decision.action === 'rollback') {
+      tray?.setToolTip(trayTip(`已回滚到 ${decision.id}`));
+      dialog.showErrorBox(
+        'ColaNasOs',
+        `新版本连续启动失败，已自动回滚到 ${decision.id}。\n` +
+          '更新包与旧版本目录都保留着，排查后可在「设置 → 更新」里重试。',
+      );
+    }
+  } catch (err) {
+    trace(`heal failed: ${String(err)}`);
+  }
 }
 
 function stopKernel(): void {
@@ -435,7 +489,10 @@ app.whenReady().then(() => {
    *
    * 开发态不启用：`dist/` 每次 tsc 都会变，从版本目录跑会让开发循环失效。
    */
-  const versionedKernel = app.isPackaged || process.env.COLANAS_VERSIONED_KERNEL === '1';
+  // 托盘先建：播种要拷 50 MB（Web 产物），HDD 上要几秒，不能让人以为点了没反应
+  createTray();
+
+  versionedKernel = app.isPackaged || process.env.COLANAS_VERSIONED_KERNEL === '1';
   if (versionedKernel) {
     try {
       seedIfNeeded(dataDir, seedSources());
@@ -449,7 +506,6 @@ app.whenReady().then(() => {
   }
 
   startKernel();
-  createTray();
 
   // 进程外看门狗：内核「端口还在听但卡死」时也能拉回来
   watchdogTimer = setInterval(() => {
@@ -458,6 +514,7 @@ app.whenReady().then(() => {
       console.error('[watchdog] kernel unresponsive, restart:', decision);
       crashes = 0;
       stopKernel();
+      healBeforeRestart();
       startKernel();
     } else if (decision.action === 'giveup' && !watchdogGaveUp) {
       watchdogGaveUp = true;

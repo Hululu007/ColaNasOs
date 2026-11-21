@@ -146,7 +146,11 @@ class MainActivity : AudioServiceActivity() {
     }
 
     /** 新包签名必须与当前应用一致，否则就是被换了包的钓鱼更新 */
+    @Suppress("DEPRECATION")
     private fun sameSigner(file: File): Boolean {
+        // API 28 以下没有 SigningInfo（getPackageArchiveInfo 也拿不到），
+        // 硬比会直接抛 NoSuchMethodError；这些老系统交给系统安装器自己校验
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return true
         return runCatching {
             val flags = PackageManager.GET_SIGNING_CERTIFICATES
             val info = packageManager.getPackageArchiveInfo(file.absolutePath, flags) ?: return false

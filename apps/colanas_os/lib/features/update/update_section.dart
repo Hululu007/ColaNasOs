@@ -70,6 +70,8 @@ class _UpdateSectionState extends State<UpdateSection> {
       if (!mounted) return;
       setState(() {
         _server = res;
+        // 服务端检查失败是 200 + error（离线 NAS 是常态），要如实告诉用户
+        _error = res.error.isEmpty ? null : res.error;
         _checking = false;
       });
     } catch (e) {
@@ -314,11 +316,32 @@ class _UpdateSectionState extends State<UpdateSection> {
             tr('update.failed', {'error': job?.error ?? ''}),
             style: TextStyle(fontSize: NasTokens.fontCaption, color: scheme.error),
           ),
-          TextButton(onPressed: _startServerUpdate, child: Text(tr('update.retry'))),
+          if (job?.hint != 'manual')
+            TextButton(onPressed: _startServerUpdate, child: Text(tr('update.retry'))),
         ],
       );
     }
     if (job?.phase == 'ready') {
+      // 全量模式下载的是安装包：重启内核装不上它，只能把路径交给人
+      if (job?.mode == 'full') {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              tr('update.fullReady'),
+              style: TextStyle(fontSize: NasTokens.fontCaption, color: scheme.primary),
+            ),
+            if ((job?.hint ?? '').isNotEmpty)
+              SelectableText(
+                job?.hint ?? '',
+                style: TextStyle(
+                  fontSize: NasTokens.fontCaption,
+                  color: context.nasTextSecondary,
+                ),
+              ),
+          ],
+        );
+      }
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:nas_core/nas_core.dart';
+import 'package:nas_ui/nas_ui.dart';
 
 import '../../core/app_version.dart';
 import '../../core/session.dart';
@@ -74,10 +75,11 @@ class ClientUpdate {
       }
       return assets.isEmpty ? null : assets.first;
     }
+    // PC 只认安装版：便携版是 zip，没法「自己替换自己」，硬跑只会把 zip 当 exe 启动
     for (final a in assets) {
       if (a.kind == 'setup') return a;
     }
-    return assets.isEmpty ? null : assets.first;
+    return null;
   }
 }
 
@@ -149,6 +151,12 @@ class UpdateService {
 
   bool _checking = false;
 
+  /// 用户点了「取消」。
+  ///
+  /// 下载器抛出的错误会在 `startInstall` 的 catch 里被当成「失败」显示出来，
+  /// 而用户刚刚明明是自己取消的 —— 只有这个标记能把两者分开。
+  bool _cancelRequested = false;
+
   /// 安装器按平台条件导入（Web 端是空实现）
   final UpdateInstaller _installer = createUpdateInstaller();
 
@@ -208,6 +216,18 @@ class UpdateService {
         force: force ? '1' : '0',
       );
       serverCheck.value = res;
+      // 服务端把「清单源不可达」也返回 200 + error：不能当成「已是最新」
+      if (res.error.isNotEmpty) {
+        status.value = UpdateStatus(
+          phase: UpdatePhase.failed,
+          error: res.error,
+        );
+        await SettingsStore.instance.setInt(
+          'update.lastCheckAt',
+          DateTime.now().millisecondsSinceEpoch,
+        );
+        return;
+      }
       await SettingsStore.instance.setInt(
         'update.lastCheckAt',
         DateTime.now().millisecondsSinceEpoch,
@@ -270,10 +290,12 @@ class UpdateService {
     if (info == null || !info.hasUpdate) return;
     final asset = info.assetFor(component);
     if (asset == null) {
-      status.value = const UpdateStatus(phase: UpdatePhase.failed, error: 'noAsset');
+      // 清单里没有本平台能自动安装的包（例如只发了便携版 / 只发了 TV 包）
+      status.value = UpdateStatus(phase: UpdatePhase.failed, error: tr('update.noAsset'));
       return;
     }
     _prompted = true;
+    _cancelRequested = false;
     status.value = UpdateStatus(
       phase: UpdatePhase.downloading,
       total: asset.size,
@@ -300,12 +322,18 @@ class UpdateService {
       await _installer.install(path: path, asset: asset);
       status.value = const UpdateStatus(phase: UpdatePhase.done);
     } catch (e) {
+      // 自己点的取消不算失败：回 idle，别弹一条「更新失败」
+      if (_cancelRequested) {
+        status.value = const UpdateStatus(phase: UpdatePhase.idle);
+        return;
+      }
       status.value = UpdateStatus(phase: UpdatePhase.failed, error: '$e');
     }
   }
 
   /// 下载中途取消（已下片段保留，下次续传）
   void cancel() {
+    _cancelRequested = true;
     _installer.cancel();
     if (status.value.busy) {
       status.value = const UpdateStatus(phase: UpdatePhase.idle);

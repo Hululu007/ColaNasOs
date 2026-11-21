@@ -3101,6 +3101,9 @@
     "update.autoCheck": "每 6 小时自动检查",
     "update.autoCheckHint": "默认关闭：NAS 常在跑转码 / 做种，只在打开界面时被动查一次",
     "update.versionDir": "版本目录：{dir}",
-    "update.tvHint": "遥控器：左右选择，OK 确认，返回关闭"
+    "update.tvHint": "遥控器：左右选择，OK 确认，返回关闭",
+    "update.fullReady": "安装包已下载完成，运行它即可完成更新",
+    "update.checkFailed": "检查失败 · 点此重试",
+    "update.noAsset": "这个版本没有可自动安装的安装包，请到项目主页手动下载"
   }
 }

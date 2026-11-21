@@ -24,6 +24,8 @@ export function dataDirOf(): string {
 
 export interface SeedSources {
   kernelDir: string;
+  /** `dist/src`（kernel 的模块实现都在这里），少它内核起不来 */
+  srcDir: string;
   electronHost: string;
   webDir: string | null;
   contractsDir: string | null;
@@ -59,7 +61,19 @@ export function resolveKernelEntry(dataDir: string, localHost: string): KernelEn
   const cur = up.current();
   if (cur) {
     const host = path.join(cur.dir, 'electron', 'kernel-host.js');
-    if (fs.existsSync(host)) return { host, versioned: true, id: cur.id, dir: cur.dir };
+    /**
+     * 三件套齐了才算「可用版本目录」：
+     *   electron/kernel-host.js  入口
+     *   kernel/index.js          内核本体
+     *   src/modules/system       模块实现（`kernel/modules.ts` 编译后 require 它）
+     * 少任何一个都退回安装目录内核 —— 宁可用旧代码，也不能让 NAS 起不来。
+     */
+    const complete =
+      fs.existsSync(host) &&
+      fs.existsSync(path.join(cur.dir, 'kernel', 'index.js')) &&
+      fs.existsSync(path.join(cur.dir, 'src', 'modules', 'system', 'index.js'));
+    if (complete) return { host, versioned: true, id: cur.id, dir: cur.dir };
+    console.error(`[shell] 版本目录 ${cur.id} 不完整（缺 kernel/src/electron），本次用安装目录内核`);
   }
   return { host: localHost, versioned: false, id: null, dir: null };
 }

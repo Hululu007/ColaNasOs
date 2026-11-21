@@ -432,7 +432,18 @@ export function registerSystemUpdate(app: FastifyInstance, k: KernelApi): void {
       },
     }),
     async () => {
-      serviceFor(k).requestRestart();
+      /**
+       * 先回包，再优雅关闭：`app.close()` 会停 sidecar / 释放 DB / 停内置下载器
+       * （与 `/system/restart` 同一套收尾）；直接 process.exit 会跳过这些。
+       */
+      setTimeout(async () => {
+        try {
+          await app.close();
+        } catch {
+          /* 关闭失败也要退出，交给外壳重启 */
+        }
+        process.exit(0);
+      }, 400);
       return { ok: true };
     },
   );

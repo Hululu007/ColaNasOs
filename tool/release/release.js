@@ -203,6 +203,13 @@ function buildVersionDir(versionDir, product) {
   const skip = (p) => !p.endsWith('.map') && !p.endsWith('.br');
   let n = 0;
   n += L.copyTree(path.join(L.root, 'dist', 'kernel'), path.join(versionDir, 'kernel'), skip);
+  // 内核的模块实现：`dist/kernel/modules.js` 里是 `require("../src/modules/…")`，
+  // 少了这一份，版本目录里的内核一启动就 MODULE_NOT_FOUND（2026-11-21 复查发现）
+  const srcDir = path.join(L.root, 'dist', 'src');
+  if (!fs.existsSync(path.join(srcDir, 'modules', 'system', 'index.js'))) {
+    L.fail('缺少 dist/src（先 npm run build）——版本目录必须带 src/，否则内核起不来');
+  }
+  n += L.copyTree(srcDir, path.join(versionDir, 'src'), skip);
   // electron 内核宿主：单个文件
   const host = path.join(L.root, 'dist', 'electron', 'kernel-host.js');
   if (!fs.existsSync(host)) L.fail('缺少 dist/electron/kernel-host.js（先 npm run build）');

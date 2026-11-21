@@ -4209,6 +4209,9 @@
     "update.autoCheck": {},
     "update.autoCheckHint": {},
     "update.versionDir": {"dir": {}},
-    "update.tvHint": {}
+    "update.tvHint": {},
+    "update.fullReady": {},
+    "update.checkFailed": {},
+    "update.noAsset": {}
   }
 }

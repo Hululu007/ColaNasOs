@@ -178,6 +178,16 @@ export class UpdateService {
   readonly assetDir: string;
   private readonly memo: SourceMemo;
   private job: JobStatus = UpdateService.idleJob();
+  /**
+   * 上次拉清单失败的时间与原因。
+   *
+   * 离线 NAS 上每个源都要等满 8s 首字节超时（3 个源 = 24s），而「登录时检查」
+   * 和设置页「检查更新」会反复触发。失败后 5 分钟内直接返回同一个错误，
+   * 不再空等 —— 用户点「检查更新」时也能立刻看到「更新源不可达」。
+   */
+  private lastFailureAt = 0;
+  private lastFailure = '';
+  private static readonly FAILURE_TTL_MS = 5 * 60 * 1000;
   private busy = false;
   private abort: AbortController | null = null;
   private lastCheckedAt = 0;
@@ -290,6 +300,14 @@ export class UpdateService {
    */
   async loadManifest(opts: { force?: boolean; maxAgeMs?: number } = {}): Promise<UpdateManifest> {
     const { json, sig } = this.manifestCachePath();
+    // 刚失败过：直接抛同一个错误（`force` 才算「我再试一次」）
+    if (
+      !opts.force &&
+      this.lastFailureAt > 0 &&
+      Date.now() - this.lastFailureAt < UpdateService.FAILURE_TTL_MS
+    ) {
+      throw new DownloadError('E_MANIFEST', this.lastFailure || '拉取更新清单失败');
+    }
     const maxAge = opts.maxAgeMs ?? 6 * 60 * 60 * 1000;
     const fresh =
       !opts.force &&
@@ -323,6 +341,8 @@ export class UpdateService {
         fs.writeFileSync(json, raw);
         fs.writeFileSync(sig, sigRes.text);
         this.lastCheckedAt = Date.now();
+        this.lastFailureAt = 0;
+        this.lastFailure = '';
         return manifest;
       } catch (err) {
         errors.push(`${base}: ${(err as Error).message}`);
@@ -330,7 +350,9 @@ export class UpdateService {
         if (err instanceof UpdateVerifyError) break;
       }
     }
-    throw new DownloadError('E_MANIFEST', '拉取更新清单失败', { errors });
+    this.lastFailureAt = Date.now();
+    this.lastFailure = `拉取更新清单失败（${errors.slice(0, 1).join('') || '无可用源'}）`;
+    throw new DownloadError('E_MANIFEST', this.lastFailure, { errors });
   }
 
   private parseManifest(input: { data: Buffer; sig: string }): UpdateManifest {
@@ -373,6 +395,20 @@ export class UpdateService {
     }
 
     const latestVersion = server.version || semverToVersion(server.semver) || 0;
+    // 清单写坏了（version 0 / semver 不合法）：当成「没有可用更新」，
+    // 绝不能让它走到 versionId(0) 那条会抛异常的路径上
+    if (latestVersion < 1) {
+      return {
+        component: 'server',
+        hasUpdate: false,
+        current,
+        latest: null,
+        mode: 'none',
+        deltaBytes: 0,
+        needsReshell: false,
+        minShell: String(manifest.minShell || ''),
+      };
+    }
     const newer =
       compareSemver(server.semver, current.semver) > 0 &&
       (current.version === null || latestVersion > current.version);
@@ -539,21 +575,55 @@ export class UpdateService {
 
       if (check.needsReshell) {
         this.fail(
-          new Error(`需要重装服务端（当前壳版本 ${this.opts.shellVersion ?? '未知'}，要求 ≥ ${check.latest.version}）`),
+          new Error(
+            `需要重装服务端（当前外壳 ${this.opts.shellVersion || '未知'}，` +
+              `该版本要求 ≥ ${check.minShell || '更新的外壳'}）`,
+          ),
           'manual',
         );
         return;
       }
 
-      // 磁盘预检：staging 是完整一份版本目录（硬链接不占空间，但变化文件要落地）
+      /**
+       * 磁盘预检。增量只落变化文件（硬链接不占空间），按「增量体积 x4 + 100 MB」算；
+       * 全量要落一份完整安装包 + 解压，按 1.2 GB 算。一律按 1.1 GB 卡，会把
+       * 快满的 NAS 直接挡在更新之外，而它其实只差几 MB。
+       */
+      const need =
+        check.mode === 'delta' ? Math.max(300 * MB, check.deltaBytes * 4 + 100 * MB) : 1200 * MB;
       const free = freeSpace(this.dataDir);
-      if (free > 0 && free < 2 * 550 * MB) {
-        this.fail(new Error(`磁盘空间不足（剩余 ${Math.round(free / MB)} MB，至少需要 1.1 GB）`), 'manual');
+      if (free > 0 && free < need) {
+        this.fail(
+          new Error(`磁盘空间不足（剩余 ${Math.round(free / MB)} MB，至少需要 ${Math.round(need / MB)} MB）`),
+          'manual',
+        );
         return;
       }
 
       if (check.mode === 'delta') {
-        await this.installDelta(check, targetId, signal);
+        try {
+          await this.installDelta(check, targetId, signal);
+        } catch (err) {
+          if (signal.aborted) throw err;
+          /**
+           * 增量失败自动降级全量（方案 §9.6）：基线被用户改过、包缺文件、
+           * 摘要对不上……都只说明「这份增量用不了」，不代表不能更新。
+           * 没有全量包时才把错误抛给用户。
+           */
+          // 这次读清单失败不能盖掉原始错误（它才是用户需要看的）
+          const full = (await this.loadManifest({}).catch(() => null))?.components.server?.full;
+          if (!full?.urls?.length) throw err;
+          this.log('delta failed, fallback to full', { err: (err as Error).message });
+          this.setJob({
+            phase: 'preparing',
+            percent: 0,
+            loaded: 0,
+            message: '增量包不可用，改用完整安装包',
+            error: '',
+            mode: 'full',
+          });
+          await this.installFull(check, signal);
+        }
       } else if (check.mode === 'full') {
         await this.installFull(check, signal);
       } else {
@@ -918,6 +988,8 @@ export class UpdateService {
    * 目的：客户端下次来问时，`urls` 的第一条就是局域网地址 —— 内网满速、
    * 不消耗公网流量。失败完全无害（公网 URL 仍然可用），所以静默吞掉错误。
    */
+  private readonly prefetching = new Set<string>();
+
   async prefetchClientAsset(component: 'client_pc' | 'client_android'): Promise<void> {
     try {
       const m = await this.loadManifest({});
@@ -927,17 +999,20 @@ export class UpdateService {
       for (const ref of refs.slice(0, 1)) {
         if (!ref || !ref.urls?.length) continue;
         if (this.cachedAssetPath(ref.sha256)) continue;
-        await this.cacheClientAsset(ref);
+        // 同一份资产并发预取会各下一遍（多端同时登录很常见）
+        if (this.prefetching.has(ref.sha256)) continue;
+        this.prefetching.add(ref.sha256);
+        try {
+          await this.cacheClientAsset(ref);
+        } finally {
+          this.prefetching.delete(ref.sha256);
+        }
       }
     } catch {
       /* 预取失败不影响任何功能 */
     }
   }
 
-  /** 重启内核：外壳监听 exit(0) 会重新 fork（切完指针后调用） */
-  requestRestart(): void {
-    setTimeout(() => process.exit(0), 300);
-  }
 }
 
 function deltaBytes(delta: DeltaRef): number {
@@ -996,6 +1071,11 @@ export function seedVersionDir(opts: {
   versionsDir: string;
   seed: {
     kernelDir: string;
+    /**
+     * **必须**有：`kernel/modules.ts` 编译后是 `require("../src/modules/…")`，
+     * 少这一份，版本目录里的内核一启动就 MODULE_NOT_FOUND。
+     */
+    srcDir: string;
     electronHost: string;
     webDir: string | null;
     contractsDir: string | null;
@@ -1032,6 +1112,7 @@ export function seedVersionDir(opts: {
   };
 
   copyDir(opts.seed.kernelDir, 'kernel');
+  copyDir(opts.seed.srcDir, 'src');
   copyDir(opts.seed.webDir, 'web');
   copyDir(opts.seed.contractsDir, 'contracts');
   copyDir(opts.seed.sidecarsDir, 'sidecars');

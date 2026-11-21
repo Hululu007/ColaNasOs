@@ -13,8 +13,26 @@ export class UpdateVerifyError extends Error {
   }
 }
 
+/**
+ * 文件摘要（**分块流式**，不要 readFileSync）。
+ *
+ * 全量包是 551 MB：一次性读入会占掉 551 MB 堆内存，
+ * 在低配 NAS 上足以把内核推到 OOM。1 MB 分块 + 同步读，速度几乎一样。
+ */
 export function sha256File(p: string): string {
-  return crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
+  const hash = crypto.createHash('sha256');
+  const fd = fs.openSync(p, 'r');
+  const buf = Buffer.allocUnsafe(1024 * 1024);
+  try {
+    for (;;) {
+      const n = fs.readSync(fd, buf, 0, buf.length, null);
+      if (n <= 0) break;
+      hash.update(n === buf.length ? buf : buf.subarray(0, n));
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
+  return hash.digest('hex');
 }
 
 export function sha256(data: Buffer | string): string {
