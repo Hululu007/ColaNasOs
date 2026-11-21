@@ -63,6 +63,8 @@ packages/
 | 点 | 做法 |
 | --- | --- |
 | 渲染 | Windows 客户端用 **libmpv（mpv 0.36）**，`media_kit_video` 走 render API 出纹理 |
+| TV 硬解（Media3） | Android TV 播放器开**隧道模式**，音视频同步与合成交给 SoC 硬件通道，4K / HDR 不在应用层多一次拷贝；开**解码器回退**，DV / HEVC 10bit 硬解实例初始化失败时继续尝试其它硬件解码器而非黑屏；24p 片源优先匹配电视刷新率（`ONLY_IF_SEAMLESS`） |
+| TV 音轨与平台视图 | `onTracksChanged` 检测音轨：选中 TrueHD / DTS-HD MA 这类无平台解码器的音轨时主动报错，让 Dart 侧切服务端转码（视频直通 + 音频转 AAC），避免「有画面没声音」；平台视图走 **Hybrid Composition 真实 Surface**（`initExpensiveAndroidView` + `AndroidViewSurface`），保住 HDR / 杜比动态元数据 |
 | 直连 vs 转码 | 用户选「原画」时优先直连；转码只发生在结构性解不了、用户显式选了分辨率档、直连实测跟不上或颜色无法保证时 |
 | 原画直通 | `preset=original` 会话只换容器不重编码，DV / HDR 元数据原样保留；播放列表读 ffmpeg 真实分片，音轨可安全封装时一并 copy |
 | DV / HDR | 电视按 `Display.HdrCapabilities` 决定，支持 DV / HDR10+ 就交给电视；桌面 libmpv 因缺少 libplacebo / RPU 仍不做 DV 直连 |
