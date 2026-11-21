@@ -17,6 +17,14 @@ https://github.com/colaKot/ColaNasOs/releases/download/v1.3.14 \
  *   dist_release/assets/            增量资产：*.br、smallfiles-*.brb、manifest-D10314.json
  *
  * 铁律：**清单最后上传**（方案 §10.1）。本工具只负责生成；上传由 publish.js 收尾。
+ *
+ * 发行方式（2026-11-21 定）：**服务端一律发增量**。
+ *   - 增量是默认行为，不是可选项：`--from` 没给就自动取输出目录里上一版作基线；
+ *     连基线都找不到直接失败，绝不静默退化成「只发全量」。
+ *   - 全量包**始终一起发**，它是「首次安装」和「跨版本跳级」的兜底，不能撤。
+ *   - 真要只发全量，必须显式 `--no-delta`，并在提交信息里写明原因。
+ *   - 补发场景（发完才发现漏了增量）用 `--reuse-version-dir`：复用已发布的
+ *     版本目录，不从当前 `dist/` 重建，避免把发版之后的在途改动混进那一版。
  */
 const fs = require('node:fs');
 const path = require('node:path');
@@ -25,11 +33,13 @@ const L = require('./lib');
 const SMALL_FILE_LIMIT = 256 * 1024;
 
 function main() {
-  const product = L.productVersion();
+  // 补发场景：Release 上已经发出去的那一版未必等于 package.json 的当前值
+  // （发版成功后惯例会把版本 bump 到下一版）。显式 `--semver` 以它为准。
+  const product = productOverride() ?? L.productVersion();
   const out = path.resolve(L.root, String(L.arg('out', 'dist_release')));
   const tag = String(L.arg('tag', `v${product.semver}`));
   const channels = String(L.arg('channel', 'stable'));
-  const fromDirs = L.args('from').map((p) => path.resolve(L.root, p));
+  const fromDirs = resolveBaselines(out, product.version);
   /**
    * 下载源：`<url>[#<资产名后缀>]`，逗号分隔，**顺序即优先级**。
    *
@@ -55,14 +65,28 @@ function main() {
 
   // ---- 1. 版本目录 -------------------------------------------------------
   const versionDir = path.join(out, id);
-  fs.rmSync(versionDir, { recursive: true, force: true });
-  const copied = buildVersionDir(versionDir, product);
-  L.writeJson(path.join(versionDir, 'version.json'), {
-    semver: product.semver,
-    version: product.version,
-    buildNumber: product.version % 100,
-    versionCode: product.version,
-  });
+  const reuseVersionDir = L.arg('reuse-version-dir') !== undefined;
+  let copied = 0;
+  if (reuseVersionDir) {
+    // 补发场景：**绝不能**从当前 `dist/` 重建。发版之后往 dist/ 里编译的改动
+    // （比如刚修的一个 bug）不属于「已发布的那一版」，混进来会让增量装出来的
+    // 内容和 Release 上那个全量包装出来的内容不一致 —— 同一个版本号两种内容。
+    if (!fs.existsSync(path.join(versionDir, 'manifest.json'))) {
+      L.fail(
+        `--reuse-version-dir 需要 ${path.relative(L.root, versionDir)} 已存在且带 manifest.json`,
+      );
+    }
+    console.log(`[release] 复用已有版本目录 ${id}（不重建，保持与已发布内容一致）`);
+  } else {
+    fs.rmSync(versionDir, { recursive: true, force: true });
+    copied = buildVersionDir(versionDir, product);
+    L.writeJson(path.join(versionDir, 'version.json'), {
+      semver: product.semver,
+      version: product.version,
+      buildNumber: product.version % 100,
+      versionCode: product.version,
+    });
+  }
 
   // ---- 2. 版本清单（整体签名）--------------------------------------------
   const { pem } = L.loadPrivateKey();
@@ -85,8 +109,15 @@ function main() {
   let delta = null;
   if (fromDirs.length > 0) {
     delta = buildDelta({ versionDir, assetsDir, manifest, baselines: fromDirs, urlBases, id });
+  } else if (L.arg('no-delta') !== undefined) {
+    console.log('[release] --no-delta：本次只发全量 / 清单（这一版的服务端无法增量升级）');
   } else {
-    console.log('[release] 未指定 --from，本次不发增量（只发全量 / 清单）');
+    L.fail(
+      `找不到增量基线：${path.relative(L.root, out)} 下没有更旧的 D<NNN> 版本目录。\n` +
+        '  增量是服务端的默认发行方式，不允许静默退化成只发全量。\n' +
+        '  · 有旧版本目录 → 用 --from=<目录> 指定基线（可重复传多个）\n' +
+        '  · 确实做不出可用增量 → 显式加 --no-delta，并在提交信息里写明原因',
+    );
   }
 
   // ---- 4. update.json ----------------------------------------------------
@@ -224,6 +255,53 @@ function main() {
     // 551 MB 的整包不用在 dist_release 里再复制一份
     L.writeJson(path.join(out, 'upload.json'), { tag, entries: uploads });
   }
+}
+
+/**
+ * `--semver=` 覆盖：只用于补发已经上线的版本，不改 package.json。
+ * 日常发版不传，版本号仍以 package.json 为唯一真源。
+ */
+function productOverride() {
+  const raw = L.arg('semver');
+  if (!raw) return null;
+  const m = /^(\d+)\.(\d+)\.(\d+)$/.exec(String(raw));
+  if (!m) L.fail(`--semver 不合法: ${raw}`);
+  const [major, minor, patch] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  return { semver: String(raw), version: major * 10000 + minor * 100 + patch };
+}
+
+/**
+ * 增量基线：显式 `--from` 优先，否则自动取输出目录里「比当前旧的最新一版」。
+ *
+ * 为什么默认自动找：漏传 `--from` 的代价是完全静默的 —— 清单里没有 `delta`，
+ * 所有用户都只能下几百 MB 全量包，而发版的人看不出任何异常（1.3.14 / 1.3.15
+ * 两次都是这么发出去的）。
+ *
+ * 只取**最新一版**而不取全部旧版：清单里 `from` 是变化文件的**并集**，基线越多
+ * 增量包越大。跳级用户（比如 1.3.12 直升）会落到全量兜底，这是可接受的；
+ * 要覆盖更多版本就显式多传几个 `--from`。
+ */
+function resolveBaselines(out, currentVersion) {
+  const explicit = L.args('from').map((p) => path.resolve(L.root, p));
+  if (explicit.length > 0) return explicit;
+  if (L.arg('no-delta') !== undefined) return [];
+  const candidates = [];
+  for (const name of fs.existsSync(out) ? fs.readdirSync(out) : []) {
+    if (!/^D\d{5}$/.test(name)) continue;
+    const dir = path.join(out, name);
+    if (!fs.existsSync(path.join(dir, 'manifest.json'))) continue;
+    let v = 0;
+    try {
+      v = Number(L.readJson(path.join(dir, 'version.json')).version) || 0;
+    } catch {
+      continue;
+    }
+    if (v > 0 && v < currentVersion) candidates.push({ dir, v });
+  }
+  if (candidates.length === 0) return [];
+  candidates.sort((a, b) => b.v - a.v);
+  console.log(`[release] 自动基线：${path.relative(L.root, candidates[0].dir)}`);
+  return [candidates[0].dir];
 }
 
 /**
