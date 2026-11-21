@@ -277,13 +277,25 @@ class _PlayerPageState extends State<PlayerPage> {
   /// InheritedWidget，而 TV 模式本来就是全局开关，两者取值一致。
   bool get _tvMode => AppSettings.instance.tvMode.value;
 
-  bool get _shouldUseNativeTvPlayer =>
+  /// Android 上「系统播放器直通」是否可用。
+  ///
+  /// HDR / 杜比视界片源交给 Media3 + SurfaceView：DV RPU 由系统解码器处理，
+  /// 手机上能真输出杜比视界；libmpv 那条链路不解析 DV RPU，Profile 5 直连必紫。
+  ///
+  /// 用户开了「HDR 色调映射」就表示他要服务端转码，这里主动让路（走 libmpv + 转码）。
+  /// 手机 / 平板同样适用 —— 既能用上本机的杜比，也方便在手机上验电视端表现。
+  bool get _androidNativeHdrEligible =>
       !kIsWeb &&
       defaultTargetPlatform == TargetPlatform.android &&
-      _tvMode &&
       _srcHdr.isHdr &&
-      !PlayPreferences.toneMap &&
-      (_isTranscode || !_colorBlocksDirect);
+      !PlayPreferences.toneMap;
+
+  /// 电视沿用老口径（直连与转码流都交给 Media3）；
+  /// 手机 / 平板只在**直连** HDR 片时切过去，转码流继续用 libmpv，
+  /// 避免把手机侧的 HLS 播放行为一起改掉。
+  bool get _shouldUseNativeTvPlayer =>
+      _androidNativeHdrEligible &&
+      (_tvMode ? (_isTranscode || !_colorBlocksDirect) : !_isTranscode);
 
   Duration get _playbackPosition =>
       _nativeTvActive ? _tvMedia3Player.state.position : _player.state.position;
@@ -1038,9 +1050,11 @@ class _PlayerPageState extends State<PlayerPage> {
           'item=${widget.itemId} session=$_sessionId preset=$_preset '
           'codec=$_codec url=${_redactedUrlForLog(_url)}',
     );
+    // 直连解不了就退到「视频 copy + 音频转 AAC」的转码会话。
+    // 手机 / 平板现在也走 Media3，所以不再限定 TV 模式 —— 否则手机会直接
+    // 弹「播放失败」，而电视上同一个片源却能自动回落。
     if (_nativeTvActive &&
         !_isTranscode &&
-        _tvMode &&
         widget.itemId != null &&
         !_nativeFallbackAttempted &&
         _isExplicitDecoderOpenFailure(message)) {
@@ -2102,25 +2116,29 @@ class _PlayerPageState extends State<PlayerPage> {
     final tv = _tvMode || (kIsWeb && AppSettings.instance.tvMode.value);
     // 用户在播放设置里关掉电视原片直连时，按兼容播放链路处理。
     if (tv && !PlayPreferences.tvDirectOriginal) return true;
-    // Android TV 的 HDR 类型列表可能漏报 Dolby Vision；原片交给系统解码器和
-    // Surface 输出，失败时再按实际解码结果回退，避免能力探测误拦原片。
-    if (tv && !kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
-      return false;
-    }
-    // 电视：面板能力读到了具体类型才据此降级；空数组 / 读不到按「能显示」，
-    // 由电视自己的解码器和显示管线处理 DV / HDR10+ 的动态元数据。
+    // Android 全端（手机 / 平板 / TV）在「HDR + 未开色调映射」时都走
+    // Media3 + SurfaceView 直通，DV RPU 由系统解码器处理 —— 这条链路能真输出杜比。
+    if (_androidNativeHdrEligible) return false;
+    // 剩下的都是 libmpv 链路（桌面 / Web / 开了色调映射的 Android）：
+    // 它不解析 DV RPU，Profile 5 的 IPTPQc2 会被当普通 YUV 解 —— 必紫。
+    // 注意别拿 `DisplayCaps` 放行：它读的是 Android `HdrCapabilities`，
+    // 说的是「屏幕能显示什么」，不代表这条播放链路能输出。
+    if (src == HdrLevel.dolbyVision) return true;
     if (!kIsWeb && _display.trustworthy) return !_display.supports(src);
     if (tv) return false;
-    // 桌面 / 普通网页的 libmpv 没有 libplacebo / DV RPU 解析，DV 直连会偏色。
-    if (src == HdrLevel.dolbyVision) return true;
     return false;
   }
 
   /// 「原码」没法直连时退到哪一档。
   ///
   /// 桌面端保片源分辨率；TV 按默认 4K 档回退，手机按默认 1080P 档回退。
-  String _transcodeFallback({String? codec}) {
+  ///
+  /// [colorOnly] = 只因颜色原因（HDR / 杜比视界映射）不能直连：这时只换色彩
+  /// 空间，**绝不顺手把分辨率也降下来** —— 用户明确否决过「自动降分辨率」，
+  /// 4K 杜比视界片被拦成 1080P 是比紫色更糟的体验。
+  String _transcodeFallback({String? codec, bool colorOnly = false}) {
     final c = codec ?? _codec;
+    if (colorOnly) return fallbackPresetPreservingHeight(_srcHeight, codec: c);
     // 手机 / 平板（安卓、iOS）：网络和解码都比桌面脆。实测 4K 源退到「保分辨率」
     // 的 4K 7M，在移动网络里就是一直缓冲，而且 4K HEVC / AV1 软解根本跟不上
     // —— 用户看到的是「进度条加载完了还在卡、看几秒停一下，等一分钟再几秒」。
@@ -2192,7 +2210,10 @@ class _PlayerPageState extends State<PlayerPage> {
       effective = toDirect || copyAudio
           ? 'original'
           : (wantOriginal
-                ? _transcodeFallback(codec: transcodeCodec)
+                ? _transcodeFallback(
+                    codec: transcodeCodec,
+                    colorOnly: colorBlocked,
+                  )
                 : clampPresetForSource(
                     _preset,
                     _srcHeight,
@@ -2354,20 +2375,25 @@ class _PlayerPageState extends State<PlayerPage> {
     final previousError = _error;
 
     final fromDirect = !_isTranscode;
+    // 颜色原因（HDR / 杜比视界在这条链路上不能直连）会强制转码：
+    // 先算出来，档位选择与提示文案都要用。
+    final toneMapRequested = PlayPreferences.toneMap && _srcHdr.isHdr;
+    final colorBlocked = _colorBlocksDirect || toneMapRequested;
     final wanted = targetCodec == 'original'
         ? 'original'
         : (preset == 'original' || (fromDirect && codec != null)
-              ? _transcodeFallback(codec: targetCodec)
+              ? _transcodeFallback(
+                  codec: targetCodec,
+                  colorOnly: colorBlocked,
+                )
               : preset);
 
     // 直链要求：调用方给的是真直链（compat 存在）且片源本身能直链。
     // 详情页「转码」入口拿的是 HLS 地址（compat=null），那里不存在直链可退。
-    // 桌面端（libmpv）能解 HEVC / AV1 / 10bit，但**杜比视界不行**：
-    // 这个构建的 libmpv 没有 libplacebo / DV RPU，直连出来是紫的。
+    // 手机 / 桌面（libmpv）能解 HEVC / AV1 / 10bit，但**杜比视界不行**：
+    // 它没有 libplacebo / DV RPU 解析，直连出来是紫的。
     // 所以「原画」是否直连要看 _colorBlocksDirect，而不是只看平台。
     // Web 端保持原判定（Chromium 确实解不了 MKV/HEVC）。
-    final toneMapRequested = PlayPreferences.toneMap && _srcHdr.isHdr;
-    final colorBlocked = _colorBlocksDirect || toneMapRequested;
     final canKeepSourceVideo =
         targetCodec == 'original' &&
         !colorBlocked &&
