@@ -1477,9 +1477,17 @@ class _PlayerPageState extends State<PlayerPage> {
     _benignRetries += 1;
     final target = _url;
     if (target.isEmpty) return;
+    // 重开必须带上当前位置：转码流是 EVENT 播放列表（末尾没有 ENDLIST，语义是
+    // 「从头播的直播」），裸重开就是从第一片重来 —— 用户看到的是「播几秒自己
+    // 回到开头」。open 返回后播 seekTo 才能落回原位置。
+    final resumeAt = _playbackPosition;
     Future<void>.delayed(const Duration(milliseconds: 900), () {
       if (!mounted || _playbackPlaying) return;
-      _openUrl(target, resetBenignRetries: false);
+      _openUrl(
+        target,
+        seekTo: resumeAt > const Duration(seconds: 2) ? resumeAt : null,
+        resetBenignRetries: false,
+      );
     });
   }
 
