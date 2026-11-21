@@ -39,6 +39,34 @@ export function dataDirOf(): string {
  * asar 里只有纯 JS；原生模块（.node）被 electron-builder 拆到
  * `app.asar.unpacked/node_modules`，必须合并两层。带版本戳跳过重复拷贝。
  */
+/**
+ * 读 `app.asar` 这个**文件本身**必须用未打补丁的 fs。
+ *
+ * Electron 给 `fs` 打了 asar 补丁：路径以 `.asar` 结尾时会被当成「asar 内部条目」，
+ * `fs.openSync('<...>/resources/app.asar')` 直接报
+ * `ENOENT, not found in ...\resources\app.asar`。纯 Node 下能正常读，打包后必失败 ——
+ * 这就是那次摊平「看起来跑了、实际什么都没发生」的原因（异常被 catch 吞掉）。
+ * `original-fs` 只有 Electron 运行时才有；纯 Node（单元测试 / 脚本）回落普通 fs。
+ */
+function asarFileFs(): typeof fs {
+  try {
+    return require('original-fs') as typeof fs;
+  } catch {
+    return fs;
+  }
+}
+
+/** 外壳关键阶段的落盘日志：打包成 GUI 后没有控制台，console 全丢，出错等于黑盒。 */
+export function shellLog(dataDir: string, message: string): void {
+  try {
+    const dir = path.join(dataDir, 'logs');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.appendFileSync(path.join(dir, 'shell.log'), `${new Date().toISOString()} ${message}\n`);
+  } catch {
+    /* 写日志失败不影响启动 */
+  }
+}
+
 export function ensureKernelModules(dataDir: string, resourcesPath: string, appVersion: string): void {
   const dest = path.join(dataDir, 'node_modules');
   const marker = path.join(dataDir, '.kernel-modules.json');
@@ -50,32 +78,39 @@ export function ensureKernelModules(dataDir: string, resourcesPath: string, appV
   }
 
   const asar = path.join(resourcesPath, 'app.asar');
-  if (!fs.existsSync(asar)) return;
+  const rfs = asarFileFs();
+  if (!rfs.existsSync(asar)) {
+    shellLog(dataDir, `[shell] 找不到 ${asar}，跳过依赖摊平`);
+    return;
+  }
 
   const head = Buffer.alloc(16);
-  const fd = fs.openSync(asar, 'r');
+  const fd = rfs.openSync(asar, 'r');
   let header: { files?: Record<string, AsarNode> };
   let base = 0;
   try {
-    fs.readSync(fd, head, 0, 16, 0);
+    rfs.readSync(fd, head, 0, 16, 0);
     // asar: [u32=4][u32=headerPickleSize][u32=headerSize][u32=jsonLen] + json
     const pickle = head.readUInt32LE(4);
     const jsonLen = head.readUInt32LE(12);
     const hb = Buffer.alloc(jsonLen);
-    fs.readSync(fd, hb, 0, jsonLen, 16);
+    rfs.readSync(fd, hb, 0, jsonLen, 16);
     header = JSON.parse(hb.toString('utf8')) as { files?: Record<string, AsarNode> };
     base = 8 + pickle;
   } finally {
-    fs.closeSync(fd);
+    rfs.closeSync(fd);
   }
 
   const root = header.files?.node_modules;
-  if (!root?.files) return;
+  if (!root?.files) {
+    shellLog(dataDir, '[shell] asar 里没有 node_modules，跳过依赖摊平');
+    return;
+  }
 
   fs.rmSync(dest, { recursive: true, force: true });
   fs.mkdirSync(dest, { recursive: true });
 
-  const src = fs.openSync(asar, 'r');
+  const src = rfs.openSync(asar, 'r');
   let bytes = 0;
   try {
     const emit = (rel: string, node: AsarNode): void => {
@@ -91,14 +126,14 @@ export function ensureKernelModules(dataDir: string, resourcesPath: string, appV
         return; // 原生模块在 app.asar.unpacked 里，下面统一覆盖
       }
       const buf = Buffer.allocUnsafe(node.size);
-      fs.readSync(src, buf, 0, node.size, base + Number(node.offset));
+      rfs.readSync(src, buf, 0, node.size, base + Number(node.offset));
       fs.mkdirSync(path.dirname(out), { recursive: true });
       fs.writeFileSync(out, buf);
       bytes += node.size;
     };
     emit('', root);
   } finally {
-    fs.closeSync(src);
+    rfs.closeSync(src);
   }
 
   // 覆盖原生模块（better-sqlite3 / node-pty / onnxruntime-node / @napi-rs）
@@ -121,7 +156,9 @@ export function ensureKernelModules(dataDir: string, resourcesPath: string, appV
   }
 
   fs.writeFileSync(marker, JSON.stringify({ app: appVersion, at: Date.now(), bytes }), 'utf8');
-  console.log(`[shell] 内核依赖已摊到 ${dest}（asar 内 ${(bytes / 1048576).toFixed(1)} MB + 原生模块）`);
+  const summary = `[shell] 内核依赖已摊到 ${dest}（asar 内 ${(bytes / 1048576).toFixed(1)} MB + 原生模块）`;
+  console.log(summary);
+  shellLog(dataDir, summary);
 }
 
 interface AsarNode {

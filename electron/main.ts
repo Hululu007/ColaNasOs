@@ -11,6 +11,7 @@ import {
   prepareBoot,
   resolveKernelEntry,
   seedIfNeeded,
+  shellLog,
 } from './versioned';
 
 /**
@@ -566,6 +567,8 @@ app.whenReady().then(() => {
       try {
         ensureKernelModules(dataDir, process.resourcesPath, app.getVersion());
       } catch (err) {
+        // 打包后没有控制台，console 只有开发者能看到；必须落盘，否则又是黑盒。
+        shellLog(dataDir, `[shell] 内核依赖准备失败：${String(err)}`);
         console.error('[shell] 内核依赖准备失败，仍尝试从安装目录启动', err);
       }
     }
