@@ -36,6 +36,7 @@ agent_created: true
 13. **GitCode raw 不可用**：`raw.gitcode.com` 匿名访问返 403「暂不支持预览」；清单源走公开仓库 contents API，签名优先 `.sig.json`（`.sig` 只在取不到时回落）。`<API 根>@@<仓库内路径>` 两侧斜杠必须归一化，否则拼成 `contentsrelease/...` 直接 404。
 14. **外壳改动不进增量**：版本目录只有 `electron/kernel-host.js`，`electron/main.ts`（托盘、重启、自愈、日志落盘、更新器安装逻辑）住在 asar 里，**只能随全量包替换**。改了 `electron/**` 就必须发全量包，并在 Release 说明里写明「这条修复增量包不带」；需要强制所有人重装时给清单加 `--min-shell=<version>`，`checkServer` 会把 `mode` 直接压成 `full`。
 15. **`npm run dist` 之后重生成清单**：安装包字节一变，`full.sha256` 就变。顺序永远是「构建 → installer.check → release.js → 并客户端组件 → 重签 → 上传」，不要先出清单再补构建。
+16. **从 asar 里抽二进制必须用 `original-fs`**：Electron 给 `fs` 打了 asar 补丁，路径以 `.asar` 结尾时按「asar 内部条目」解析，`fs.openSync('<resources>/app.asar')` 直接抛 `ENOENT, not found in ...\resources\app.asar`。纯 Node 下能读、打包后必失败（摊平 `node_modules` 就踩过这条，异常还被 catch 吞掉，表现成「修复完全没生效」）。写法：`require('original-fs')`，纯 Node 环境 catch 回落普通 `fs`；失败信息必须落到 `<dataDir>/logs/shell.log`，GUI 外壳没有控制台，`console.error` 等于没写。
 
 ## Workflow decision tree
 
