@@ -46,9 +46,11 @@ export interface UpdateSettings {
 }
 
 export const DEFAULT_MANIFEST_URLS = [
-  'https://gitcode.com/colaKot/ColaNasOs/releases/download/update-stable/update.json',
+  // GitCode 仓（CSDN）是这个项目的主库；GitHub 是国际源 + 代码镜像
+  'https://gitcode.com/cocacola23/ColaNasOs/releases/download/update-stable/update.json',
   'https://github.com/colaKot/ColaNasOs/releases/latest/download/update.json',
-  'https://gitee.com/colaKot/ColaNasOs/releases/download/update-stable/update.json',
+  // Gitee 只在真配了仓之后才加（默认占位不会命中，顺序留着不影响）
+  'https://gitee.com/cocacola23/ColaNasOs/releases/download/update-stable/update.json',
 ];
 
 export type JobPhase =

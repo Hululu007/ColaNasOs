@@ -18,8 +18,22 @@ const fs = require('node:fs');
 const path = require('node:path');
 const L = require('./lib');
 
-const OWNER = String(L.arg('owner', 'colaKot'));
+/**
+ * 各平台的仓主不一样：GitCode 是 `cocacola23`，GitHub 是 `colaKot`。
+ * 所以 owner 按平台取（`--gitcode-owner` / `--github-owner` / `--gitee-owner`），
+ * 统一用 `--owner` 兜底。
+ */
 const REPO = String(L.arg('repo', 'ColaNasOs'));
+const OWNERS = {
+  gitcode: String(L.arg('gitcode-owner', L.arg('owner', 'cocacola23'))),
+  github: String(L.arg('github-owner', L.arg('owner', 'colaKot'))),
+  gitee: String(L.arg('gitee-owner', L.arg('owner', ''))),
+};
+function ownerOf(platform) {
+  const owner = OWNERS[platform];
+  if (!owner) L.fail(`${platform} 没配仓主（--${platform}-owner 或 --owner）`);
+  return owner;
+}
 
 const API = {
   gitcode: 'https://api.gitcode.com/api/v5',
@@ -112,8 +126,8 @@ async function main() {
     const headers = headersFor(platform, token);
     const list =
       platform === 'github'
-        ? await req(`${base}/repos/${OWNER}/${REPO}/releases/tags/${tag}`, { headers }).catch(() => null)
-        : await req(`${base}/repos/${OWNER}/${REPO}/releases/tags/${tag}`, { headers }).catch(() => null);
+        ? await req(`${base}/repos/${ownerOf(platform)}/${REPO}/releases/tags/${tag}`, { headers }).catch(() => null)
+        : await req(`${base}/repos/${ownerOf(platform)}/${REPO}/releases/tags/${tag}`, { headers }).catch(() => null);
     if (list && (list.id || list.tag_name)) return list.id;
     const body = {
       tag_name: tag,
@@ -122,7 +136,7 @@ async function main() {
       target_commitish: 'main',
       prerelease: false,
     };
-    const created = await req(`${base}/repos/${OWNER}/${REPO}/releases`, {
+    const created = await req(`${base}/repos/${ownerOf(platform)}/${REPO}/releases`, {
       method: 'POST',
       headers: { ...headers, 'content-type': 'application/json' },
       body: JSON.stringify(body),
@@ -139,7 +153,7 @@ async function main() {
   /** GitCode：先要 upload_url（预签名 OBS），再原样带 x-obs-* headers PUT */
   async function uploadGitcode(token, entry) {
     const url =
-      `${API.gitcode}/repos/${OWNER}/${REPO}/releases/${tag}/upload_url` +
+      `${API.gitcode}/repos/${ownerOf('gitcode')}/${REPO}/releases/${tag}/upload_url` +
       `?access_token=${encodeURIComponent(token)}&file_name=${encodeURIComponent(entry.name)}`;
     const presign = await req(url, { method: 'GET', headers: headersFor('gitcode', token) });
     const putUrl = presign.url || presign.upload_url;
@@ -158,18 +172,18 @@ async function main() {
     const buf = fs.readFileSync(entry.file);
     // 同名资产先删（重跑幂等）
     const existing = await req(
-      `${API.github}/repos/${OWNER}/${REPO}/releases/${releaseId}/assets?per_page=100`,
+      `${API.github}/repos/${ownerOf('github')}/${REPO}/releases/${releaseId}/assets?per_page=100`,
       { headers: headersFor('github', token) },
     ).catch(() => []);
     for (const a of Array.isArray(existing) ? existing : []) {
       if (a.name === entry.name) {
-        await req(`${API.github}/repos/${OWNER}/${REPO}/releases/assets/${a.id}`, {
+        await req(`${API.github}/repos/${ownerOf('github')}/${REPO}/releases/assets/${a.id}`, {
           method: 'DELETE',
           headers: headersFor('github', token),
         }).catch(() => null);
       }
     }
-    const uploadUrl = `https://uploads.github.com/repos/${OWNER}/${REPO}/releases/${releaseId}/assets?name=${name}`;
+    const uploadUrl = `https://uploads.github.com/repos/${ownerOf('github')}/${REPO}/releases/${releaseId}/assets?name=${name}`;
     const res = await fetch(uploadUrl, {
       method: 'POST',
       headers: { ...headersFor('github', token), 'content-type': 'application/octet-stream' },
@@ -182,7 +196,7 @@ async function main() {
     const form = new globalThis.FormData();
     form.append('access_token', token);
     form.append('file', new globalThis.Blob([fs.readFileSync(entry.file)]), entry.name);
-    const res = await fetch(`${API.gitee}/repos/${OWNER}/${REPO}/releases/${releaseId}/attach_files`, {
+    const res = await fetch(`${API.gitee}/repos/${ownerOf('gitee')}/${REPO}/releases/${releaseId}/attach_files`, {
       method: 'POST',
       body: form,
     });
