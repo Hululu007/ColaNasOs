@@ -21,7 +21,8 @@ if not "%FLUTTER%"=="flutter" if not exist "%FLUTTER%" (
 
 pushd apps\colanas_os
 echo [1/2] flutter build apk --release --target lib/main_tv.dart ...
-call %FLUTTER% build apk --release --target-platform android-arm64 --target lib/main_tv.dart --dart-define=COLANAS_TV=1
+REM bool.fromEnvironment 只认 "true"，写 1 会得到 false（TV 端会误判成手机包）
+call %FLUTTER% build apk --release --target-platform android-arm64 --target lib/main_tv.dart --dart-define=COLANAS_TV=true
 if errorlevel 1 (
   echo.
   echo [x] android tv build failed
