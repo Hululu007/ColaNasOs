@@ -28,6 +28,9 @@ class _UpdateSectionState extends State<UpdateSection> {
   Timer? _poll;
   bool _checking = false;
   bool _autoCheck = false;
+
+  /// 服务端拉清单用的通道：`stable` / `pre`。勾了预发布才看得到开发中的版本。
+  String _channel = 'stable';
   String? _error;
   String _versionDir = '';
 
@@ -51,6 +54,7 @@ class _UpdateSectionState extends State<UpdateSection> {
       setState(() {
         _autoCheck = cfg.autoCheck;
         _versionDir = cfg.versionDir;
+        _channel = cfg.channel.isEmpty ? 'stable' : cfg.channel;
       });
     } catch (_) {
       // 老服务端没有这个接口：静默，界面上少一行而已
@@ -158,6 +162,29 @@ class _UpdateSectionState extends State<UpdateSection> {
     }
   }
 
+  /// 切到预发布通道。
+  ///
+  /// 通道是**服务端**的设置（清单由服务端拉取后代理给客户端），所以这里改的是
+  /// 服务端的 `channel`：勾上之后所有连这台服务端的设备都看得到预发布版。
+  /// 开发期用得上 —— 服务端与客户端两边的更新检查走同一份清单。
+  Future<void> _togglePreChannel(bool on) async {
+    final next = on ? 'pre' : 'stable';
+    final prev = _channel;
+    setState(() => _channel = next);
+    try {
+      await ApiSession.instance.client.systemUpdateConfigSave(
+        body: SystemUpdateConfigBody(channel: next),
+      );
+      await _refreshServer();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _channel = prev;
+        _error = '$e';
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
@@ -217,6 +244,16 @@ class _UpdateSectionState extends State<UpdateSection> {
               style: TextStyle(fontSize: NasTokens.fontCaption, color: context.nasTextSecondary),
             ),
           ),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          value: _channel == 'pre',
+          onChanged: _togglePreChannel,
+          title: Text(tr('update.preChannel')),
+          subtitle: Text(
+            tr('update.preChannelHint'),
+            style: TextStyle(fontSize: NasTokens.fontCaption),
+          ),
+        ),
         SwitchListTile(
           contentPadding: EdgeInsets.zero,
           value: _autoCheck,

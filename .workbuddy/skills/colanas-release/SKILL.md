@@ -37,6 +37,8 @@ agent_created: true
 14. **外壳改动不进增量**：版本目录只有 `electron/kernel-host.js`，`electron/main.ts`（托盘、重启、自愈、日志落盘、更新器安装逻辑）住在 asar 里，**只能随全量包替换**。改了 `electron/**` 就必须发全量包，并在 Release 说明里写明「这条修复增量包不带」；需要强制所有人重装时给清单加 `--min-shell=<version>`，`checkServer` 会把 `mode` 直接压成 `full`。
 15. **`npm run dist` 之后重生成清单**：安装包字节一变，`full.sha256` 就变。顺序永远是「构建 → installer.check → release.js → 并客户端组件 → 重签 → 上传」，不要先出清单再补构建。
 16. **从 asar 里抽二进制必须用 `original-fs`**：Electron 给 `fs` 打了 asar 补丁，路径以 `.asar` 结尾时按「asar 内部条目」解析，`fs.openSync('<resources>/app.asar')` 直接抛 `ENOENT, not found in ...\resources\app.asar`。纯 Node 下能读、打包后必失败（摊平 `node_modules` 就踩过这条，异常还被 catch 吞掉，表现成「修复完全没生效」）。写法：`require('original-fs')`，纯 Node 环境 catch 回落普通 `fs`；失败信息必须落到 `<dataDir>/logs/shell.log`，GUI 外壳没有控制台，`console.error` 等于没写。
+17. **默认发预发布，除非用户说「发正式版」**（用户 2026-11-21 定）：开发期的版本一律 `--pre` —— 清单写 `release/update-pre.json`（`channel: "pre"`），Release 标 `release_status=pre`。只有用户明确要求正式版时才发 `release/update.json` + `latest`。正式版清单决定了所有没勾「接收预发布」的设备看到什么，别拿它当日常测试通道。
+18. **转正用同一个 tag 原地改，不要新建 Release**：GitCode 的 `DELETE /repos/{repo}/releases/{tag}` 返 **405 METHOD_NOT_ALLOWED**（平台不支持删除 Release），所以「发正式版时自动删掉旧预发布」做不到脚本化。正确流程：同一个 tag 重跑 `release.js`（不带 `--pre`）→ 补 `update.json` 三件套 + 全量包 → `scripts/patch_release.py --tag=... --latest` 把状态转正、正文改掉。历史遗留的预发布 Release 只能网页手工删，脚本里不要写自动删逻辑。
 
 ## Workflow decision tree
 
@@ -178,6 +180,8 @@ node tool/release/release.js \
 ```
 
 - 不传 `--from`：工具自动取输出目录里最高的旧 `D<NNN>` 作基线；找不到基线直接失败，不会退化成只发全量。多个候选版本时用 `--from` 显式指定。发版中途失败会留下半成品 `D<NNN>`，下次自动基线会挑到它，先删掉再重跑。
+- **加 `--pre` 就是预发布通道**：清单写成 `release/update-pre.json`（`channel: "pre"`），后面的 `gitcode_release.py` 也要带 `--pre`，Release 才是「预发布」。不加 `--pre` 走正式通道 `update.json`。
+- 两条通道各有一份完整清单（含签名），服务端设置 `channel=pre` 时读 `update-pre.json`，读不到会自动回落 `update.json`（还没发过预发布时不至于报错）。客户端与服务的勾选见 `update.preChannel`。
 - 补发已发布版本时加 `--reuse-version-dir`：复用那版已有的版本目录，不从当前 `dist/` 重建，避免把发版后的在途代码混进去。
 - 补发还要显式给版本号：`--semver=<X.Y.Z> --version-code=<原 B 值>`。发版成功后 `package.json` 已经 bump 到下一版，不带这两个参数会把新版本号写进旧清单。
 - ⛔ **不传 `--pc-setup` / `--apk` 等客户端参数时，`components.client_pc` 与 `components.client_android` 会被整个抹掉**（不是保留上一版），客户端从此收不到更新。只发服务端时必须按下面的脚本并回上一版组件。

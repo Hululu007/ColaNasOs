@@ -93,6 +93,18 @@ function migrateManifestUrls(urls: string[]): string[] {
 }
 
 /**
+ * 按通道换清单地址：正式版读 `update.json`，预发布读 `update-pre.json`。
+ *
+ * 两份清单都是完整格式（各自带签名），同一份代码按通道选一个源 ——
+ * 这样「预发布」不会污染正式版用户的检查结果，也能各自独立回滚。
+ * 不认识的地址（用户自建源）原样返回：它没有预发布清单这回事。
+ */
+export function manifestUrlsForChannel(urls: string[], channel: string): string[] {
+  if (channel !== 'pre') return urls;
+  return urls.map((u) => u.replace(/update\.json(?=$|[?&#])/, 'update-pre.json'));
+}
+
+/**
  * 清单签名文件的地址，从清单地址派生。
  *
  * `.sig.json`（内容 `{"keyId":…,"sig":…}`）是主路径：GitCode 上 `.sig` 这类
@@ -367,8 +379,15 @@ export class UpdateService {
   }
 
   saveSettings(patch: Partial<UpdateSettings>): UpdateSettings {
-    const next: UpdateSettings = { ...this.settings(), ...patch };
+    const prev = this.settings();
+    const next: UpdateSettings = { ...prev, ...patch };
     next.manifestUrls = (next.manifestUrls || []).map((s) => String(s).trim()).filter(Boolean);
+    // 换通道 / 换源就清掉失败缓存：否则刚在 stable 上失败一次，
+    // 切到 pre 后 5 分钟内都直接抛同一个错误，看起来像「勾了没反应」。
+    if (next.channel !== prev.channel || next.manifestUrls.join() !== prev.manifestUrls.join()) {
+      this.lastFailureAt = 0;
+      this.lastFailure = '';
+    }
     writeJsonAtomic(path.join(this.updateDir, 'settings.json'), next);
     return next;
   }
@@ -411,10 +430,11 @@ export class UpdateService {
 
   // ---------------------------------------------------------------- 清单
 
-  private manifestCachePath(): { json: string; sig: string } {
+  private manifestCachePath(channel = 'stable'): { json: string; sig: string } {
+    const name = channel === 'pre' ? 'update-pre' : 'update';
     return {
-      json: path.join(this.cacheDir, 'update.json'),
-      sig: path.join(this.cacheDir, 'update.json.sig'),
+      json: path.join(this.cacheDir, `${name}.json`),
+      sig: path.join(this.cacheDir, `${name}.json.sig`),
     };
   }
 
@@ -422,9 +442,29 @@ export class UpdateService {
    * 拉清单并验签。`force=false` 且缓存 6 小时内有效时直接用缓存。
    *
    * 缓存也走验签 —— 磁盘上的文件同样可能是被改过的，一致性比省一次 IO 重要。
+   *
+   * [channel] 缺省用设置里的通道；`pre` 拉不到（还没发过预发布版）时
+   * 自动回落 `stable`，勾了预发布却看不到更新比报错友好。
    */
-  async loadManifest(opts: { force?: boolean; maxAgeMs?: number } = {}): Promise<UpdateManifest> {
-    const { json, sig } = this.manifestCachePath();
+  async loadManifest(
+    opts: { force?: boolean; maxAgeMs?: number; channel?: string } = {},
+  ): Promise<UpdateManifest> {
+    const channel = opts.channel || this.settings().channel;
+    try {
+      return await this.loadManifestOnce({ ...opts, channel });
+    } catch (err) {
+      if (channel !== 'pre') throw err;
+      this.lastFailureAt = 0;
+      this.lastFailure = '';
+      return this.loadManifestOnce({ ...opts, channel: 'stable', force: true });
+    }
+  }
+
+  private async loadManifestOnce(
+    opts: { force?: boolean; maxAgeMs?: number; channel?: string } = {},
+  ): Promise<UpdateManifest> {
+    const channel = opts.channel || 'stable';
+    const { json, sig } = this.manifestCachePath(channel);
     // 刚失败过：直接抛同一个错误（`force` 才算「我再试一次」）
     if (
       !opts.force &&
@@ -450,8 +490,7 @@ export class UpdateService {
       }
     }
 
-    const settings = this.settings();
-    const urls = settings.manifestUrls;
+    const urls = manifestUrlsForChannel(this.settings().manifestUrls, channel);
     // 签名与清单必须来自同一个源，所以先按源成对取（而不是两个独立的 fetchText）
     const errors: string[] = [];
     for (const base of urls) {

@@ -3476,6 +3476,8 @@
     "update.rollback": "回滚上一版",
     "update.autoCheck": "每 6 小时自动检查",
     "update.autoCheckHint": "默认关闭：NAS 常在跑转码 / 做种，只在打开界面时被动查一次",
+    "update.preChannel": "接收预发布版",
+    "update.preChannelHint": "开发期用：勾选后服务端与客户端都按预发布清单检查更新（同一台服务端上的设备共享）",
     "update.versionDir": "版本目录：{dir}",
     "update.tvHint": "遥控器：左右选择，OK 确认，返回关闭",
     "update.fullReady": "安装包已下载完成，运行它即可完成更新",

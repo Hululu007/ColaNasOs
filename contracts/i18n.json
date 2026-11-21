@@ -4208,6 +4208,8 @@
     "update.rollback": {},
     "update.autoCheck": {},
     "update.autoCheckHint": {},
+    "update.preChannel": {},
+    "update.preChannelHint": {},
     "update.versionDir": {"dir": {}},
     "update.tvHint": {},
     "update.fullReady": {},

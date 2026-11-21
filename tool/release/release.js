@@ -38,7 +38,8 @@ function main() {
   const product = productOverride() ?? L.productVersion();
   const out = path.resolve(L.root, String(L.arg('out', 'dist_release')));
   const tag = String(L.arg('tag', `v${product.semver}`));
-  const channels = String(L.arg('channel', 'stable'));
+  const pre = L.arg('pre') !== undefined;
+  const channels = String(L.arg('channel', pre ? 'pre' : 'stable'));
   const fromDirs = resolveBaselines(out, product.version);
   /**
    * 下载源：`<url>[#<资产名后缀>]`，逗号分隔，**顺序即优先级**。
@@ -166,7 +167,10 @@ function main() {
   const android = clientComponent('client_android');
   if (android) update.components.client_android = android;
 
-  const updatePath = path.join(out, 'update.json');
+  // 通道决定清单文件名：正式版 `update.json`，预发布 `update-pre.json`。
+  // 两份都是完整清单（各自签名），客户端按设置里的通道选一个读。
+  const updateName = channels === 'pre' ? 'update-pre.json' : 'update.json';
+  const updatePath = path.join(out, updateName);
   const text = `${JSON.stringify(update, null, 2)}\n`;
   fs.writeFileSync(updatePath, text, 'utf8');
   const sig = require('node:crypto').sign(null, Buffer.from(text, 'utf8'), pem).toString('base64');
@@ -179,11 +183,11 @@ function main() {
   if (manifestOut) {
     const dir = path.resolve(L.root, String(manifestOut));
     L.ensureDir(dir);
-    fs.copyFileSync(updatePath, path.join(dir, 'update.json'));
-    fs.copyFileSync(`${updatePath}.sig`, path.join(dir, 'update.json.sig'));
-    fs.copyFileSync(`${updatePath}.sig.json`, path.join(dir, 'update.json.sig.json'));
+    fs.copyFileSync(updatePath, path.join(dir, updateName));
+    fs.copyFileSync(`${updatePath}.sig`, path.join(dir, `${updateName}.sig`));
+    fs.copyFileSync(`${updatePath}.sig.json`, path.join(dir, `${updateName}.sig.json`));
     console.log(
-      `[release] 清单已复制到 ${path.relative(L.root, dir)}/（提交并 push 即发布；` +
+      `[release] 清单 ${updateName} 已复制到 ${path.relative(L.root, dir)}/（提交并 push 即发布；` +
         'raw 直链地址不随版本变化）',
     );
   }
@@ -191,9 +195,9 @@ function main() {
   for (const name of fs.readdirSync(assetsDir)) {
     uploads.push({ name, file: path.join(assetsDir, name) });
   }
-  uploads.push({ name: 'update.json', file: updatePath });
-  uploads.push({ name: 'update.json.sig', file: `${updatePath}.sig` });
-  uploads.push({ name: 'update.json.sig.json', file: `${updatePath}.sig.json` });
+  uploads.push({ name: updateName, file: updatePath });
+  uploads.push({ name: `${updateName}.sig`, file: `${updatePath}.sig` });
+  uploads.push({ name: `${updateName}.sig.json`, file: `${updatePath}.sig.json` });
   flushUploads();
 
   // ---- 5. 汇总 -----------------------------------------------------------
