@@ -130,7 +130,6 @@ function main() {
       manifest,
       baselines: fromDirs,
       urlBases,
-      id,
       manifestName,
     });
   } else if (L.arg('no-delta') !== undefined) {
@@ -390,7 +389,7 @@ function buildVersionDir(versionDir, product) {
  * 相对 1.3.12 变了、相对 1.3.13 没变，它仍然必须出现在列表里 —— 否则从 1.3.12
  * 升上来的用户会漏文件。对 1.3.13 的用户多下一份同样的文件，只是浪费几 KB。
  */
-function buildDelta({ versionDir, assetsDir, manifest, baselines, urlBases, id, manifestName }) {
+function buildDelta({ versionDir, assetsDir, manifest, baselines, urlBases, manifestName }) {
   const baseMaps = baselines.map((dir) => {
     const mf = path.join(dir, 'manifest.json');
     if (!fs.existsSync(mf)) {
