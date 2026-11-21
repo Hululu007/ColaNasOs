@@ -290,7 +290,7 @@ function resolveBaselines(out, currentVersion) {
     if (!/^D\d{5}$/.test(name)) continue;
     const dir = path.join(out, name);
     if (!fs.existsSync(path.join(dir, 'manifest.json'))) continue;
-    let v = 0;
+    let v;
     try {
       v = Number(L.readJson(path.join(dir, 'version.json')).version) || 0;
     } catch {
