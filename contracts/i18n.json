@@ -4208,6 +4208,7 @@
     "update.rollback": {},
     "update.autoCheck": {},
     "update.autoCheckHint": {},
-    "update.versionDir": {"dir": {}}
+    "update.versionDir": {"dir": {}},
+    "update.tvHint": {}
   }
 }

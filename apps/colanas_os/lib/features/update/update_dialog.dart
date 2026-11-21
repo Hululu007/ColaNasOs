@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:nas_ui/nas_ui.dart';
 
+import '../../core/app_settings.dart';
 import '../../core/app_version.dart';
+import 'tv_update_dialog.dart';
 import 'update_service.dart';
 
 /// 更新提示对话框：版本说明 / 进度 / 稍后 / 失败兜底。
@@ -190,7 +192,12 @@ class _UpdatePromptHostState extends State<UpdatePromptHost> {
     _showing = true;
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;
-      await UpdateDialog.show(context, info);
+      // TV 端用索引式焦点弹窗：普通 AlertDialog 在 Android TV 上方向键经常不动
+      if (AppSettings.instance.tvMode.value) {
+        await showTvUpdateDialog(context, info);
+      } else {
+        await UpdateDialog.show(context, info);
+      }
       _showing = false;
     });
   }

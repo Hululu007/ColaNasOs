@@ -8,6 +8,8 @@ import '../../core/play_preferences.dart';
 import '../../core/play_quality.dart';
 import '../../core/session.dart';
 import '../../core/settings_store.dart';
+import '../update/tv_update_dialog.dart';
+import '../update/update_service.dart';
 import 'tv_focus.dart';
 import 'tv_option_dialog.dart';
 
@@ -152,6 +154,47 @@ class _TvProfileSectionState extends State<TvProfileSection> {
     if (mounted) setState(() {});
   }
 
+  /// 「检查更新」这一行右侧的状态文字
+  String _updateValue(UpdateStatus status, ClientUpdate? info) {
+    if (status.phase == UpdatePhase.checking) return tr('update.checking');
+    if (status.phase == UpdatePhase.downloading) {
+      return UpdateService.formatBytes(status.loaded);
+    }
+    if (status.phase == UpdatePhase.verifying) return tr('update.verifying');
+    if (status.phase == UpdatePhase.installing) return tr('update.installing');
+    if (status.phase == UpdatePhase.failed) return tr('update.retry');
+    if (info != null && info.hasUpdate) {
+      return tr('update.clientAvailable', {'version': info.latestSemver});
+    }
+    return status.phase == UpdatePhase.idle && info == null
+        ? tr('update.check')
+        : tr('update.none');
+  }
+
+  /// 点「检查更新」：没查过就先查，查到直接进更新弹窗（遥控器少按一次）
+  Future<void> _onCheckUpdate(
+    UpdateStatus status,
+    ClientUpdate? info,
+    bool ready,
+  ) async {
+    if (status.busy) {
+      // 正在下载：直接把弹窗叫回来，别让用户以为卡住了
+      if (info == null || !mounted) return;
+      await showTvUpdateDialog(context, info);
+      return;
+    }
+    if (ready && info != null) {
+      await showTvUpdateDialog(context, info);
+      return;
+    }
+    await UpdateService.instance.check(force: true);
+    if (!mounted) return;
+    final found = UpdateService.instance.available.value;
+    if (found != null && found.hasUpdate) {
+      await showTvUpdateDialog(context, found);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final m = TvMetricsScope.of(context);
@@ -182,6 +225,23 @@ class _TvProfileSectionState extends State<TvProfileSection> {
             icon: Icons.dns_outlined,
             label: tr('tv.profile.server'),
             value: host.isEmpty ? server : '$server · $host',
+          ),
+          SizedBox(height: m.px(12)),
+          // 检查更新：大屏上没有「设置 → 关于」，更新入口只能放这里。
+          // 行本身用 TvFocusCard（遥控器可达），状态文字实时跟着下载/检查进度走。
+          ValueListenableBuilder<UpdateStatus>(
+            valueListenable: UpdateService.instance.status,
+            builder: (context, status, _) {
+              final info = UpdateService.instance.available.value;
+              final ready = info != null && info.hasUpdate;
+              return _SettingRow(
+                icon: Icons.system_update_alt_rounded,
+                label: tr('update.check'),
+                hint: tr('update.tvHint'),
+                value: _updateValue(status, info),
+                onTap: () => _onCheckUpdate(status, info, ready),
+              );
+            },
           ),
           SizedBox(height: m.px(12)),
           // 版本号与项目主页：大屏上没有「设置 → 关于」，报问题时同样要能一眼看到。

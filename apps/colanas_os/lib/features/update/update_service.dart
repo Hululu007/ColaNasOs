@@ -3,10 +3,10 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:nas_core/nas_core.dart';
 
-import '../../core/app_settings.dart';
 import '../../core/app_version.dart';
 import '../../core/session.dart';
 import '../../core/settings_store.dart';
+import '../../core/tv_mode.dart';
 import 'update_install.dart';
 
 /// 客户端自动更新（PC / 安卓 / TV / Web 共用一套状态机）。
@@ -62,9 +62,12 @@ class ClientUpdate {
   final List<UpdateAsset> assets;
 
   /// 按平台挑要装的资产：PC 只认 setup（便携版走 zip，不在这里自替换）
+  ///
+  /// 安卓按**编译期** `kTvBuild` 分辨装的是哪一份包 —— 不能用可切换的
+  /// `tvMode` 设置：手机用户把 TV 版面打开后，不该被推 TV 安装包。
   UpdateAsset? assetFor(String platform) {
     if (platform == 'client_android') {
-      final tv = AppSettings.instance.tvMode.value;
+      const tv = kTvBuild;
       for (final a in assets) {
         if (tv && a.kind == 'apk_tv') return a;
         if (!tv && a.kind == 'apk') return a;

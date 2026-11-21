@@ -3100,6 +3100,7 @@
     "update.rollback": "Roll back",
     "update.autoCheck": "Check every 6 hours",
     "update.autoCheckHint": "Off by default: the NAS may be transcoding or seeding; checks happen when the UI is opened",
-    "update.versionDir": "Version directory: {dir}"
+    "update.versionDir": "Version directory: {dir}",
+    "update.tvHint": "Remote: left/right to choose, OK to confirm, Back to close"
   }
 }

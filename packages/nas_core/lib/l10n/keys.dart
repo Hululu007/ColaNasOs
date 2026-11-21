@@ -3148,7 +3148,8 @@ class I18nKeys {
   static const updateAutoCheck = 'update.autoCheck';
   static const updateAutoCheckHint = 'update.autoCheckHint';
   static const updateVersionDir = 'update.versionDir';
+  static const updateTvHint = 'update.tvHint';
 }
 
 /// 契约键总数（生成时确定），供完整性自检使用。
-const int i18nKeyCount = 3099;
+const int i18nKeyCount = 3100;

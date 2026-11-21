@@ -3100,6 +3100,7 @@
     "update.rollback": "回滚上一版",
     "update.autoCheck": "每 6 小时自动检查",
     "update.autoCheckHint": "默认关闭：NAS 常在跑转码 / 做种，只在打开界面时被动查一次",
-    "update.versionDir": "版本目录：{dir}"
+    "update.versionDir": "版本目录：{dir}",
+    "update.tvHint": "遥控器：左右选择，OK 确认，返回关闭"
   }
 }
