@@ -1676,6 +1676,7 @@ class I18nKeys {
   static const playerWebTranscode = 'player.webTranscode';
   static const playerCodecToTranscode = 'player.codecToTranscode';
   static const playerColorFallback = 'player.colorFallback';
+  static const playerAudioFallback = 'player.audioFallback';
   static const playerDirectFailed = 'player.directFailed';
   static const playerDvDirect = 'player.dvDirect';
   static const playerRenderer = 'player.renderer';
@@ -3157,4 +3158,4 @@ class I18nKeys {
 }
 
 /// 契约键总数（生成时确定），供完整性自检使用。
-const int i18nKeyCount = 3105;
+const int i18nKeyCount = 3106;

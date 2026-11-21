@@ -1643,6 +1643,7 @@
     "player.webTranscode": "浏览器不支持该片源的编码，已转为 {actual} 转码播放",
     "player.codecToTranscode": "已转为 {preset} 转码播放（{codec}）",
     "player.colorFallback": "本机无法正确显示{source}，已改用服务端色调映射播放（{actual}）",
+    "player.audioFallback": "本机没有这条音轨的解码器，已改为视频原样直通 + 音频转 AAC",
     "player.directFailed": "原画直连没有画面，已切到 {actual} 转码播放",
     "player.dvDirect": "杜比视界直连",
     "player.renderer": "渲染器 / 色调映射",

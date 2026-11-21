@@ -2275,6 +2275,7 @@
       "source": {},
       "actual": {}
     },
+    "player.audioFallback": {},
     "player.directFailed": {
       "actual": {}
     },

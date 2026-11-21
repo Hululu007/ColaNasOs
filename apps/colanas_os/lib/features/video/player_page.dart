@@ -290,12 +290,13 @@ class _PlayerPageState extends State<PlayerPage> {
       _srcHdr.isHdr &&
       !PlayPreferences.toneMap;
 
-  /// 电视沿用老口径（直连与转码流都交给 Media3）；
-  /// 手机 / 平板只在**直连** HDR 片时切过去，转码流继续用 libmpv，
-  /// 避免把手机侧的 HLS 播放行为一起改掉。
-  bool get _shouldUseNativeTvPlayer =>
-      _androidNativeHdrEligible &&
-      (_tvMode ? (_isTranscode || !_colorBlocksDirect) : !_isTranscode);
+  /// 电视与手机 / 平板共用同一个播放内核。
+  ///
+  /// 直连、原片封装（视频 copy + 音频 AAC）、重编码三种流都交给 Media3 ——
+  /// 之前只在「直连」时切过去，结果是：音频不支持的片子被换成
+  /// 「视频 copy + 音频 AAC」会话后又退回 libmpv，而 libmpv 播不了
+  /// 杜比视界封装流（DV Profile 5 无 RPU 解析），画面直接黑 / 紫。
+  bool get _shouldUseNativeTvPlayer => _androidNativeHdrEligible;
 
   Duration get _playbackPosition =>
       _nativeTvActive ? _tvMedia3Player.state.position : _player.state.position;
@@ -567,6 +568,11 @@ class _PlayerPageState extends State<PlayerPage> {
   /// `af` / `audio-channels`，保证片子能播，只是没有响度归一与降混。
   /// 只在同一个播放页内有效，下次进播放器会重新试一次。
   bool _audioFilterDowngraded = false;
+
+  /// Media3 报过「没有可用的音频解码器」（典型：EAC3 / DTS-HD 在部分安卓机上
+  /// 确实没有解码器）。置真后改走「视频 copy + 音频 AAC」的会话，
+  /// 画面不动，只换音轨。只试一次，避免来回切会话。
+  bool _nativeAudioFallbackAttempted = false;
 
   /// 本次播放内不再缓存会话地址：服务端建会话时会把同一部片还在跑的旧会话
   /// 取消掉（换档），本地缓存拿到的可能是已取消的半个播放列表。
@@ -1050,6 +1056,40 @@ class _PlayerPageState extends State<PlayerPage> {
           'item=${widget.itemId} session=$_sessionId preset=$_preset '
           'codec=$_codec url=${_redactedUrlForLog(_url)}',
     );
+    // 音频没有解码器：视频照原样 copy，只把音频换成 AAC。
+    // 绝不能走 `_transcodeFallback` —— 那会把 4K 杜比视界整片重压成 1440p，
+    // 为了一个音轨把画质和起播时间全赔进去（实测：转码任务直接排不上队、
+    // 首片等 8 秒后被取消，用户看到的就是「转码也播不出来」）。
+    final audioOnly = message.toLowerCase().contains('no suitable decoder for audio');
+    if (_nativeTvActive &&
+        audioOnly &&
+        widget.itemId != null &&
+        !_nativeAudioFallbackAttempted) {
+      _nativeAudioFallbackAttempted = true;
+      _showNotice(
+        tr('player.audioFallback'),
+        log: 'Media3 音频无解码器：$message → 视频 copy + 音频 AAC',
+      );
+      try {
+        if (mounted) setState(() => _preparing = true);
+        final u = await _ensureTranscode('original', defaultTranscodeCodec());
+        if (!mounted) return;
+        setState(() {
+          _error = null;
+          _isTranscode = true;
+          _preset = 'original';
+          _codec = 'original';
+          _preparing = false;
+        });
+        // 这条 HLS 的视频仍是杜比视界：`_shouldUseNativeTvPlayer` 会继续用
+        // Media3 播，交给系统解码器直通，而不是退回 libmpv（那边必黑）。
+        await _openUrl(u, retries: 5);
+      } catch (e) {
+        if (mounted) setState(() => _preparing = false);
+        ClientLogger.instance.warn('原片封装也起不来：$e', route: 'player.audio');
+      }
+      return;
+    }
     // 直连解不了就退到「视频 copy + 音频转 AAC」的转码会话。
     // 手机 / 平板现在也走 Media3，所以不再限定 TV 模式 —— 否则手机会直接
     // 弹「播放失败」，而电视上同一个片源却能自动回落。

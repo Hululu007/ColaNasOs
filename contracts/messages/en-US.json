@@ -1595,6 +1595,7 @@
     "player.webTranscode": "This browser cannot decode the source; playing {actual} transcode",
     "player.codecToTranscode": "Switched to {preset} transcode ({codec})",
     "player.colorFallback": "This device cannot display {source} correctly; playing with server tone mapping ({actual})",
+    "player.audioFallback": "No decoder for this audio track on this device — video is passed through unchanged, audio transcoded to AAC",
     "player.directFailed": "Direct play showed no picture; switched to {actual} transcode",
     "player.dvDirect": "Dolby Vision direct play",
     "player.renderer": "Renderer / tone mapping",
