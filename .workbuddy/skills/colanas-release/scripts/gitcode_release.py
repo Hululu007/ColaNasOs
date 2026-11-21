@@ -15,7 +15,7 @@
   export GITCODE_TOKEN=<PAT>
   python gitcode_release.py --repo cocacola23/ColaNasOs --tag v1.3.14 \
       --dist dist_installer --files "file1.exe,file2.apk" \
-      [--notes "发行说明"] [--suffix -v2] [--clean-empty] \
+      [--notes "发行说明" | --notes-file RELEASE.md] [--suffix=-v2] [--clean-empty] \
       [--uploader presigned|cli|none] [--verify-only] [--proxy http://127.0.0.1:21578]
 """
 import argparse
@@ -124,7 +124,11 @@ def asset_map(info):
 
 def is_empty_asset(a):
     digest = (a.get("digest") or a.get("sha256") or "").removeprefix("sha256:")
-    return (a.get("size") or 0) == 0 or digest == EMPTY_SHA
+    size = a.get("size")
+    # 源码包等自动资产可能没有 size 字段，不能当成 0 字节附件。
+    if size is None and not digest:
+        return False
+    return (size or 0) == 0 or digest == EMPTY_SHA
 
 
 def suffix_name(name, suffix):
@@ -220,6 +224,7 @@ def main():
     ap.add_argument("--dist", default="dist_installer")
     ap.add_argument("--files", required=True, help="逗号分隔的原始文件名")
     ap.add_argument("--notes", default="")
+    ap.add_argument("--notes-file", default="", help="从文件读取发行说明（覆盖 --notes）")
     ap.add_argument("--pre", action="store_true", help="创建 Release 时标记为预发布")
     ap.add_argument("--suffix", default="-v2", help="同名空附件时插入到扩展名前的后缀")
     ap.add_argument("--clean-empty", action="store_true", help="先删除同名 0 字节附件，再用原文件名上传")
@@ -227,6 +232,11 @@ def main():
     ap.add_argument("--verify-only", action="store_true")
     ap.add_argument("--proxy", default="http://127.0.0.1:21578", help="传空字符串可禁用代理")
     args = ap.parse_args()
+
+    notes = args.notes
+    if args.notes_file:
+        with open(args.notes_file, "r", encoding="utf-8") as f:
+            notes = f.read()
 
     token = load_token()
     if not token:
@@ -245,7 +255,7 @@ def main():
         print("[RESULT]", "全部通过" if ok else "存在失败，检查上方 FAIL 项", flush=True)
         sys.exit(0 if ok else 1)
 
-    ensure_release(opener, token, args.repo, args.tag, args.notes, args.pre)
+    ensure_release(opener, token, args.repo, args.tag, notes, args.pre)
     assets = asset_map(release_info(opener, token, args.repo, args.tag))
     empty_names = {n for n, a in assets.items() if is_empty_asset(a)}
     print("[i] 已有空附件:", sorted(empty_names), flush=True)
