@@ -101,14 +101,38 @@ function main() {
   L.ensureDir(assetsDir);
 
   // 清单资产（扁平名），客户端按 urls 直接取
-  const manifestName = `manifest-${id}.json`;
-  const manifestSigName = `${manifestName}.sig`;
+  //
+  // 签名文件一律挂 `.sig.json` 后缀（内容 `{keyId, sig}`）。GitCode 的 raw 直链
+  // 会拒绝「预览」未知扩展名：`.sig` 直接返 403「暂不支持预览」，只有 `.json`
+  // 能直出真文件。`<x>.sig` 仍额外写一份，供离线包与只认老格式的源使用。
+  const keyId = String(L.arg('key-id', 'k2026a'));
+  // 清单资产名同样跟着内容走（`manifest-D10315-<sha12>.json`）。清单每次重算
+  // 都可能变（哪怕只差签名字节），固定名字在 GitCode 上就永远覆盖不掉。
+  const manifestDigest = L.sha256FileHex(path.join(versionDir, 'manifest.json')).slice(0, 12);
+  const manifestName = `manifest-${id}-${manifestDigest}.json`;
+  const manifestSigName = `${manifestName}.sig.json`;
   fs.copyFileSync(path.join(versionDir, 'manifest.json'), path.join(assetsDir, manifestName));
-  fs.copyFileSync(path.join(versionDir, 'manifest.json.sig'), path.join(assetsDir, manifestSigName));
+  L.writeJson(path.join(assetsDir, manifestSigName), {
+    keyId,
+    sig: fs.readFileSync(path.join(versionDir, 'manifest.json.sig'), 'utf8').trim(),
+  });
+  // 老格式再留一份（88 字节）：离线目录与只认 `.sig` 的源还在用它
+  fs.copyFileSync(
+    path.join(versionDir, 'manifest.json.sig'),
+    path.join(assetsDir, `${manifestName}.sig`),
+  );
 
   let delta = null;
   if (fromDirs.length > 0) {
-    delta = buildDelta({ versionDir, assetsDir, manifest, baselines: fromDirs, urlBases, id });
+    delta = buildDelta({
+      versionDir,
+      assetsDir,
+      manifest,
+      baselines: fromDirs,
+      urlBases,
+      id,
+      manifestName,
+    });
   } else if (L.arg('no-delta') !== undefined) {
     console.log('[release] --no-delta：本次只发全量 / 清单（这一版的服务端无法增量升级）');
   } else {
@@ -126,7 +150,7 @@ function main() {
     schema: 1,
     channel: channels,
     releasedAt: new Date().toISOString(),
-    keyId: String(L.arg('key-id', 'k2026a')),
+    keyId,
     ...(L.arg('min-shell') ? { minShell: String(L.arg('min-shell')) } : {}),
     notes: notes(),
     components: {
@@ -148,6 +172,7 @@ function main() {
   fs.writeFileSync(updatePath, text, 'utf8');
   const sig = require('node:crypto').sign(null, Buffer.from(text, 'utf8'), pem).toString('base64');
   fs.writeFileSync(`${updatePath}.sig`, sig, 'utf8');
+  L.writeJson(`${updatePath}.sig.json`, { keyId, sig });
 
   // 清单要发布到**仓库里的 release/ 目录**（raw 直链，地址稳定）：
   // GitCode 的 releases/latest/download 返回 HTML，Release 资产没法当稳定清单源
@@ -157,6 +182,7 @@ function main() {
     L.ensureDir(dir);
     fs.copyFileSync(updatePath, path.join(dir, 'update.json'));
     fs.copyFileSync(`${updatePath}.sig`, path.join(dir, 'update.json.sig'));
+    fs.copyFileSync(`${updatePath}.sig.json`, path.join(dir, 'update.json.sig.json'));
     console.log(
       `[release] 清单已复制到 ${path.relative(L.root, dir)}/（提交并 push 即发布；` +
         'raw 直链地址不随版本变化）',
@@ -168,6 +194,7 @@ function main() {
   }
   uploads.push({ name: 'update.json', file: updatePath });
   uploads.push({ name: 'update.json.sig', file: `${updatePath}.sig` });
+  uploads.push({ name: 'update.json.sig.json', file: `${updatePath}.sig.json` });
   flushUploads();
 
   // ---- 5. 汇总 -----------------------------------------------------------
@@ -363,7 +390,7 @@ function buildVersionDir(versionDir, product) {
  * 相对 1.3.12 变了、相对 1.3.13 没变，它仍然必须出现在列表里 —— 否则从 1.3.12
  * 升上来的用户会漏文件。对 1.3.13 的用户多下一份同样的文件，只是浪费几 KB。
  */
-function buildDelta({ versionDir, assetsDir, manifest, baselines, urlBases, id }) {
+function buildDelta({ versionDir, assetsDir, manifest, baselines, urlBases, id, manifestName }) {
   const baseMaps = baselines.map((dir) => {
     const mf = path.join(dir, 'manifest.json');
     if (!fs.existsSync(mf)) {
@@ -395,12 +422,16 @@ function buildDelta({ versionDir, assetsDir, manifest, baselines, urlBases, id }
     }
     const raw = fs.readFileSync(abs);
     const br = L.brotli(raw);
-    const assetName = `${seq++}-${path.basename(rel)}.br`;
+    const rawSha = L.sha256Hex(raw);
+    // 资产名带内容摘要：GitCode 不接受同名覆盖附件（同名非空一律跳过），
+    // 名字不跟内容走就会出现「本地已更新、线上还是上一版」——
+    // 而且这种错最难查，因为上传日志全都显示成功 / 跳过。
+    const assetName = `${seq++}-${rawSha.slice(0, 12)}-${path.basename(rel)}.br`;
     fs.writeFileSync(path.join(assetsDir, assetName), br);
     files.push({
       path: rel,
       size: raw.length,
-      sha256: L.sha256Hex(raw),
+      sha256: rawSha,
       br: { size: br.length, sha256: L.sha256Hex(br) },
       urls: urlBases.map((b) => assetUrl(b, assetName)),
     });
@@ -420,7 +451,6 @@ function buildDelta({ versionDir, assetsDir, manifest, baselines, urlBases, id }
     });
   }
 
-  const manifestName = `manifest-${id}.json`;
   const manifestAsset = {
     size: fs.statSync(path.join(assetsDir, manifestName)).size,
     sha256: L.sha256FileHex(path.join(assetsDir, manifestName)),

@@ -168,7 +168,17 @@ async function waitJob(svc, timeoutMs = 60_000) {
     { name: 'smallfiles.brb', size: packed.length, sha256: L.sha256Hex(packed), members: small.map((s) => s.path), urls: [] },
   ];
   fs.copyFileSync(path.join(next.dir, 'manifest.json'), path.join(assetsDir, 'manifest.json'));
-  fs.copyFileSync(path.join(next.dir, 'manifest.json.sig'), path.join(assetsDir, 'manifest.json.sig'));
+  // 签名挂在 `.sig.json`（内容 {keyId, sig}）：GitCode 的 raw 直链拒绝预览 `.sig`
+  // 这类未知扩展名。这里**故意不给** `manifest.json.sig`，逼客户端走新路径 ——
+  // 只要它能装成功，就证明 `.sig.json` 真的被读到了。
+  fs.writeFileSync(
+    path.join(assetsDir, 'manifest.json.sig.json'),
+    JSON.stringify({
+      keyId: KEY_ID,
+      sig: fs.readFileSync(path.join(next.dir, 'manifest.json.sig'), 'utf8').trim(),
+    }),
+    'utf8',
+  );
 
   const { server, port } = await serve(release);
   const base = `http://127.0.0.1:${port}/assets`;
@@ -204,7 +214,13 @@ async function waitJob(svc, timeoutMs = 60_000) {
   };
   const signed = signUpdate(update);
   fs.writeFileSync(path.join(release, 'update.json'), signed.text);
-  fs.writeFileSync(path.join(release, 'update.json.sig'), signed.sig);
+  // 网络源只提供 `.sig.json`：GitCode 的 raw 直链拿不到 `.sig`（403 暂不支持预览）。
+  // 离线包那边仍用老格式 `.sig`，两条签名路径都覆盖到。
+  fs.writeFileSync(
+    path.join(release, 'update.json.sig.json'),
+    JSON.stringify({ keyId: KEY_ID, sig: signed.sig }),
+    'utf8',
+  );
 
   // ---- 数据目录：已有 D101 且指针指向它 -------------------------------
   const dataDir = path.join(work, 'data');

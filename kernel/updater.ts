@@ -93,13 +93,22 @@ export function sha256File(p: string): string {
   return crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
 }
 
-/** 递归列出目录内所有文件的相对路径（POSIX 分隔符，排除 manifest 自身） */
+/**
+ * 递归列出目录内所有文件的相对路径（POSIX 分隔符，排除 manifest 自身）。
+ *
+ * `manifest.json.sig` **必须一起排除**：它就是 `manifest.json` 里那个签名的副本。
+ * 把它算进 files 就是自引用 —— 每重算一次签名，files 里那个值就换一次，
+ * 于是每次重算都得到不同的 manifest，永远不收敛。实测后果：同一个版本目录
+ * 重跑一次 release 脚本，manifest 摘要就变一次，已上传的 manifest 资产
+ * 与本地对不上，客户端增量装到一半报「版本清单摘要不符」。
+ */
 export function listFiles(dir: string, rel = ''): string[] {
   const out: string[] = [];
   for (const e of fs.readdirSync(path.join(dir, rel), { withFileTypes: true })) {
     const childRel = rel ? `${rel}/${e.name}` : e.name;
     if (e.isDirectory()) out.push(...listFiles(dir, childRel));
-    else if (e.isFile() && childRel !== 'manifest.json') out.push(childRel);
+    else if (e.isFile() && childRel !== 'manifest.json' && childRel !== 'manifest.json.sig')
+      out.push(childRel);
   }
   return out.sort();
 }

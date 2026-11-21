@@ -57,9 +57,43 @@ export interface UpdateSettings {
  * 国内可能需要设置代理）。
  */
 export const DEFAULT_MANIFEST_URLS = [
-  'https://raw.gitcode.com/cocacola23/ColaNasOs/raw/main/release/update.json',
+  // `?inline=false` 不能省：GitCode 的 raw 域名默认走「网页预览」逻辑，
+  // 不带它拿到的是一份 6 KB 的 SPA 外壳 HTML（200），不是清单。
+  'https://raw.gitcode.com/cocacola23/ColaNasOs/raw/main/release/update.json?inline=false',
   'https://raw.githubusercontent.com/colaKot/ColaNasOs/main/release/update.json',
 ];
+
+/**
+ * 取清单签名。
+ *
+ * 主路径是 `<清单>.sig.json`（内容 `{"keyId":"…","sig":"…"}`）。原因：GitCode 的
+ * raw 直链会拒绝「预览」未知扩展名 —— `.sig` 直接返 403「暂不支持预览」，
+ * 只有 `.json` 能直出真文件。签名文件因此要挂在 `.json` 后缀上。
+ *
+ * 回落 `<清单>.sig`：照顾只发了老格式的源和本地离线目录。
+ * **只在「取不到」时回落**；取到了但验签失败必须当场报错，不能换一个再试，
+ * 否则等于给攻击者留了「塞个坏签名让我回退到弱校验」的口子。
+ */
+async function fetchManifestSignature(base: string, signal?: AbortSignal): Promise<string> {
+  const errors: string[] = [];
+  try {
+    const res = await fetchText([`${base}.sig.json`], { maxBytes: 8 * 1024, signal });
+    const sig = String((JSON.parse(res.text) as { sig?: string }).sig || '').trim();
+    if (sig) return sig;
+    errors.push('.sig.json 里没有 sig 字段');
+  } catch (err) {
+    errors.push(`.sig.json: ${(err as Error).message}`);
+  }
+  try {
+    const res = await fetchText([`${base}.sig`], { maxBytes: 8 * 1024, signal });
+    const sig = res.text.trim();
+    if (sig) return sig;
+    errors.push('.sig 内容为空');
+  } catch (err) {
+    errors.push(`.sig: ${(err as Error).message}`);
+  }
+  throw new DownloadError('E_MANIFEST', `取清单签名失败（${errors.join('；')}）`);
+}
 
 export type JobPhase =
   | 'idle'
@@ -340,14 +374,13 @@ export class UpdateService {
     for (const base of urls) {
       try {
         const manifestUrl = base;
-        const sigUrl = `${base}.sig`;
         const jsonRes = await fetchText([manifestUrl], { maxBytes: 1024 * 1024 });
-        const sigRes = await fetchText([sigUrl], { maxBytes: 8 * 1024 });
         const raw = Buffer.from(jsonRes.text, 'utf8');
-        const manifest = this.parseManifest({ data: raw, sig: sigRes.text });
+        const sigText = await fetchManifestSignature(manifestUrl);
+        const manifest = this.parseManifest({ data: raw, sig: sigText });
         fs.mkdirSync(this.cacheDir, { recursive: true });
         fs.writeFileSync(json, raw);
-        fs.writeFileSync(sig, sigRes.text);
+        fs.writeFileSync(sig, sigText);
         this.lastCheckedAt = Date.now();
         this.lastFailureAt = 0;
         this.lastFailure = '';
@@ -759,12 +792,13 @@ export class UpdateService {
   ): Promise<{ text: Buffer; sig: string; files: Record<string, string>; version: number }> {
     const m = delta.manifest;
     const urls = m.urls.length > 0 ? m.urls : delta.urlBase.map((b) => `${b.replace(/\/+$/, '')}/manifest.json`);
-    const sigUrls = urls.map((u) => `${u}.sig`);
     const jsonRes = await fetchText(urls, { signal, memo: this.memo, memoKey: m.sha256 });
     const text = Buffer.from(jsonRes.text, 'utf8');
     if (m.sha256 && sha256(text) !== m.sha256) throw new Error('版本清单摘要不符');
-    const sigRes = await fetchText(sigUrls, { signal });
-    const sig = sigRes.text.trim();
+    // 签名同样走 `.sig.json`：`.sig` 在 GitCode raw 上取不到（见 fetchManifestSignature）。
+    // 多镜像里只要有一个能给出签名就用它 —— 签名内容对所有镜像都一样。
+    const sigRes = await fetchManifestSignature(urls[0], signal);
+    const sig = sigRes.trim();
     // keyId 从 update.json 拿不到（manifest 里没带），按「当前所有已内置公钥」逐个试
     let lastErr: unknown = null;
     for (const keyId of knownKeyIds()) {
