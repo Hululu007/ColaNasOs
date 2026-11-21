@@ -56,37 +56,115 @@ export interface UpdateSettings {
  * 顺序即优先级：GitCode（国内快，实测 8.6 MB/s）→ GitHub（境外兜底，
  * 国内可能需要设置代理）。
  */
+/** GitCode 公开仓库 contents API 根 */
+const GITCODE_CONTENTS = 'https://api.gitcode.com/api/v5/repos/cocacola23/ColaNasOs/contents';
+const GITCODE_REF = 'main';
+
 export const DEFAULT_MANIFEST_URLS = [
-  // `?inline=false` 不能省：GitCode 的 raw 域名默认走「网页预览」逻辑，
-  // 不带它拿到的是一份 6 KB 的 SPA 外壳 HTML（200），不是清单。
-  'https://raw.gitcode.com/cocacola23/ColaNasOs/raw/main/release/update.json?inline=false',
+  // GitCode 的 raw 直链**不可用**：请求会被网页预览逻辑接管，返回 403
+  // 「暂不支持预览」，而且不同边缘节点行为不一致（偶尔能拿到真文件，
+  // 过一会儿又 403），当更新源等于随机失效。
+  //
+  // 公开仓库的 contents API 反而稳定且**不需要令牌**，返回
+  // `{encoding:'base64', content:'…'}`。写法是 `<API 根>@@<仓库内路径>?ref=<分支>`：
+  // `@@` 左边是 API 根，右边是要取的文件，签名文件按 `<路径>.sig.json` 派生。
+  `${GITCODE_CONTENTS}@@release/update.json?ref=${GITCODE_REF}`,
   'https://raw.githubusercontent.com/colaKot/ColaNasOs/main/release/update.json',
 ];
+
+/** 老版本内置过的 raw 地址：读到就换掉，否则这些机器永远停在坏源上 */
+const LEGACY_MANIFEST_URLS = new Set([
+  'https://raw.gitcode.com/cocacola23/ColaNasOs/raw/main/release/update.json',
+  'https://raw.gitcode.com/cocacola23/ColaNasOs/raw/main/release/update.json?inline=false',
+]);
+
+/**
+ * 把设置里存的清单源迁移到当前可用地址。
+ *
+ * 老版本内置过 GitCode 的 raw 直链（现在稳定 403）。用户的 settings.json 一旦
+ * 落过那个地址就会一直用它 —— 表现是「检查更新永远失败」，而程序本身升级了
+ * 也不管用。这里按地址精确匹配替换，不认识的地址原样保留（用户自建源）。
+ */
+function migrateManifestUrls(urls: string[]): string[] {
+  const out = urls.map((u) =>
+    LEGACY_MANIFEST_URLS.has(u.trim()) ? DEFAULT_MANIFEST_URLS[0] : u,
+  );
+  return Array.from(new Set(out));
+}
+
+/**
+ * 清单签名文件的地址，从清单地址派生。
+ *
+ * `.sig.json`（内容 `{"keyId":…,"sig":…}`）是主路径：GitCode 上 `.sig` 这类
+ * 未知扩展名取不到（403）。这里只在第一个 `.json` 后面插 `.sig.json`，
+ * 这样 `update.json?ref=main` 与普通直链两种写法都能正确派生。
+ */
+function sigSpecOf(spec: string): string {
+  const i = spec.indexOf('.json');
+  if (i === -1) return `${spec}.sig.json`;
+  return `${spec.slice(0, i + 5)}.sig.json${spec.slice(i + 5)}`;
+}
+
+/** 老格式签名地址（纯 base64 文本）：`update.json.sig.json` → `update.json.sig` */
+function legacySigSpecOf(sigSpec: string): string {
+  return sigSpec.replace(/\.sig\.json(?=\?|$)/, '.sig');
+}
+
+/** 签名文本统一成 base64：新格式是 JSON，老格式是裸 base64 */
+function parseSignature(raw: string): string {
+  const t = raw.trim();
+  if (!t) return '';
+  if (t.startsWith('{')) {
+    try {
+      return String((JSON.parse(t) as { sig?: string }).sig || '').trim();
+    } catch {
+      return '';
+    }
+  }
+  return t;
+}
+
+/**
+ * 取一个仓库文本文件。
+ *
+ * - 普通 URL：直接 GET。
+ * - `<apiRoot>@@<path>?ref=<ref>`：GitCode 公开仓库 contents API，解 base64。
+ */
+async function fetchRepoText(spec: string, signal?: AbortSignal): Promise<string> {
+  const at = spec.indexOf('@@');
+  const url = at === -1 ? spec : `${spec.slice(0, at)}${spec.slice(at + 2)}`;
+  const res = await fetchText([url], { maxBytes: 1024 * 1024, signal });
+  if (at === -1) return res.text;
+  let body: { encoding?: string; content?: string };
+  try {
+    body = JSON.parse(res.text) as { encoding?: string; content?: string };
+  } catch {
+    throw new DownloadError('E_MANIFEST', 'contents API 返回的不是 JSON');
+  }
+  if (String(body.encoding) !== 'base64' || !body.content) {
+    throw new DownloadError('E_MANIFEST', 'contents API 返回格式不符（缺 content）');
+  }
+  return Buffer.from(body.content, 'base64').toString('utf8');
+}
 
 /**
  * 取清单签名。
  *
- * 主路径是 `<清单>.sig.json`（内容 `{"keyId":"…","sig":"…"}`）。原因：GitCode 的
- * raw 直链会拒绝「预览」未知扩展名 —— `.sig` 直接返 403「暂不支持预览」，
- * 只有 `.json` 能直出真文件。签名文件因此要挂在 `.json` 后缀上。
- *
- * 回落 `<清单>.sig`：照顾只发了老格式的源和本地离线目录。
- * **只在「取不到」时回落**；取到了但验签失败必须当场报错，不能换一个再试，
- * 否则等于给攻击者留了「塞个坏签名让我回退到弱校验」的口子。
+ * **只在「取不到」时回落到老格式 `.sig`**；取到了但验签失败必须当场报错，
+ * 不能换个地址再试 —— 否则等于给攻击者留了「塞个坏签名让我回退到弱校验」的口子。
  */
-async function fetchManifestSignature(base: string, signal?: AbortSignal): Promise<string> {
+async function fetchManifestSignature(spec: string, signal?: AbortSignal): Promise<string> {
+  const sigSpec = sigSpecOf(spec);
   const errors: string[] = [];
   try {
-    const res = await fetchText([`${base}.sig.json`], { maxBytes: 8 * 1024, signal });
-    const sig = String((JSON.parse(res.text) as { sig?: string }).sig || '').trim();
+    const sig = parseSignature(await fetchRepoText(sigSpec, signal));
     if (sig) return sig;
     errors.push('.sig.json 里没有 sig 字段');
   } catch (err) {
     errors.push(`.sig.json: ${(err as Error).message}`);
   }
   try {
-    const res = await fetchText([`${base}.sig`], { maxBytes: 8 * 1024, signal });
-    const sig = res.text.trim();
+    const sig = parseSignature(await fetchRepoText(legacySigSpecOf(sigSpec), signal));
     if (sig) return sig;
     errors.push('.sig 内容为空');
   } catch (err) {
@@ -276,7 +354,7 @@ export class UpdateService {
         envUrls.length > 0
           ? envUrls
           : Array.isArray(saved.manifestUrls) && saved.manifestUrls.length > 0
-            ? saved.manifestUrls.map(String)
+            ? migrateManifestUrls(saved.manifestUrls.map(String))
             : DEFAULT_MANIFEST_URLS,
       channel: String(saved.channel || 'stable'),
       autoCheck: saved.autoCheck === true,
@@ -373,10 +451,8 @@ export class UpdateService {
     const errors: string[] = [];
     for (const base of urls) {
       try {
-        const manifestUrl = base;
-        const jsonRes = await fetchText([manifestUrl], { maxBytes: 1024 * 1024 });
-        const raw = Buffer.from(jsonRes.text, 'utf8');
-        const sigText = await fetchManifestSignature(manifestUrl);
+        const raw = Buffer.from(await fetchRepoText(base), 'utf8');
+        const sigText = await fetchManifestSignature(base);
         const manifest = this.parseManifest({ data: raw, sig: sigText });
         fs.mkdirSync(this.cacheDir, { recursive: true });
         fs.writeFileSync(json, raw);
