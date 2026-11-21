@@ -1105,8 +1105,13 @@ class _PlayerPageState extends State<PlayerPage> {
     _nativeFallbackAttempted = false;
     _seekQueue.invalidate();
     _lastOpenAt = DateTime.now();
-    // 音频处理由服务端 HLS 会话承担；每次换源都清掉播放器侧可能残留的滤镜。
+    // 音频处理：直连时套本地滤镜，转码流清空（服务端已处理过）。
     _applyDirectAudio();
+    // 直连走的是网络 Range 读原片，码率可能到 60~80Mbps。libmpv 默认 demuxer
+    // 缓存只有几十 MB，高码率片源一开播就把缓存抽干 → 反复 buffering、
+    // 被看门狗判成「链路跟不上」。这里给直连放开到 256MB 前向 + 60 秒，
+    // 转码流不动（分片本身只有几百 KB，加大缓存没有意义）。
+    _applyDirectCache();
     // 换了播放源：位置不再连续，判定基准要挪到新流的起点。
     // ⛔ 只重置判定，**不取消看门狗** —— 以前这里 cancel，换流期间一旦出岔子
     // 看门狗就永久缺席（`c16e2aeb` 116 秒静默就是这么来的）。
@@ -1578,6 +1583,41 @@ class _PlayerPageState extends State<PlayerPage> {
     }
     final confirmedDecodeFailure =
         reason.startsWith('解码跟不上') || reason.startsWith('首帧未出现');
+    // 手机 / 桌面（以及「链路跟不上」这种非解码原因）：不降分辨率。
+    // 用户选了原片就说明他就在局域网里，要的是画面原样 —— 这里只把
+    // 「容器 / 音频不兼容」交给原片封装会话（视频 copy、音频 AAC），
+    // 画质一个字都不动，也不需要 GPU 编码。以前这里直接摆错误页，
+    // 用户只能对着「原片播放失败」自己找画质菜单。
+    if ((!_tvMode || !confirmedDecodeFailure) &&
+        widget.itemId != null &&
+        !_originalFallbackAttempted) {
+      _originalFallbackAttempted = true;
+      try {
+        ClientLogger.instance.info(
+          '直连失败（$reason），改走原片封装（视频 copy + 音频 AAC）',
+          route: 'player.directGuard',
+        );
+        // 首片要现切，别让用户对着黑屏猜：把转圈的「准备中」摆出来。
+        if (mounted) setState(() => _preparing = true);
+        final u = await _ensureTranscode('original', defaultTranscodeCodec());
+        if (!mounted) return;
+        setState(() {
+          _error = null;
+          _isTranscode = true;
+          _preset = 'original';
+          _codec = 'original';
+        });
+        await _openUrl(u, retries: 5);
+        if (mounted) setState(() => _preparing = false);
+        return;
+      } catch (e) {
+        if (mounted) setState(() => _preparing = false);
+        ClientLogger.instance.warn(
+          '原片封装也起不来：$e',
+          route: 'player.directGuard',
+        );
+      }
+    }
     if (!_tvMode || !confirmedDecodeFailure) {
       if (mounted) {
         setState(() => _error = tr('player.originalPlaybackFailed'));
@@ -1887,11 +1927,25 @@ class _PlayerPageState extends State<PlayerPage> {
     }
   }
 
-  /// 音频处理统一由服务端 HLS 会话完成；播放器侧清除滤镜，避免双重处理。
+  /// 直连时音频处理在播放器本地做（libmpv 自带滤镜链）；
+  /// 转码流的音频已由服务端处理好，必须清掉滤镜，避免双重处理。
   void _applyDirectAudio() {
     if (kIsWeb) return;
-    _setMpvProp('af', '');
-    _setMpvProp('audio-channels', 'auto');
+    // 转码会话的音频已经是「最终形态」：再套一层 dynaudnorm 就是压两次，
+    // 音量起伏被抹平得过头，用户听到的是「一直在喘气」。
+    final local = !_isTranscode;
+    final normalize =
+        local &&
+        PlayPreferences.audioNormalizeEnabled(
+          widget.compat?['audioNormalize'] == true,
+        );
+    // `lavfi=[...]` 这种写法在桌面与安卓的 media_kit 构建里都已验证可用
+    // （照片页的短视频音轨走的是同一条）。
+    _setMpvProp('af', normalize ? 'lavfi=[dynaudnorm=f=250:g=15]' : '');
+    _setMpvProp(
+      'audio-channels',
+      local && PlayPreferences.audioDownmix ? 'stereo' : 'auto',
+    );
   }
 
   bool get _audioProcessingRequested =>
@@ -1899,6 +1953,30 @@ class _PlayerPageState extends State<PlayerPage> {
         widget.compat?['audioNormalize'] == true,
       ) ||
       PlayPreferences.audioDownmix;
+
+  /// 直连时的 demuxer 缓存。转码流不动：分片本身只有几百 KB，
+  /// 原来的默认值就够，贸然改反而影响 seek 行为。
+  void _applyDirectCache() {
+    if (kIsWeb || _isTranscode) return;
+    _setMpvProp('cache', 'yes');
+    _setMpvProp('cache-secs', '60');
+    _setMpvProp('demuxer-max-bytes', '256MiB');
+    _setMpvProp('demuxer-max-back-bytes', '64MiB');
+    // 高码率片源的起播不能等太久：一帧 4K HEVC 就有几百 KB，
+    // 默认的「攒够一批再播」在小水管上是灾难，局域网里则纯属拖延。
+    _setMpvProp('cache-pause-initial', 'no');
+  }
+
+  /// 音频处理是不是只能由服务端 HLS 会话完成。
+  ///
+  /// 只有浏览器没有本地滤镜链，响度归一 / 降混只能进转码会话（视频 copy +
+  /// 音频 AAC）。libmpv 端（安卓手机 / 安卓 TV / 桌面）自己就能套
+  /// `af=dynaudnorm` 与 `audio-channels`，用户既然选了「原片」，就不该因为
+  /// 一个音频开关把整部片拖去转封装 —— 那正是「手机上选原片却播不了」的成因：
+  /// 会话里视频是 copy、音频转 AAC，落进 original 的 EVENT 列表，
+  /// 首片要等、列表还要边播边长。
+  bool get _audioProcessingNeedsRemote =>
+      _audioProcessingRequested && kIsWeb;
 
   bool get _isVideoCopySession => _isTranscode && _preset == 'original';
 
@@ -2044,8 +2122,8 @@ class _PlayerPageState extends State<PlayerPage> {
           !directBlocked &&
           widget.compat != null &&
           (!kIsWeb || !_needTranscode);
-      copyAudio = canKeepSourceVideo && _audioProcessingRequested;
-      toDirect = canKeepSourceVideo && !_audioProcessingRequested;
+      copyAudio = canKeepSourceVideo && _audioProcessingNeedsRemote;
+      toDirect = canKeepSourceVideo && !copyAudio;
       // 档位按片源高度收敛：偏好 1080P 但片源只有 720P 时，按 720P 转，
       // 不做放大转码（放大只会更大更糊，还多占 GPU）。菜单同样只列 ≤720P 的档。
       // 「原码但必须转码」时退到「保分辨率」的兜底档。
@@ -2234,8 +2312,8 @@ class _PlayerPageState extends State<PlayerPage> {
         !_directBlocked &&
         widget.compat != null &&
         (!kIsWeb || !_needTranscode);
-    final copyAudio = canKeepSourceVideo && _audioProcessingRequested;
-    final toDirect = canKeepSourceVideo && !_audioProcessingRequested;
+    final copyAudio = canKeepSourceVideo && _audioProcessingNeedsRemote;
+    final toDirect = canKeepSourceVideo && !copyAudio;
     if (!toDirect && widget.itemId == null) return;
     // 必须转码时「原画」没法真原样播：桌面退到保分辨率的档，
     // 界面也跟着显示实际档位，不要出现「显示原画、跑的是 1080p」。

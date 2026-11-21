@@ -66,6 +66,20 @@ export interface HlsResult {
   copyVideo?: boolean;
   /** 是否保留源音频码流 */
   audioCopy?: boolean;
+  /** 实际用上的编解码链路（copy 时全为 `copy`）。排障：「GPU 到底跑了没有」 */
+  encoder?: string;
+  decoder?: string;
+  pipeline?: string;
+  vendor?: string;
+  /** 片源画像：DV 层号 / HDR 类型 / 10bit 等，日志里要能直接看出 HDR 判错没有 */
+  source?: {
+    codec?: string;
+    pixFmt?: string;
+    dvProfile?: number;
+    hdrKind?: string;
+    hi10p?: boolean;
+    hasHdrMeta?: boolean;
+  };
 }
 
 /** 单文件编码（离线下载）的入参 */
@@ -228,6 +242,11 @@ export class MediaBridge {
       container?: string;
       copyVideo?: boolean;
       audioCopy?: boolean;
+      encoder?: string;
+      decoder?: string;
+      pipeline?: string;
+      vendor?: string;
+      source?: HlsResult['source'];
     }>('hls', { src, dir, ...opts }, timeoutMs);
     return {
       segments: res.segments,
@@ -237,6 +256,11 @@ export class MediaBridge {
       container: res.container,
       copyVideo: res.copyVideo,
       audioCopy: res.audioCopy,
+      encoder: res.encoder,
+      decoder: res.decoder,
+      pipeline: res.pipeline,
+      vendor: res.vendor,
+      source: res.source,
     };
   }
 
