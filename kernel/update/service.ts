@@ -198,6 +198,13 @@ export type JobPhase =
   | 'verifying'
   | 'assembling'
   | 'activating'
+  /**
+   * 全量包下载完、正在等系统授权并跑安装程序。
+   *
+   * 单独一档是给界面看的：这一步会弹 UAC，而安装程序一旦拿到授权就会先把本进程
+   * 杀掉（installer.nsh 的 STOP_RUNNING_APP），界面来不及显示任何别的状态。
+   */
+  | 'installing'
   | 'ready'
   | 'failed'
   | 'cancelled';
@@ -1136,51 +1143,171 @@ export class UpdateService {
       signal,
       onProgress: (p) => this.onDownloadProgress(p, name, 0, full.br?.size ?? full.size),
     });
-    // 全量走安装器：它自己会关掉旧进程（installer.nsh 的 STOP_RUNNING_APP），
-    // 装完再把自己拉起来（customInstall 里的 Exec），所以这里下载完就直接跑，
-    // 不留一个「请手动双击」的路径给用户。
-    const launched = this.autoRunInstaller(dest);
+    /**
+     * 全量走安装器：它自己会关掉旧进程（installer.nsh 的 STOP_RUNNING_APP），
+     * 装完再把自己拉起来（customInstall 里的 Exec），所以这里下载完就直接跑，
+     * 不留一个「请手动双击」的路径给用户。
+     *
+     * 但**必须先要提权、并且拿得到结果**。服务端多半装在 Program Files
+     * （per-machine），而内核跑在普通权限下：直接 `spawn(exe, ['/S'])` 在需要
+     * 管理员时不会报错、也不会装 —— 任务停在「正在启动安装程序」，安装目录里
+     * 一个字节都没变，用户以为更新完了。所以改成用 PowerShell 的
+     * `Start-Process -Verb RunAs` 主动提权，被拒（1223）就当场报错。
+     */
+    this.setJob({
+      phase: 'installing',
+      percent: 100,
+      mode: 'full',
+      message: '正在等待系统授权，请在弹出的窗口点「是」',
+    });
+    // 兜底先挂上：安装器把本进程杀掉之后，没人再管「装完有没有回来」
+    this.spawnRescue();
+    const result = await this.runInstaller(dest);
+    if (result === 'denied') {
+      this.fail(
+        new Error('系统授权被取消，安装程序没有运行（服务端仍在运行，可以再点一次）'),
+        'retry',
+      );
+      return;
+    }
+    if (result === 'failed') {
+      this.fail(new Error(`安装程序没能启动，请手动运行：${dest}`), 'manual');
+      return;
+    }
     this.setJob({
       phase: 'ready',
       percent: 100,
-      message: launched ? '安装包已下载，正在启动安装程序' : '安装包已就绪',
-      hint: dest,
-      autoRun: launched,
+      message:
+        result === 'launched'
+          ? '安装程序已启动，装完会自动把服务端启回来'
+          : '安装包已就绪',
+      hint: result === 'launched' ? 'auto' : dest,
+      autoRun: result === 'launched',
       mode: 'full',
     });
   }
 
   /**
-   * 下载完立刻静默安装。
+   * 拉起服务端安装程序，返回它到底有没有跑起来。
    *
-   * 延迟 2 秒再 spawn：安装程序第一步就是杀掉本进程，留一点时间让界面把
-   * 「正在安装」这一帧取走，不然进度条永远停在 99%。
+   * 三种结局都是可观测的，这正是重点：
+   *   - `launched`：装完了（通常本进程已经被安装器杀掉，走不到这里）；
+   *   - `denied`：UAC 被拒（1223）。安装程序**没有**启动，服务端还活着，
+   *     必须如实告诉用户「没装」，而不是留一条假的「正在安装」；
+   *   - `failed`：启动失败 / 安装程序返回非 0，把包路径交给用户手动跑。
    *
-   * 三个不跑的情况：测试开关（smoke 用的假安装包）、不是 PE 文件、非 Windows。
+   * 脚本走 `-EncodedCommand`（base64 + UTF-16LE）：路径里有空格和中文，
+   * 拼成 `-Command` 字符串一定要和 cmd / PowerShell 的引号规则打架。
    */
-  private autoRunInstaller(exe: string): boolean {
-    if (process.platform !== 'win32') return false;
-    if (process.env.COLANAS_UPDATE_NO_AUTORUN === '1') return false;
+  private runInstaller(exe: string): Promise<'launched' | 'denied' | 'failed' | 'skipped'> {
+    if (process.platform !== 'win32') return Promise.resolve('skipped');
+    // 冒烟夹具的「安装包」只是个 MZ 开头的空壳，真跑起来会去装别的东西
+    if (process.env.COLANAS_UPDATE_NO_AUTORUN === '1') return Promise.resolve('skipped');
+    if (!isWindowsExecutable(exe)) return Promise.resolve('skipped');
+
+    const script = [
+      "$ErrorActionPreference = 'Stop'",
+      'try {',
+      "  $p = Start-Process -FilePath $env:COLANAS_SETUP -ArgumentList '/S' -Verb RunAs -PassThru -ErrorAction Stop",
+      '} catch {',
+      '  # 1223 = ERROR_CANCELLED：用户在 UAC 窗口点了「否」',
+      '  exit 1223',
+      '}',
+      '$p.WaitForExit()',
+      'exit $p.ExitCode',
+    ].join('\n');
+
+    return new Promise((resolve) => {
+      let settled = false;
+      const done = (r: 'launched' | 'denied' | 'failed'): void => {
+        if (settled) return;
+        settled = true;
+        resolve(r);
+      };
+      /**
+       * 延迟 2 秒再真跑：安装器拿到授权后第一件事就是杀掉本进程，
+       * 留一点时间让界面把「正在等待系统授权」这一帧取走。
+       */
+      const timer = setTimeout(() => {
+        let stderr = '';
+        const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encodePowershell(script)], {
+          stdio: ['ignore', 'ignore', 'pipe'],
+          windowsHide: true,
+          env: { ...process.env, COLANAS_SETUP: exe },
+        });
+        child.stderr?.on('data', (d: Buffer) => {
+          stderr += String(d);
+        });
+        child.on('error', (err) => {
+          this.log('installer spawn failed', { err: String(err) });
+          done('failed');
+        });
+        child.on('exit', (code) => {
+          if (code === 0) return done('launched');
+          if (code === 1223) {
+            this.log('installer elevation denied');
+            return done('denied');
+          }
+          this.log('installer failed', { code, stderr: stderr.slice(0, 400) });
+          done('failed');
+        });
+      }, 2000);
+      timer.unref?.();
+    });
+  }
+
+  /**
+   * 「装完没回来」的兜底。
+   *
+   * 装完靠 installer.nsh 的 customInstall 用 explorer 把服务端拉起来，这条链路
+   * 任何一环出问题（提权残留、explorer 被占用、安装中途失败）留下的都是
+   * 「包装完了、服务没了、得走到机器跟前点图标」—— NAS 往往不在手边。
+   *
+   * 所以起一个 detached 的 PowerShell 陪跑：最多等 4 分钟，期间只要内核端口
+   * 有监听就退；一直没起来、也没有安装程序在跑，才去启动安装目录里的外壳。
+   *
+   * 它不在 `$INSTDIR` 下，安装器按路径匹配杀进程时不会误伤。
+   */
+  private spawnRescue(): void {
+    if (process.platform !== 'win32') return;
+    const shellExe = process.env.COLANAS_SHELL_EXE;
+    if (!shellExe || !fs.existsSync(shellExe)) return;
+    const port = Number(process.env.PORT || 7788) || 7788;
+    const script = [
+      `$port = ${port}`,
+      "$deadline = (Get-Date).AddMinutes(4)",
+      'while ((Get-Date) -lt $deadline) {',
+      '  Start-Sleep -Seconds 3',
+      '  $up = $false',
+      '  try {',
+      '    $c = New-Object Net.Sockets.TcpClient',
+      "    $c.Connect('127.0.0.1', $port)",
+      '    $up = $true',
+      '    $c.Close()',
+      '  } catch { }',
+      '  if ($up) { exit 0 }',
+      '  # 安装程序还在覆盖文件：现在拉起只会撞「文件占用」',
+      "  if (Get-Process | Where-Object { $_.ProcessName -like '*Setup*' }) { continue }",
+      '}',
+      'if (Test-Path $env:COLANAS_SHELL_EXE) { Start-Process -FilePath $env:COLANAS_SHELL_EXE }',
+    ].join('\n');
     try {
-      const fd = fs.openSync(exe, 'r');
-      const head = Buffer.alloc(2);
-      fs.readSync(fd, head, 0, 2, 0);
-      fs.closeSync(fd);
-      if (head.toString('latin1') !== 'MZ') return false;
-    } catch {
-      return false;
+      const child = spawn(
+        'powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-EncodedCommand', encodePowershell(script)],
+        {
+          detached: true,
+          stdio: 'ignore',
+          windowsHide: true,
+          env: { ...process.env, COLANAS_SHELL_EXE: shellExe },
+        },
+      );
+      child.on('error', (err) => this.log('rescue spawn failed', { err: String(err) }));
+      child.unref();
+      this.log('rescue armed', { shellExe, port });
+    } catch (err) {
+      this.log('rescue spawn failed', { err: String(err) });
     }
-    const timer = setTimeout(() => {
-      try {
-        const child = spawn(exe, ['/S'], { detached: true, stdio: 'ignore', windowsHide: true });
-        child.on('error', (err) => this.log('installer spawn failed', { err: String(err) }));
-        child.unref();
-      } catch (err) {
-        this.log('installer spawn failed', { err: String(err) });
-      }
-    }, 2000);
-    timer.unref?.();
-    return true;
   }
 
   /**
@@ -1545,3 +1672,24 @@ export function pruneVersions(versionsDir: string, keep = 2): string[] {
 export { DownloadError } from './downloader';
 export { UpdateVerifyError } from './verify';
 export type { AssetRef, ComponentId, UpdateManifest };
+
+/**
+ * PowerShell 的 `-Command` 要和 cmd 的引号规则打架，路径里还有空格和中文。
+ * 一律编码成 base64（UTF-16LE）走 `-EncodedCommand`，绕开所有转义问题。
+ */
+function encodePowershell(script: string): string {
+  return Buffer.from(script, 'utf16le').toString('base64');
+}
+
+/** 是不是一个真的 PE 可执行文件（安装包开头必须是 `MZ`） */
+function isWindowsExecutable(file: string): boolean {
+  try {
+    const fd = fs.openSync(file, 'r');
+    const head = Buffer.alloc(2);
+    fs.readSync(fd, head, 0, 2, 0);
+    fs.closeSync(fd);
+    return head.toString('latin1') === 'MZ';
+  } catch {
+    return false;
+  }
+}

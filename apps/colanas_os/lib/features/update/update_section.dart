@@ -124,7 +124,10 @@ class _UpdateSectionState extends State<UpdateSection> {
             phase != 'downloading' &&
             phase != 'verifying' &&
             phase != 'assembling' &&
-            phase != 'activating') {
+            phase != 'activating' &&
+            // 全量包正在等 UAC / 跑安装程序：安装器一起来内核就会被杀，
+            // 这一步必须继续轮询 —— 授权被拒时任务会落回 failed，界面上得看得到
+            phase != 'installing') {
           timer.cancel();
           if (phase == 'ready') {
             // 增量：文件已经落到新版本目录，只差重启内核，别让用户再点一下
@@ -368,7 +371,10 @@ class _UpdateSectionState extends State<UpdateSection> {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          LinearProgressIndicator(value: job.percent > 0 ? job.percent / 100 : null),
+          // 「等系统授权 / 正在装」没有进度可言，走不确定态；99% 卡在满格更像卡死
+          LinearProgressIndicator(
+            value: job.phase == 'installing' || job.percent <= 0 ? null : job.percent / 100,
+          ),
           const SizedBox(height: NasTokens.spaceXs),
           Text(
             '${job.message}  ${job.total > 0 ? '${UpdateService.formatBytes(job.loaded)} / ${UpdateService.formatBytes(job.total)}' : ''}'
@@ -500,6 +506,13 @@ class _UpdateSectionState extends State<UpdateSection> {
             TextButton(onPressed: _rollback, child: Text(tr('update.rollback'))),
           ],
         ),
+        if (fullBytes > 0) ...[
+          const SizedBox(height: NasTokens.spaceXs),
+          Text(
+            tr('update.fullNeedAuth'),
+            style: TextStyle(fontSize: NasTokens.fontCaption, color: context.nasTextSecondary),
+          ),
+        ],
       ],
     );
   }

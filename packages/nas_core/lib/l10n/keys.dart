@@ -3150,6 +3150,7 @@ class I18nKeys {
   static const updateRestartingServer = 'update.restartingServer';
   static const updateModeDelta = 'update.modeDelta';
   static const updateModeFull = 'update.modeFull';
+  static const updateFullNeedAuth = 'update.fullNeedAuth';
   static const updateDeltaInstall = 'update.deltaInstall';
   static const updateFullInstall = 'update.fullInstall';
   static const updateDeltaAutoRestart = 'update.deltaAutoRestart';
@@ -3168,4 +3169,4 @@ class I18nKeys {
 }
 
 /// 契约键总数（生成时确定），供完整性自检使用。
-const int i18nKeyCount = 3116;
+const int i18nKeyCount = 3117;

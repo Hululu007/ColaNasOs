@@ -4211,6 +4211,7 @@
     "update.restartingServer": {},
     "update.modeDelta": {"size": {}},
     "update.modeFull": {},
+    "update.fullNeedAuth": {},
     "update.deltaInstall": {
       "size": {}
     },

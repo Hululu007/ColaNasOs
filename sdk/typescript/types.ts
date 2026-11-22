@@ -2861,6 +2861,8 @@ export type SystemUpdateCheckResponse = {
   "notes": Record<string, unknown>;
   "mode": string;
   "deltaBytes": number;
+  "deltaAvailable": boolean;
+  "fullBytes": number;
   "needsReshell": boolean;
   "managed": boolean;
   "minShell": string;
@@ -2896,6 +2898,7 @@ export type SystemUpdateJob = {
   "updatedAt": number;
   "targetId": string;
   "mode": string;
+  "autoRun": boolean;
 };
 
 export type SystemUpdateJobResponse = {
@@ -2931,6 +2934,7 @@ export type SystemUpdateConfigBody = {
 
 export type SystemUpdateInstallBody = {
   "force"?: boolean;
+  "mode"?: string;
 };
 
 export type SystemUpdateOfflineBody = {

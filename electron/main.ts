@@ -234,6 +234,15 @@ function startKernel(): void {
    */
   env.COLANAS_SHELL_VERSION = app.getVersion();
   env.COLANAS_ELECTRON_VERSION = process.versions.electron;
+  /**
+   * 安装目录里这个外壳自己的路径。
+   *
+   * 全量更新时安装程序会先把整个进程树杀掉（installer.nsh 的 STOP_RUNNING_APP），
+   * 装完那条「用 explorer 把自己启回来」的链路任何一环失手，服务就永久停在
+   * 死掉的状态。内核拿这个路径挂一个 detached 的兜底：装完一段时间还探不到
+   * 端口，就直接把它拉起来。
+   */
+  env.COLANAS_SHELL_EXE = app.getPath('exe');
   let kernelSemver = app.getVersion();
   if (entry.versioned && entry.dir) {
     try {
