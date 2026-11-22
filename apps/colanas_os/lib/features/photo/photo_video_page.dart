@@ -168,7 +168,10 @@ class _PhotoVideoPageState extends State<PhotoVideoPage> {
     // 响度归一：dynaudnorm 是实时滤镜，边播边把音量拉平，不需要预扫。
     // 滤镜名直接写（`dynaudnorm=...`）——`lavfi=[...]` 是 ffmpeg 命令行写法，
     // 安卓的 libmpv 会报 `Audio filter initialized failed!`。
-    _setProp('af', _normalize ? _normalizeFilter : '');
+    // 安卓 libmpv 不带 lavfi，挂上去还会报「Option af: dynaudnorm doesn't exist」，
+    // 开播闪一屏错误，所以只在桌面 / iOS 生效。
+    final canFilter = !kIsWeb && defaultTargetPlatform != TargetPlatform.android;
+    _setProp('af', (_normalize && canFilter) ? _normalizeFilter : '');
     // 降混：把 5.1/7.1 混成双声道（耳机 / 笔记本扬声器不会丢中置人声以外的声道）
     _setProp('audio-channels', _downmix ? 'stereo' : 'auto');
   }

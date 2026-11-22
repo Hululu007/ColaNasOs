@@ -76,7 +76,13 @@ class _Bar extends StatelessWidget {
             NasTokens.spaceXs,
           ),
       child: Material(
-        color: context.nasStyle.panelColor,
+        // 不能直接用 panelColor：深色皮肤下它只有 8% 白，是一条真正的半透明条，
+        // 叠在歌曲网格的亮色封面上时文字完全看不清（2026-11-22 反馈）。
+        // 用 baseColor 合成成不透明的等效面板色，观感一致但绝不透。
+        color: Color.alphaBlend(
+          context.nasStyle.panelColor,
+          context.nasStyle.baseColor,
+        ),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(NasTokens.radiusMd),
           side: BorderSide(color: context.nasStyle.panelBorderColor),

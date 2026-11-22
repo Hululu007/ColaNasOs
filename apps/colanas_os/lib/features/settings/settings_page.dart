@@ -643,8 +643,7 @@ class _SettingsPageState extends State<SettingsPage> {
     return _section(tr('settings.server'), [
       Row(
         children: [
-          SizedBox(
-            width: 150,
+          Expanded(
             child: TextField(
               controller: _portCtrl,
               keyboardType: TextInputType.number,
@@ -655,8 +654,7 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
           ),
           const SizedBox(width: NasTokens.spaceSm),
-          SizedBox(
-            width: 170,
+          Expanded(
             child: TextField(
               controller: _concurrencyCtrl,
               keyboardType: TextInputType.number,
@@ -708,9 +706,9 @@ class _SettingsPageState extends State<SettingsPage> {
         onChanged: (v) => setState(() => _httpsEnabled = v),
       ),
       Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          SizedBox(
-            width: 150,
+          Expanded(
             child: TextField(
               controller: _httpsPortCtrl,
               keyboardType: TextInputType.number,
@@ -721,17 +719,25 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
           ),
           const SizedBox(width: NasTokens.spaceSm),
-          TextButton.icon(
-            onPressed: _uploadTls,
-            icon: const Icon(Icons.upload_file, size: 18),
-            label: Text(tr('settings.tlsCert')),
-          ),
-          if (_tls?.hasCert == true)
-            TextButton.icon(
-              onPressed: _clearTls,
-              icon: const Icon(Icons.delete_outline, size: 18),
-              label: Text(tr('settings.tlsClear')),
+          Expanded(
+            child: Wrap(
+              alignment: WrapAlignment.start,
+              spacing: NasTokens.spaceXs,
+              children: [
+                TextButton.icon(
+                  onPressed: _uploadTls,
+                  icon: const Icon(Icons.upload_file, size: 18),
+                  label: Text(tr('settings.tlsCert')),
+                ),
+                if (_tls?.hasCert == true)
+                  TextButton.icon(
+                    onPressed: _clearTls,
+                    icon: const Icon(Icons.delete_outline, size: 18),
+                    label: Text(tr('settings.tlsClear')),
+                  ),
+              ],
             ),
+          ),
         ],
       ),
       Text(

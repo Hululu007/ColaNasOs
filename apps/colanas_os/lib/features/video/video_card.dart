@@ -82,7 +82,7 @@ String videoMetaLine(VideoItem item) {
   return parts.join(' · ');
 }
 
-/// 画质徽章：4K / HDR / DV / Atmos（顺序固定，最多显示 4 个）
+/// 画质徽章：4K / HDR10 / HDR10+ / DV / HLG / Atmos（顺序固定，最多显示 4 个）
 List<String> videoFlagsOf(VideoItem item) {
   final flags = <String>[];
   if (item.is4k) flags.add('4K');
@@ -91,7 +91,8 @@ List<String> videoFlagsOf(VideoItem item) {
   } else if (item.hdr10plus) {
     flags.add('HDR10+');
   } else if (item.hdr10) {
-    flags.add('HDR');
+    // 统一叫 HDR10：以前写 "HDR"，和 HDR10+ 摆在一起时分不清是哪一档。
+    flags.add('HDR10');
   } else if (item.hlg) {
     flags.add('HLG');
   }

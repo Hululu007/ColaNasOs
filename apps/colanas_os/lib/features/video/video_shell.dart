@@ -160,7 +160,11 @@ class _VideoShellPageState extends State<VideoShellPage> {
     if (_activeKey != key) {
       _activeKey = key;
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) VideoDetailRouter.instance.closeAll();
+        // 库列表还没回来时（转屏重建外壳 / 刚启动）二级内容还是临时态，
+        // 这时清三级栈会让「播放器返回 → 详情」在中间闪一下二级列表。
+        if (mounted && _libraries.isNotEmpty) {
+          VideoDetailRouter.instance.closeAll();
+        }
       });
     }
     return Stack(
@@ -708,8 +712,7 @@ class _VideoFavoritesPageState extends State<VideoFavoritesPage> {
                     posterUrl: null,
                     headers: {
                       if (ApiSession.instance.token != null)
-                        'authorization':
-                            'Bearer ${ApiSession.instance.token}',
+                        'authorization': 'Bearer ${ApiSession.instance.token}',
                     },
                   ),
                   child: NasCard(
