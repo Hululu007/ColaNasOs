@@ -1771,6 +1771,10 @@ class I18nKeys {
   static const playerTvHdrCapability = 'player.tv.hdrCapability';
   static const playerTvHdrNone = 'player.tv.hdrNone';
   static const playerTvHdrUnknown = 'player.tv.hdrUnknown';
+  static const playerTvRewind10 = 'player.tv.rewind10';
+  static const playerTvForward30 = 'player.tv.forward30';
+  static const playerTvInfo = 'player.tv.info';
+  static const playerTvOriginal = 'player.tv.original';
   static const playerTvHint = 'player.tv.hint';
   static const playerTvSubtitleLarger = 'player.tv.subtitleLarger';
   static const playerTvSubtitlePos0 = 'player.tv.subtitlePos.0';
@@ -3182,4 +3186,4 @@ class I18nKeys {
 }
 
 /// 契约键总数（生成时确定），供完整性自检使用。
-const int i18nKeyCount = 3130;
+const int i18nKeyCount = 3134;

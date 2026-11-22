@@ -37,9 +37,21 @@ class _UpdateSectionState extends State<UpdateSection> {
   String? _error;
   String _versionDir = '';
 
+  /// 能不能看/操作「服务端更新」。
+  ///
+  /// 服务端更新（含预发布通道、自动检查）是运维动作，要 `system:read`。
+  /// 普通账号在「设置 → 关于」里只该看到自己的**客户端更新**；
+  /// 以前这里无条件渲染并请求，受限账号会看到一整块「服务端更新」外加一条
+  /// `ApiError(403 forbidden): 需要 system:read`（2026-11-23 用户截图）。
+  bool get _canServer {
+    final s = ApiSession.instance;
+    return s.isAdmin || s.scopes.contains('system:read');
+  }
+
   @override
   void initState() {
     super.initState();
+    if (!_canServer) return;
     _loadConfig();
     _refreshServer();
   }
@@ -247,64 +259,66 @@ class _UpdateSectionState extends State<UpdateSection> {
               ],
             ),
           ),
-        const Divider(height: NasTokens.spaceLg),
-        // ---------------- 服务端 ----------------
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                tr('update.serverTitle'),
-                style: const TextStyle(fontWeight: FontWeight.w600),
+        // ---------------- 服务端（仅 system:read 可见） ----------------
+        if (_canServer) ...[
+          const Divider(height: NasTokens.spaceLg),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  tr('update.serverTitle'),
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+              ),
+              if (_checking)
+                const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              else
+                TextButton(
+                  onPressed: () => _refreshServer(),
+                  child: Text(tr('update.check')),
+                ),
+            ],
+          ),
+          const SizedBox(height: NasTokens.spaceXs),
+          _serverBody(),
+          if (_versionDir.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: NasTokens.spaceXs),
+              child: SelectableText(
+                tr('update.versionDir', {'dir': _versionDir}),
+                style: TextStyle(fontSize: NasTokens.fontCaption, color: context.nasTextSecondary),
               ),
             ),
-            if (_checking)
-              const SizedBox(
-                width: 16,
-                height: 16,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              )
-            else
-              TextButton(
-                onPressed: () => _refreshServer(),
-                child: Text(tr('update.check')),
-              ),
-          ],
-        ),
-        const SizedBox(height: NasTokens.spaceXs),
-        _serverBody(),
-        if (_versionDir.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.only(top: NasTokens.spaceXs),
-            child: SelectableText(
-              tr('update.versionDir', {'dir': _versionDir}),
-              style: TextStyle(fontSize: NasTokens.fontCaption, color: context.nasTextSecondary),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            value: _channel == 'pre',
+            onChanged: _togglePreChannel,
+            title: Text(tr('update.preChannel')),
+            subtitle: Text(
+              tr('update.preChannelHint'),
+              style: TextStyle(fontSize: NasTokens.fontCaption),
             ),
           ),
-        SwitchListTile(
-          contentPadding: EdgeInsets.zero,
-          value: _channel == 'pre',
-          onChanged: _togglePreChannel,
-          title: Text(tr('update.preChannel')),
-          subtitle: Text(
-            tr('update.preChannelHint'),
-            style: TextStyle(fontSize: NasTokens.fontCaption),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            value: _autoCheck,
+            onChanged: _toggleAutoCheck,
+            title: Text(tr('update.autoCheck')),
+            subtitle: Text(
+              tr('update.autoCheckHint'),
+              style: TextStyle(fontSize: NasTokens.fontCaption),
+            ),
           ),
-        ),
-        SwitchListTile(
-          contentPadding: EdgeInsets.zero,
-          value: _autoCheck,
-          onChanged: _toggleAutoCheck,
-          title: Text(tr('update.autoCheck')),
-          subtitle: Text(
-            tr('update.autoCheckHint'),
-            style: TextStyle(fontSize: NasTokens.fontCaption),
-          ),
-        ),
-        if (_error != null)
-          Text(
-            _error!,
-            style: TextStyle(fontSize: NasTokens.fontCaption, color: scheme.error),
-          ),
+          if (_error != null)
+            Text(
+              _error!,
+              style: TextStyle(fontSize: NasTokens.fontCaption, color: scheme.error),
+            ),
+        ],
       ],
     );
   }

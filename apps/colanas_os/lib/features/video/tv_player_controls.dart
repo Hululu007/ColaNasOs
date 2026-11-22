@@ -63,9 +63,11 @@ class TvPlayerButton extends StatelessWidget {
         duration: const Duration(milliseconds: 140),
         curve: Curves.easeOutCubic,
         child: Container(
-          // 宽高相等 = 正方形；高度不再由内容撑开
+          // 宽 = size，高度略矮（0.88）：图标 + 一行文字就够了，
+          // 正方形容器下面会空一大截，操作栏整体也就抬高（用户 2026-11-23：
+          // 「不要太高就好」）。
           width: size,
-          height: size,
+          height: size * 0.88,
           padding: EdgeInsets.symmetric(horizontal: padding, vertical: padding),
           decoration: BoxDecoration(
             color: highlighted
@@ -92,14 +94,21 @@ class TvPlayerButton extends StatelessWidget {
             children: [
               Icon(icon, size: size * 0.34, color: color),
               SizedBox(height: size * 0.05),
-              Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: color,
-                  fontSize: (size * 0.15).clamp(10.0, 16.0),
-                  fontWeight: FontWeight.w600,
+              // 文字**不省略**：一行放不下就等比缩小字号。
+              // 以前是 `maxLines: 1 + ellipsis`，像「画质 · 分辨率 / 码率」这种
+              // 长标签会被截成「画质 ·…」，用户看不出这个按钮是干什么的。
+              // 标签本身已经收短（见 `_tvActions`），这里只做兜底缩放。
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  softWrap: false,
+                  style: TextStyle(
+                    color: color,
+                    fontSize: (size * 0.15).clamp(10.0, 16.0),
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ),
             ],
@@ -535,7 +544,9 @@ class _TvPlayerPanelState extends State<TvPlayerPanel> {
       },
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 140),
-        width: m.px(option == null ? 140 : 210),
+        // 宽度跟着文字给足：画质档位的完整名字是「1080P 1.4Mbps」，
+        // 原来固定 210 在 1280 屏上会被截成「1080P 1.4Mb…」。
+        width: m.px(option == null ? 140 : 268),
         padding: EdgeInsets.symmetric(horizontal: m.px(16), vertical: m.px(12)),
         decoration: BoxDecoration(
           color: focused
@@ -565,7 +576,8 @@ class _TvPlayerPanelState extends State<TvPlayerPanel> {
                 children: [
                   Text(
                     option?.label ?? tr('tv.player.close'),
-                    maxLines: 1,
+                    // 允许两行：完整名字优先，极端长标签才省略
+                    maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       color: option == null ? Colors.white70 : color,

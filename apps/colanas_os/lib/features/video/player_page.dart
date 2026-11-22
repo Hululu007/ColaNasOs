@@ -5360,13 +5360,12 @@ class _PlayerPageState extends State<PlayerPage> {
     );
   }
 
-  /// 原生视频视图（PlatformView）已创建：收起「准备中」那层黑底。
-  ///
-  /// 画面现在是**窗口内**的真实 Surface（Hybrid Composition），窗口不透明，
-  /// 根背景层不会盖住它 —— 不需要再让根背景让路（让路反而会在窗口上露底色）。
+  /// 原生 SurfaceView 挂上窗口后，才把整页 / 根背景改成透明。
   void _onNativeSurfaceAttached() {
     if (!mounted || _nativeSurfaceReady) return;
     setState(() => _nativeSurfaceReady = true);
+    // 根背景层在 Navigator 下面，必须收起，否则会盖住视频
+    nativeVideoLayerActive.value = true;
   }
 
   /// 错误页上的恢复入口：重新打开当前地址。
@@ -5554,6 +5553,15 @@ class _PlayerPageState extends State<PlayerPage> {
 
   int get _tvPlayIndex => 0;
 
+  /// TV 按钮上只放「画质」本身（`原画` / `1080P` / `720P`），
+  /// 带码率的完整名字留给弹窗（`_tvQualityPanel` 的选项与 hint）。
+  String get _tvQualityShort {
+    if (_isVideoCopySession || _codec == 'original') {
+      return tr('player.tv.original');
+    }
+    return playQualityPresetOf(_preset)?.label ?? _preset;
+  }
+
   List<_TvAction> _tvActions() {
     final playing = _playbackPlaying;
     return <_TvAction>[
@@ -5567,12 +5575,13 @@ class _PlayerPageState extends State<PlayerPage> {
       ),
       _TvAction(
         icon: Icons.replay_10_rounded,
-        label: tr('player.rewind10'),
+        // 按钮下面只有一行位置：用短标签，完整语义靠图标 + 弹窗
+        label: tr('player.tv.rewind10'),
         onTap: () => _seekBy(-10),
       ),
       _TvAction(
         icon: Icons.forward_30_rounded,
-        label: tr('player.forward30'),
+        label: tr('player.tv.forward30'),
         onTap: () => _seekBy(30),
       ),
       if (_hasPlaylist)
@@ -5604,12 +5613,13 @@ class _PlayerPageState extends State<PlayerPage> {
       ),
       _TvAction(
         icon: Icons.hd_outlined,
-        label: tr('player.quality'),
+        // 直接显示当前画质（原画 / 1080P），比写死「画质」有用得多
+        label: _tvQualityShort,
         onTap: _tvQualityPanel,
       ),
       _TvAction(
         icon: Icons.info_outline_rounded,
-        label: tr('player.info'),
+        label: tr('player.tv.info'),
         onTap: _tvInfoPanel,
       ),
     ];
