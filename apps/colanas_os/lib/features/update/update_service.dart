@@ -64,16 +64,20 @@ class ClientUpdate {
 
   /// 按平台挑要装的资产：PC 只认 setup（便携版走 zip，不在这里自替换）
   ///
-  /// 安卓按**编译期** `kTvBuild` 分辨装的是哪一份包 —— 不能用可切换的
+  /// 安卓按**包身份** [isTvPackage] 分辨装的是哪一份包 —— 不能用可切换的
   /// `tvMode` 设置：手机用户把 TV 版面打开后，不该被推 TV 安装包。
+  /// 包身份由入口决定（见 `tv_mode.dart`），不依赖 `--dart-define` 写没写对。
+  ///
+  /// **绝不允许回落到另一份包**：手机包和 TV 包是同一个 applicationId，
+  /// 电视上装进手机包就等于把遥控器彻底废掉（这也是「TV 更新成手机端」的成因）。
+  /// 拿不到与自己匹配的资产时返回 null，界面显示「没有适用于本端的安装包」。
   UpdateAsset? assetFor(String platform) {
     if (platform == 'client_android') {
-      const tv = kTvBuild;
+      final want = isTvPackage ? 'apk_tv' : 'apk';
       for (final a in assets) {
-        if (tv && a.kind == 'apk_tv') return a;
-        if (!tv && a.kind == 'apk') return a;
+        if (a.kind == want) return a;
       }
-      return assets.isEmpty ? null : assets.first;
+      return null;
     }
     // PC 只认安装版：便携版是 zip，没法「自己替换自己」，硬跑只会把 zip 当 exe 启动
     for (final a in assets) {
@@ -213,6 +217,8 @@ class UpdateService {
         component: component,
         current: kAppVersion,
         currentCode: kAppVersionCode,
+        // 自报构建形态：服务端据此只给我们这一份包（TV 拿不到手机包，反之亦然）
+        build: component == 'client_android' ? (isTvPackage ? 'tv' : 'phone') : null,
         force: force ? '1' : '0',
       );
       serverCheck.value = res;
@@ -293,6 +299,18 @@ class UpdateService {
       // 清单里没有本平台能自动安装的包（例如只发了便携版 / 只发了 TV 包）
       status.value = UpdateStatus(phase: UpdatePhase.failed, error: tr('update.noAsset'));
       return;
+    }
+    // 最后一道闸：安卓上装的包必须与自己这份构建同形态。
+    // 宁可这次不更新，也不能把电视端换成手机 UI。
+    if (!kIsWeb && component == 'client_android') {
+      final want = isTvPackage ? 'apk_tv' : 'apk';
+      if (asset.kind != want) {
+        status.value = UpdateStatus(
+          phase: UpdatePhase.failed,
+          error: tr('update.noAsset'),
+        );
+        return;
+      }
     }
     _prompted = true;
     _cancelRequested = false;

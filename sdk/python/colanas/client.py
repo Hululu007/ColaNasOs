@@ -1671,6 +1671,10 @@ class ColanasClient:
         """删除视频（后台任务，返回 taskId，用 /tasks/:id 看进度）"""
         return self._request("POST", "/api/v1/video/items/delete-task", params, "body")
 
+    def video_jp_actor_block(self, **params):
+        """屏蔽 / 取消屏蔽演员（只影响演员列表的默认视图）"""
+        return self._request("POST", "/api/v1/video/jp_actor/block", params, "body")
+
     def video_jp_actor_favorite(self, **params):
         """收藏 / 取消收藏演员"""
         return self._request("POST", "/api/v1/video/jp_actor/favorite", params, "body")

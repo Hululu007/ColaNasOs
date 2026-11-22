@@ -271,6 +271,14 @@ export interface ServerCheck {
 /** 安装方式：auto = 能增量就增量；delta / full = 界面按钮指定的那一种 */
 export type InstallMode = 'auto' | 'delta' | 'full';
 
+/**
+ * 安卓客户端的构建形态。
+ *
+ * 手机包与 TV 包是**同一个 applicationId**，服务器只能靠客户端自报的 `build`
+ * 分辨，所以检查更新时一定要带上它 —— 否则电视上会被推手机包。
+ */
+export type AndroidBuildKind = 'phone' | 'tv';
+
 export interface ClientCheck {
   component: 'client_pc' | 'client_android';
   hasUpdate: boolean;
@@ -764,29 +772,54 @@ export class UpdateService {
 
   private localClientCheck(
     component: 'client_pc' | 'client_android',
-    opts: { lanBase?: string; currentSemver?: string; currentVersionCode?: number },
+    opts: {
+      lanBase?: string;
+      currentSemver?: string;
+      currentVersionCode?: number;
+      build?: AndroidBuildKind;
+    },
   ): ClientCheck | null {
     // 本地调试包只有安卓需要：PC 的安装包不是 APK
     if (component !== 'client_android') return null;
     const phone = this.localApkCandidate();
     const tv = this.localTvApkCandidate();
-    // 两个目录各自可以独立投放；只有一个时也照常下发（客户端按 kind 取）
     if (!phone && !tv) return null;
     const base = (opts.lanBase || '').replace(/\/+$/, '');
     if (!base) return null;
 
     const currentSemver = String(opts.currentSemver || '').trim();
     const currentVersionCode = Number(opts.currentVersionCode) || 0;
-    /** 手机包和 TV 包一起下发：TV 客户端按 kTvBuild 只认 apk_tv，手机只认 apk */
+    /**
+     * 只下发与自己这一份包匹配的资产。
+     *
+     * 手机包和 TV 包是**同一个 applicationId**，装错就是把电视端换成手机 UI
+     * （遥控器点不动，连退出都难）。所以 TV 构建只认 `apk_tv`，手机只认 `apk`；
+     * 拿不到匹配的包时宁可回「没有更新」，也不能拿另一份凑数。
+     * `build` 缺省（老客户端）才两个都给 —— 那批客户端自己按 `kTvBuild` 挑。
+     */
+    const picked =
+      opts.build === 'tv'
+        ? tv
+          ? [{ cand: tv, kind: 'apk_tv' as ClientAssetKind }]
+          : []
+        : opts.build === 'phone'
+          ? phone
+            ? [{ cand: phone, kind: 'apk' as ClientAssetKind }]
+            : []
+          : [
+              ...(phone ? [{ cand: phone, kind: 'apk' as ClientAssetKind }] : []),
+              ...(tv ? [{ cand: tv, kind: 'apk_tv' as ClientAssetKind }] : []),
+            ];
+    if (!picked.length) {
+      // 明确「没有适用于当前端形态的包」，不要退化成「有更新但下不了」
+      this.log('no local apk for this build', { build: opts.build || '' });
+      return { component, hasUpdate: false, latest: null, assets: [] };
+    }
     const fresh: Array<{
       cand: NonNullable<ReturnType<UpdateService['apkCandidateIn']>>;
       kind: ClientAssetKind;
     }> = [];
-    for (const item of [
-      { cand: phone, kind: 'apk' as ClientAssetKind },
-      { cand: tv, kind: 'apk_tv' as ClientAssetKind },
-    ]) {
-      if (!item.cand) continue;
+    for (const item of picked) {
       if (!this.localApkIsNewer(item.cand, currentSemver, currentVersionCode)) {
         this.log('local apk not newer than client, skipped', {
           name: item.cand.name,
@@ -829,7 +862,13 @@ export class UpdateService {
    */
   async checkClient(
     component: 'client_pc' | 'client_android',
-    opts: { currentSemver?: string; currentVersionCode?: number; lanBase?: string; force?: boolean },
+    opts: {
+      currentSemver?: string;
+      currentVersionCode?: number;
+      lanBase?: string;
+      force?: boolean;
+      build?: AndroidBuildKind;
+    },
   ): Promise<ClientCheck> {
     // 调试目录里有 APK 就直接走它：完全不碰清单源，离线也能更新
     const local = this.localClientCheck(component, opts);
@@ -845,15 +884,36 @@ export class UpdateService {
       typeof opts.currentVersionCode === 'number' && typeof c.versionCode === 'number'
         ? c.versionCode > opts.currentVersionCode
         : true;
-    const hasUpdate = component === 'client_android' ? newerCode || newerSemver : newerSemver;
 
-    const assets = Object.entries(c.assets ?? {}).map(([kind, ref]) => ({
-      kind: kind as ClientAssetKind,
-      size: Number((ref as AssetRef).size) || 0,
-      sha256: String((ref as AssetRef).sha256 || ''),
-      br: (ref as AssetRef).br,
-      urls: this.withLanUrls(kind as ClientAssetKind, ref as AssetRef, opts.lanBase),
-    }));
+    /**
+     * 安卓资产按构建形态过滤：TV 只留 `apk_tv`，手机只留 `apk`。
+     *
+     * 清单里只发了其中一份时（发版漏传 TV 包、或历史版本根本没有 TV 资产），
+     * 宁可报「没有适用于本端的包」，也不能把另一份塞给客户端 —— 那会把电视端
+     * 直接换成手机 UI。
+     */
+    const wantKind: ClientAssetKind | '' =
+      component !== 'client_android' ? '' : opts.build === 'tv' ? 'apk_tv' : opts.build === 'phone' ? 'apk' : '';
+    const assets = Object.entries(c.assets ?? {})
+      .filter(([kind]) => {
+        if (!wantKind) return true;
+        // 只对齐「另一个 apk 兄弟」，别的 kind（setup / portable）不参与安卓判断
+        if (wantKind === 'apk_tv') return kind !== 'apk';
+        if (wantKind === 'apk') return kind !== 'apk_tv';
+        return true;
+      })
+      .map(([kind, ref]) => ({
+        kind: kind as ClientAssetKind,
+        size: Number((ref as AssetRef).size) || 0,
+        sha256: String((ref as AssetRef).sha256 || ''),
+        br: (ref as AssetRef).br,
+        urls: this.withLanUrls(kind as ClientAssetKind, ref as AssetRef, opts.lanBase),
+      }));
+    const hasOwnApk = !wantKind || assets.some((a) => a.kind === wantKind);
+    const hasUpdate =
+      component === 'client_android'
+        ? (newerCode || newerSemver) && hasOwnApk
+        : newerSemver;
 
     return {
       component,
@@ -864,7 +924,7 @@ export class UpdateService {
         versionCode: Number(c.versionCode) || 0,
         notes: manifest.notes ?? {},
       },
-      assets,
+      assets: hasOwnApk ? assets : [],
     };
   }
 

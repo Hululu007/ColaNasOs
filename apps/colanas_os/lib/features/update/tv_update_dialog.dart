@@ -50,6 +50,9 @@ class _TvUpdateDialogState extends State<TvUpdateDialog> {
 
   List<_TvAction> _actions() {
     final phase = UpdateService.instance.status.value.phase;
+    // 清单里没有本端能装的包（TV 只认 apk_tv）：不给「立即更新」，只能稍后
+    final hasAsset =
+        widget.info.assetFor(UpdateService.instance.component) != null;
     switch (phase) {
       case UpdatePhase.downloading:
       case UpdatePhase.verifying:
@@ -58,9 +61,13 @@ class _TvUpdateDialogState extends State<TvUpdateDialog> {
       case UpdatePhase.done:
         return const [_TvAction.close];
       case UpdatePhase.failed:
-        return const [_TvAction.later, _TvAction.retry];
+        return hasAsset
+            ? const [_TvAction.later, _TvAction.retry]
+            : const [_TvAction.later];
       default:
-        return const [_TvAction.later, _TvAction.install];
+        return hasAsset
+            ? const [_TvAction.later, _TvAction.install]
+            : const [_TvAction.later];
     }
   }
 
@@ -293,7 +300,8 @@ class _TvUpdateDialogState extends State<TvUpdateDialog> {
 
   String _sizeLine(UpdateStatus status) {
     final asset = widget.info.assetFor(UpdateService.instance.component);
-    final size = asset?.size ?? 0;
+    if (asset == null) return tr('update.noAsset');
+    final size = asset.size;
     if (size <= 0) return '';
     return tr('update.size', {'size': UpdateService.formatBytes(size)});
   }

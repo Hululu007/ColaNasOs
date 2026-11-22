@@ -38626,6 +38626,28 @@
                 {
                   "type": "string",
                   "enum": [
+                    "phone"
+                  ]
+                },
+                {
+                  "type": "string",
+                  "enum": [
+                    "tv"
+                  ]
+                }
+              ]
+            },
+            "in": "query",
+            "name": "build",
+            "required": false,
+            "description": "安卓客户端构建形态：TV 只下发 apk_tv，手机只下发 apk"
+          },
+          {
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
                     "1"
                   ]
                 },

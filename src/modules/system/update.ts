@@ -270,13 +270,24 @@ export function registerSystemUpdate(app: FastifyInstance, k: KernelApi): void {
           ),
           current: Type.Optional(Type.String({ maxLength: 32, description: '客户端当前 semver' })),
           currentCode: Type.Optional(Type.Integer({ minimum: 0 })),
+          build: Type.Optional(
+            Type.Union([Type.Literal('phone'), Type.Literal('tv')], {
+              description: '安卓客户端构建形态：TV 只下发 apk_tv，手机只下发 apk',
+            }),
+          ),
           force: Type.Optional(Type.Union([Type.Literal('1'), Type.Literal('0')])),
         }),
         response: { 200: Type.Ref('SystemUpdateCheckResponse') },
       },
     }),
     async (req, reply) => {
-      const q = (req.query || {}) as { component?: string; current?: string; currentCode?: number; force?: string };
+      const q = (req.query || {}) as {
+        component?: string;
+        current?: string;
+        currentCode?: number;
+        build?: string;
+        force?: string;
+      };
       const svc = serviceFor(k);
       const isClient = q.component === 'client_pc' || q.component === 'client_android';
       const canSeeSystem = req.user ? hasScope(req.user, 'system:read') : false;
@@ -344,6 +355,7 @@ export function registerSystemUpdate(app: FastifyInstance, k: KernelApi): void {
             currentVersionCode: q.currentCode,
             lanBase: lanBase(req),
             force,
+            build: q.build === 'tv' ? 'tv' : q.build === 'phone' ? 'phone' : undefined,
           });
           // 顺手把安装包缓存到本机：下次客户端来要时，局域网地址就是第一条。
           // 本地调试包本身就是局域网文件，再去拉清单预取只会白等超时。

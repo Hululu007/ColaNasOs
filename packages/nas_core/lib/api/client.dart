@@ -2646,11 +2646,12 @@ class ApiClient {
   }
 
   /// 检查更新（服务端增量 / 客户端整包；默认 6 小时缓存）
-  Future<SystemUpdateCheckResponse> systemUpdateCheck({dynamic component, String? current, int? currentCode, dynamic force}) async {
+  Future<SystemUpdateCheckResponse> systemUpdateCheck({dynamic component, String? current, int? currentCode, dynamic build, dynamic force}) async {
     final query = <String, String>{
       if (component != null) 'component': component,
       if (current != null) 'current': current,
       if (currentCode != null) 'currentCode': '$currentCode',
+      if (build != null) 'build': build,
       if (force != null) 'force': force,
     };
     final res = await transport.send('GET', _uri('/api/v1/system/update/check', query), headers: await _headers());

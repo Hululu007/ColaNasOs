@@ -2077,6 +2077,11 @@ export class ColanasClient {
     return this.request('POST', '/api/v1/video/items/delete-task', params, 'body');
   }
 
+  /** 屏蔽 / 取消屏蔽演员（只影响演员列表的默认视图） */
+  async videoJpActorBlock(params: Record<string, any> = {}): Promise<any> {
+    return this.request('POST', '/api/v1/video/jp_actor/block', params, 'body');
+  }
+
   /** 收藏 / 取消收藏演员 */
   async videoJpActorFavorite(params: Record<string, any> = {}): Promise<any> {
     return this.request('POST', '/api/v1/video/jp_actor/favorite', params, 'body');

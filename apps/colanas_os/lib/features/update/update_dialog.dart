@@ -26,6 +26,9 @@ class UpdateDialog extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    // 这一份清单里有没有「本端能装的包」：没有就只说明情况，不给「立即更新」按钮
+    // （TV 只认 apk_tv，手机只认 apk —— 拿不到就绝不装另一份）
+    final hasAsset = info.assetFor(UpdateService.instance.component) != null;
     return ValueListenableBuilder<UpdateStatus>(
       valueListenable: UpdateService.instance.status,
       builder: (context, status, _) {
@@ -71,10 +74,16 @@ class UpdateDialog extends StatelessWidget {
                   ),
                 ],
                 const SizedBox(height: NasTokens.spaceSm),
-                Text(
-                  _sizeHint(info, status),
-                  style: TextStyle(fontSize: NasTokens.fontCaption, color: context.nasTextSecondary),
-                ),
+                if (hasAsset)
+                  Text(
+                    _sizeHint(info, status),
+                    style: TextStyle(fontSize: NasTokens.fontCaption, color: context.nasTextSecondary),
+                  )
+                else
+                  Text(
+                    tr('update.noAsset'),
+                    style: TextStyle(fontSize: NasTokens.fontCaption, color: scheme.error),
+                  ),
                 if (busy) ...[
                   const SizedBox(height: NasTokens.spaceMd),
                   LinearProgressIndicator(value: status.progress > 0 ? status.progress : null),
@@ -117,7 +126,7 @@ class UpdateDialog extends StatelessWidget {
                 },
                 child: Text(tr('update.cancel')),
               ),
-            if (!busy && status.phase != UpdatePhase.done)
+            if (!busy && status.phase != UpdatePhase.done && hasAsset)
               FilledButton(
                 onPressed: () => UpdateService.instance.startInstall(),
                 child: Text(

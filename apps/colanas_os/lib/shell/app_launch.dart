@@ -99,6 +99,8 @@ Future<void> runColanasApp({
   await AppSettings.instance.load();
   mark('settings');
   if (tvEntry) {
+    // 包身份：这是 TV 包，更新时只能拿 TV 安装包（不依赖 dart-define 是否写对）
+    tvPackage = true;
     // TV 版面按深色 10-foot UI 设计；这里只改本次运行的缓存值，不写回用户设置。
     AppSettings.instance.tvMode.value = true;
     AppSettings.instance.themeMode.value = ThemeMode.dark;
