@@ -1,11 +1,22 @@
+<!--
+  原生视频层：由 MainActivity 插到 android.R.id.content 的最底部（FlutterView 之下）。
+
+  `surface_view` 是必须的：视频帧走独立的 SurfaceFlinger 图层，HDR / 杜比视界的
+  元数据不会像纹理通道那样在合成时丢掉。Flutter 画面是透明的，只有控件 / 字幕 /
+  渐变会画在上面，所以视频能完整露出来。
+
+  黑底 + shutter 黑底负责上下黑边；Flutter 自己不再铺不透明底色。
+-->
 <androidx.media3.ui.PlayerView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
+    android:background="#FF000000"
     android:focusable="false"
     android:focusableInTouchMode="false"
     android:keepScreenOn="true"
     app:resize_mode="fit"
-    app:show_buffering="always"
+    app:show_buffering="never"
+    app:shutter_background_color="#FF000000"
     app:surface_type="surface_view"
     app:use_controller="false" />

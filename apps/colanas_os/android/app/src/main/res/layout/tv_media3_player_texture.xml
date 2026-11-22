@@ -1,0 +1,21 @@
+<!--
+  纹理模式：给手机 / 平板用的降级布局。
+
+  `surface_type="texture_view"` 是必须的 —— Flutter 的 Texture Layer Hybrid
+  Composition 会把平台视图抓成纹理再合成，而 SurfaceView 的内容由 SurfaceFlinger
+  单独合成、**不在 View 树里**，抓纹理抓出来就是黑的。TextureView 走 View 的
+  绘制流程，才会被正确抓进 Flutter 的纹理。
+
+  代价：纹理只承载 SDR 像素，HDR / 杜比视界的元数据在这一步丢掉。
+-->
+<androidx.media3.ui.PlayerView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:focusable="false"
+    android:focusableInTouchMode="false"
+    android:keepScreenOn="true"
+    app:resize_mode="fit"
+    app:show_buffering="always"
+    app:surface_type="texture_view"
+    app:use_controller="false" />

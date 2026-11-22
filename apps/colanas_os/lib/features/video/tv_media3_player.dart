@@ -1,9 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 
 class TvMedia3State {
@@ -18,6 +16,13 @@ class TvMedia3State {
     this.isCompleted = false,
     this.videoDecoder = '',
     this.firstFrameMs,
+    this.viewWidth = 0,
+    this.viewHeight = 0,
+    this.surfaceWidth = 0,
+    this.surfaceHeight = 0,
+
+    /// 当前流里没有任何可用的音频解码器（手机上的 E-AC3 / DTS-HD 很常见）
+    this.audioUnsupported = false,
     this.error,
   });
 
@@ -31,6 +36,16 @@ class TvMedia3State {
   final bool isCompleted;
   final String videoDecoder;
   final int? firstFrameMs;
+
+  /// 原生 PlayerView 与内部 SurfaceView 的真实像素尺寸，排障用。
+  final int viewWidth;
+  final int viewHeight;
+  final int surfaceWidth;
+  final int surfaceHeight;
+
+  /// 当前流里没有可用的音频解码器（手机 E-AC3 / DTS-HD）
+  final bool audioUnsupported;
+
   final String? error;
 
   Duration get position => Duration(milliseconds: positionMs);
@@ -52,24 +67,30 @@ class TvMedia3State {
     isCompleted: map['isCompleted'] == true,
     videoDecoder: map['videoDecoder']?.toString() ?? '',
     firstFrameMs: (map['firstFrameMs'] as num?)?.toInt(),
+    viewWidth: (map['viewWidth'] as num?)?.toInt() ?? 0,
+    viewHeight: (map['viewHeight'] as num?)?.toInt() ?? 0,
+    surfaceWidth: (map['surfaceWidth'] as num?)?.toInt() ?? 0,
+    surfaceHeight: (map['surfaceHeight'] as num?)?.toInt() ?? 0,
+    audioUnsupported: map['audioUnsupported'] == true,
     error: map['error']?.toString(),
   );
 }
 
+/// 原生视频播放器控制器。
+///
+/// 视频画面不再由 Flutter 平台视图提供：原生层把 `PlayerView`（裸 SurfaceView）
+/// 插到 Activity 内容层最底部，Flutter 用透明像素把它露出来。所以这里只负责
+/// 「挂上 / 摘下原生层」和发控制命令、收状态事件。
 class TvMedia3PlayerController {
   static const _methodChannel = MethodChannel('com.colanas.os/tv_media3');
-  static const _viewType = 'colanasos.tv_media3';
+  static const _eventChannel = EventChannel('com.colanas.os/tv_media3/events');
 
   final _stateChanges = StreamController<TvMedia3State>.broadcast();
-  Completer<int>? _viewReady;
   TvMedia3State _state = const TvMedia3State();
   StreamSubscription<dynamic>? _eventSubscription;
-  int? _viewId;
   bool _disposed = false;
-  bool _playWhenReady = true;
-  Map<String, Object?>? _pendingOpen;
+  bool _attached = false;
   Map<String, Object?>? _lastOpen;
-  bool _hasAttached = false;
 
   TvMedia3State get state => _state;
   Stream<TvMedia3State> get states => _stateChanges.stream;
@@ -93,6 +114,24 @@ class TvMedia3PlayerController {
       .where((error) => error != null && error.isNotEmpty)
       .cast<String>();
 
+  TvMedia3PlayerController() {
+    // 只有 Android 装了原生视频通道。桌面 / Web 监听会拿到 MissingPluginException，
+    // 反而把播放页顶成错误页，所以这里直接不订阅。
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return;
+    _eventSubscription = _eventChannel.receiveBroadcastStream().listen(
+      (event) {
+        if (event is Map) {
+          _update(TvMedia3State.fromMap(Map<Object?, Object?>.from(event)));
+        }
+      },
+      onError: (Object error) {
+        _update(
+          TvMedia3State(error: 'Native video event channel failed: $error'),
+        );
+      },
+    );
+  }
+
   static Future<bool> supportsDolbyVision() async {
     try {
       return await _methodChannel.invokeMethod<bool>('supportsDolbyVision') ??
@@ -102,59 +141,26 @@ class TvMedia3PlayerController {
     }
   }
 
-  Future<void> attach(int viewId) async {
-    if (_disposed) return;
-    final previousViewId = _viewId;
-    _viewId = viewId;
-    if (previousViewId != viewId && _viewReady?.isCompleted == true) {
-      _viewReady = null;
+  /// 让原生层把视频 Surface 挂到 Flutter 下面。
+  Future<void> attach() async {
+    if (_disposed || _attached) return;
+    _attached = true;
+    try {
+      await _methodChannel.invokeMethod<void>('attach');
+    } on PlatformException {
+      _attached = false;
     }
-    _eventSubscription?.cancel();
-    _eventSubscription = EventChannel('com.colanas.os/tv_media3/events/$viewId')
-        .receiveBroadcastStream()
-        .listen(
-          (event) {
-            if (event is Map) {
-              _update(TvMedia3State.fromMap(Map<Object?, Object?>.from(event)));
-            }
-          },
-          onError: (Object error) {
-            _update(
-              TvMedia3State(error: 'Native video event channel failed: $error'),
-            );
-          },
-        );
-    final ready = _viewReady;
-    if (ready != null && !ready.isCompleted) ready.complete(viewId);
-    final pending = _pendingOpen ?? (_hasAttached ? _lastOpen : null);
-    if (pending != null) {
-      _pendingOpen = null;
-      try {
-        await _invoke('open', pending);
-      } on PlatformException catch (error) {
-        _update(TvMedia3State(error: error.message ?? error.code));
-      } on StateError {
-        if (!_disposed) rethrow;
-      }
-    }
-    _hasAttached = true;
   }
 
-  void detach(int viewId) {
-    if (_viewId != viewId) return;
-    final lastOpen = _lastOpen;
-    if (lastOpen != null) {
-      _lastOpen = {
-        ...lastOpen,
-        'positionMs': _state.positionMs,
-        'play': _playWhenReady,
-      };
+  /// 从窗口里摘下原生视频层（离开播放页时调用）。
+  Future<void> detach() async {
+    if (!_attached) return;
+    _attached = false;
+    try {
+      await _methodChannel.invokeMethod<void>('detach');
+    } on PlatformException {
+      // 原生层可能已经随 Activity 一起销毁，忽略
     }
-    _viewId = null;
-    _eventSubscription?.cancel();
-    _eventSubscription = null;
-    final ready = _viewReady;
-    if (ready != null && ready.isCompleted) _viewReady = null;
   }
 
   Future<void> open({
@@ -162,13 +168,17 @@ class TvMedia3PlayerController {
     required int positionMs,
     required bool play,
     required String formatHint,
+
     /// 隧道模式：只有电视芯片支持。手机 / 平板打开会黑屏（解码器就绪但
     /// VideoSize 停在 0x0，只有声音），所以默认关，由 TV 模式显式打开。
     bool tunneled = false,
+
     /// 视频与音频分开取：视频用 [url]（原片，杜比视界配置完整），音频用这条
-    /// 服务端转好的 AAC 流。原片的 E-AC3 / DTS-HD 在缺少解码器的手机上出不了声，
-    /// 而把视频一起转封装又会丢掉 DV 的配置记录（画面直接黑）。
+    /// 服务端转好的 AAC 流。
     String? audioUrl,
+
+    /// 媒体通知 / 状态栏显示的标题
+    String? title,
   }) async {
     if (_disposed) throw StateError('TV Media3 player is disposed');
     final args = <String, Object?>{
@@ -178,26 +188,16 @@ class TvMedia3PlayerController {
       'formatHint': formatHint,
       'tunneled': tunneled,
       if (audioUrl != null && audioUrl.isNotEmpty) 'audioUrl': audioUrl,
+      if (title != null && title.isNotEmpty) 'title': title,
     };
-    _playWhenReady = play;
     _lastOpen = args;
     _update(const TvMedia3State(isBuffering: true));
-    if (_viewId == null) {
-      _pendingOpen = args;
-      return;
-    }
-    await _invoke('open', args);
+    await _methodChannel.invokeMethod<void>('open', args);
   }
 
-  Future<void> play() {
-    _playWhenReady = true;
-    return _invoke('play');
-  }
+  Future<void> play() => _invoke('play');
 
-  Future<void> pause() {
-    _playWhenReady = false;
-    return _invoke('pause');
-  }
+  Future<void> pause() => _invoke('pause');
 
   Future<void> seekTo(Duration position) =>
       _invoke('seekTo', {'positionMs': position.inMilliseconds});
@@ -214,44 +214,37 @@ class TvMedia3PlayerController {
       _invoke('setShuffle', {'enabled': enabled});
 
   Future<void> stop() async {
-    final viewId = _viewId;
-    if (viewId != null) {
-      await _invoke('stop');
-    } else {
-      final ready = _viewReady;
-      if (ready != null && !ready.isCompleted) {
-        ready.completeError(
-          StateError('TV Media3 player stopped before attach'),
-        );
-      }
-      _viewReady = null;
-    }
-    _pendingOpen = null;
+    if (_disposed) return;
     _lastOpen = null;
-    _playWhenReady = false;
+    try {
+      await _methodChannel.invokeMethod<void>('stop');
+    } on PlatformException {
+      // 播放器还没建出来：没有可停的东西
+    }
     _update(const TvMedia3State());
   }
+
+  /// 位置：重新打开（换档 / 续播）时用上一次的源与播放意图。
+  Map<String, Object?>? get lastOpen => _lastOpen;
+
+  static bool get _supported =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
 
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;
-    final ready = _viewReady;
-    if (ready != null && !ready.isCompleted) {
-      ready.completeError(StateError('TV Media3 player is disposed'));
-    }
-    _viewReady = null;
-    _pendingOpen = null;
-    _lastOpen = null;
-    final viewId = _viewId;
-    _viewId = null;
     await _eventSubscription?.cancel();
     _eventSubscription = null;
-    if (viewId != null) {
-      try {
-        await _methodChannel.invokeMethod<void>('dispose', {'viewId': viewId});
-      } on PlatformException {
-        // The native view may already have released its player.
-      }
+    if (!_supported) {
+      await _stateChanges.close();
+      return;
+    }
+    try {
+      await _methodChannel.invokeMethod<void>('dispose');
+    } on PlatformException {
+      // Activity 已销毁：原生层随之释放
+    } on MissingPluginException {
+      // 原生通道不存在（极少数桌面 / 测试环境）
     }
     await _stateChanges.close();
   }
@@ -260,19 +253,8 @@ class TvMedia3PlayerController {
     String method, [
     Map<String, Object?> args = const {},
   ]) async {
-    while (true) {
-      if (_disposed) throw StateError('TV Media3 player is disposed');
-      final viewId = _viewId;
-      final id =
-          viewId ??
-          await (_viewReady ??= Completer<int>()).future.timeout(
-            const Duration(seconds: 15),
-          );
-      if (_disposed) throw StateError('TV Media3 player is disposed');
-      if (_viewId != id) continue;
-      await _methodChannel.invokeMethod<void>(method, {'viewId': id, ...args});
-      return;
-    }
+    if (_disposed) throw StateError('TV Media3 player is disposed');
+    await _methodChannel.invokeMethod<void>(method, args);
   }
 
   void _update(TvMedia3State state) {
@@ -282,36 +264,55 @@ class TvMedia3PlayerController {
   }
 }
 
+/// 透明占位：真正的画面由 Activity 底层的原生 SurfaceView 提供。
+///
+/// 它仍然要占据播放页的布局位置，这样 Flutter 不会在整页透明时把控件算成 0 尺寸；
+/// 同时通过 attach / detach 告诉原生层什么时候该挂、什么时候该摘。
 class TvMedia3PlayerSurface extends StatefulWidget {
   const TvMedia3PlayerSurface({
     required this.controller,
     this.onTap,
+    this.onAttached,
     super.key,
   });
 
   final TvMedia3PlayerController controller;
   final VoidCallback? onTap;
 
+  /// 原生 SurfaceView 真正挂进窗口后的回调。
+  ///
+  /// 播放页要等这一刻才把黑底 / 根背景撤掉：更早撤的话，窗口会短暂透明，
+  /// 手机桌面的画面可能从缝里闪出来。
+  final VoidCallback? onAttached;
+
   @override
   State<TvMedia3PlayerSurface> createState() => _TvMedia3PlayerSurfaceState();
 }
 
 class _TvMedia3PlayerSurfaceState extends State<TvMedia3PlayerSurface> {
-  int? _viewId;
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_attach());
+  }
+
+  Future<void> _attach() async {
+    await widget.controller.attach();
+    if (mounted) widget.onAttached?.call();
+  }
 
   @override
   void didUpdateWidget(covariant TvMedia3PlayerSurface oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.controller != widget.controller && _viewId != null) {
-      oldWidget.controller.detach(_viewId!);
-      _viewId = null;
+    if (oldWidget.controller != widget.controller) {
+      unawaited(oldWidget.controller.detach());
+      unawaited(_attach());
     }
   }
 
   @override
   void dispose() {
-    final viewId = _viewId;
-    if (viewId != null) widget.controller.detach(viewId);
+    unawaited(widget.controller.detach());
     super.dispose();
   }
 
@@ -320,45 +321,7 @@ class _TvMedia3PlayerSurfaceState extends State<TvMedia3PlayerSurface> {
     if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
       return const SizedBox.shrink();
     }
-    // 必须走 Hybrid Composition（真实 Surface），不能用默认的 AndroidView：
-    // 默认实现是 Texture Layer Hybrid Composition，会把原生 PlayerView 抓成
-    // 纹理再交给 Flutter 合成 —— 4K 每帧多一次拷贝，电视芯片直接掉帧；
-    // 而且纹理只保留 SDR 像素，HDR / 杜比视界的元数据在这里就丢了。
-    return Stack(
-      fit: StackFit.expand,
-      children: <Widget>[
-        PlatformViewLink(
-          viewType: TvMedia3PlayerController._viewType,
-          surfaceFactory: (context, controller) => AndroidViewSurface(
-            controller: controller as AndroidViewController,
-            hitTestBehavior: PlatformViewHitTestBehavior.opaque,
-            gestureRecognizers: const <Factory<OneSequenceGestureRecognizer>>{},
-          ),
-          onCreatePlatformView: (params) {
-            final controller = PlatformViewsService.initExpensiveAndroidView(
-              id: params.id,
-              viewType: TvMedia3PlayerController._viewType,
-              layoutDirection: Directionality.of(context),
-              creationParams: const <String, Object?>{},
-              creationParamsCodec: const StandardMessageCodec(),
-              onFocus: () => params.onFocusChanged(true),
-            );
-            controller.addOnPlatformViewCreatedListener((id) {
-              _viewId = id;
-              unawaited(widget.controller.attach(id));
-            });
-            controller.create();
-            return controller;
-          },
-        ),
-        if (widget.onTap != null)
-          Positioned.fill(
-            child: GestureDetector(
-              behavior: HitTestBehavior.translucent,
-              onTap: widget.onTap,
-            ),
-          ),
-      ],
-    );
+    // 不能返回不透明底色：Flutter 这一块必须全透明，才能看到下面原生 Surface。
+    return const SizedBox.expand();
   }
 }

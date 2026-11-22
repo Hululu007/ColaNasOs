@@ -73,6 +73,8 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer:1.10.0")
     implementation("androidx.media3:media3-exoplayer-hls:1.10.0")
     implementation("androidx.media3:media3-ui:1.10.0")
+    // 视频媒体会话：状态栏 / 通知栏的标题、暂停继续，以及播放时的音频焦点抢占
+    implementation("androidx.media3:media3-session:1.10.0")
 }
 
 kotlin {

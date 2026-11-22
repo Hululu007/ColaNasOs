@@ -5,23 +5,61 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import android.util.Log
 import android.view.Display
+import android.view.View
+import android.view.ViewGroup
 import androidx.core.content.FileProvider
 import java.io.File
-import com.ryanheise.audioservice.AudioServiceActivity
+import com.ryanheise.audioservice.AudioServiceFragmentActivity
+import io.flutter.embedding.android.FlutterActivityLaunchConfigs.BackgroundMode
+import io.flutter.embedding.android.RenderMode
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
-// 必须继承 AudioServiceActivity（而不是 FlutterActivity）：
+// 必须继承 AudioService*（而不是 FlutterActivity）：
 // audio_service 的前台服务把通知栏 / 锁屏的点击回传给 Activity，
 // 用这个基类才能回到同一个 Flutter 引擎，而不是重启一个。
-class MainActivity : AudioServiceActivity() {
+//
+// P1：改用 AudioServiceFragmentActivity + 纹理渲染模式。
+// 目的是让 Flutter 控件能盖在原生视频 Surface 之上（surface 模式下视频会被
+// 垫到 Flutter 画面下面，控件永远压不住）。渲染模式是 Activity 级的全局开关，
+// 所以这一步会影响所有页面；先只切模式、不做透明洞，用来验证整机稳定性。
+class MainActivity : AudioServiceFragmentActivity() {
+
+    private var renderModeLogged = false
+
+    // P1：纹理渲染模式。Flutter 画面改画进 TextureView，原生视频 Surface
+    // 才能垫在它下面、由 Flutter 用透明洞露出来。
+    override fun getRenderMode(): RenderMode = RenderMode.texture
+
+    // P2：整窗透明。视频 SurfaceView 在 Activity 内容层最底部，Flutter 画面
+    // 必须真的带 alpha（不能是 opaque 清屏），透明像素处才能看到视频。
+    // 配套：NormalTheme 里打开 windowIsTranslucent。
+    override fun getBackgroundMode(): BackgroundMode = BackgroundMode.transparent
+
+    // 首帧后打一条视图层级：确认真的切到了 FlutterTextureView。
+    // `adb logcat -s ColaNasRender` 可见；不影响正式行为。
+    override fun onPostResume() {
+        super.onPostResume()
+        if (renderModeLogged) return
+        renderModeLogged = true
+        val content = findViewById<ViewGroup>(android.R.id.content) ?: return
+        val names = mutableListOf<String>()
+        fun walk(v: View) {
+            names.add(v.javaClass.simpleName)
+            if (v is ViewGroup) for (i in 0 until v.childCount) walk(v.getChildAt(i))
+        }
+        walk(content)
+        Log.i("ColaNasRender", "renderMode=${getRenderMode()} hierarchy=$names")
+    }
 
     companion object {
         private const val BACKUP_CHANNEL = "com.colanas.os/photo_backup"
         private const val DISPLAY_CHANNEL = "com.colanas.os/display_caps"
         private const val DOWNLOAD_CHANNEL = "com.colanas.os/offline_download"
         private const val UPDATE_CHANNEL = "com.colanas.os/update"
+        private const val DV_PROBE_CHANNEL = "com.colanas.os/dv_probe"
         private const val REQ_NOTIFICATIONS = 1001
     }
 
@@ -30,10 +68,9 @@ class MainActivity : AudioServiceActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         val messenger = flutterEngine.dartExecutor.binaryMessenger
-        flutterEngine.platformViewsController.registry.registerViewFactory(
-            "colanasos.tv_media3",
-            TvMedia3PlayerFactory(messenger),
-        )
+        // P2：视频不再走 Flutter PlatformView，而是由原生层把 PlayerView（裸
+        // SurfaceView）插到 Activity 内容层最底部，Flutter 用透明像素露出它。
+        // 控制命令 + 状态事件仍然走这条通道。
         TvMedia3MethodHandler.install(this, messenger)
         MethodChannel(messenger, BACKUP_CHANNEL)
             .setMethodCallHandler { call, result ->
@@ -124,6 +161,39 @@ class MainActivity : AudioServiceActivity() {
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "hdrTypes" -> result.success(readHdrTypes())
+                    else -> result.notImplemented()
+                }
+            }
+
+        // P0.5 临时探针：debug / profile 包里用「播放信息」面板标题长按唤起，
+        // 不走 Flutter 平台视图，直接验证原生 SurfaceView 的真实 DV 输出。
+        // 正式版没有入口；方案 A 定稿或否掉后连同 DvProbeActivity 一起删除。
+        MethodChannel(messenger, DV_PROBE_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "launch" -> {
+                        val url = call.argument<String>("url")?.trim()
+                        if (url.isNullOrEmpty()) {
+                            result.error("E_ARGS", "缺少播放地址", null)
+                            return@setMethodCallHandler
+                        }
+                        runCatching {
+                            startActivity(
+                                Intent(this, DvProbeActivity::class.java).apply {
+                                    putExtra(DvProbeActivity.EXTRA_URL, url)
+                                    call.argument<String>("audioUrl")?.let {
+                                        putExtra(DvProbeActivity.EXTRA_AUDIO_URL, it)
+                                    }
+                                    call.argument<String>("formatHint")?.let {
+                                        putExtra(DvProbeActivity.EXTRA_FORMAT_HINT, it)
+                                    }
+                                },
+                            )
+                        }.fold(
+                            onSuccess = { result.success(true) },
+                            onFailure = { result.error("E_INTENT", it.message, null) },
+                        )
+                    }
                     else -> result.notImplemented()
                 }
             }

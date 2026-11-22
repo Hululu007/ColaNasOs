@@ -16,6 +16,7 @@ import '../core/perf_diagnostics.dart';
 import '../core/session.dart';
 import '../core/settings_store.dart';
 import '../core/tv_mode.dart';
+import '../core/video_render.dart';
 import '../features/login/login_page.dart';
 import '../features/music/music_page.dart';
 import '../features/photo/backup/photo_backup_bootstrap.dart';
@@ -255,7 +256,15 @@ class ColaNasApp extends StatelessWidget {
                         // 780M，2560×1369）：裸动画 UI raster 0.9ms → 加这 3 层渐变
                         // 后 20.4ms；页面滚动时再叠加内容后达到 40~60ms（约 16fps）。
                         // 独立图层后背景只在尺寸/主题变化时重绘一次，滚动只重绘内容。
-                        RepaintBoundary(child: spec.background),
+                        //
+                        // 原生视频播放时这一层必须让路：它画在 Navigator 下面，
+                        // 不收起会把 Activity 底层的视频整个盖住（透明洞失效）。
+                        ValueListenableBuilder<bool>(
+                          valueListenable: nativeVideoLayerActive,
+                          builder: (context, nativeVideo, _) => nativeVideo
+                              ? const SizedBox.shrink()
+                              : RepaintBoundary(child: spec.background),
+                        ),
                         // 页面内容同样独立：内容重绘不再带动背景，反过来主题切换
                         // 重绘背景也不会带着整棵树。
                         RepaintBoundary(
@@ -270,28 +279,28 @@ class ColaNasApp extends StatelessWidget {
           },
           home: UpdatePromptHost(
             child: ValueListenableBuilder<bool>(
-            valueListenable: ApiSession.instance.autoLoginChecking,
-            builder: (context, checking, _) {
-              if (checking) {
-                return const Scaffold(
-                  body: Center(child: CircularProgressIndicator()),
+              valueListenable: ApiSession.instance.autoLoginChecking,
+              builder: (context, checking, _) {
+                if (checking) {
+                  return const Scaffold(
+                    body: Center(child: CircularProgressIndicator()),
+                  );
+                }
+                return ValueListenableBuilder<bool>(
+                  valueListenable: ApiSession.instance.authState,
+                  builder: (context, authed, _) {
+                    if (!authed) return const LoginPage();
+                    if (tvEntry) return const TvShell();
+                    return switch (launchMode) {
+                      AppLaunchMode.full => const AppShell(),
+                      AppLaunchMode.photo => const PhotoPage(),
+                      AppLaunchMode.music => const MusicPage(),
+                      AppLaunchMode.sync => const SyncPage(),
+                    };
+                  },
                 );
-              }
-              return ValueListenableBuilder<bool>(
-                valueListenable: ApiSession.instance.authState,
-                builder: (context, authed, _) {
-                  if (!authed) return const LoginPage();
-                  if (tvEntry) return const TvShell();
-                  return switch (launchMode) {
-                    AppLaunchMode.full => const AppShell(),
-                    AppLaunchMode.photo => const PhotoPage(),
-                    AppLaunchMode.music => const MusicPage(),
-                    AppLaunchMode.sync => const SyncPage(),
-                  };
-                },
-              );
-            },
-          ),
+              },
+            ),
           ),
         );
       },

@@ -64,6 +64,9 @@
               android:name="io.flutter.embedding.android.NormalTheme"
               android:resource="@style/NormalTheme"
               />
+            <!-- P2：Flutter 以透明背景渲染（MainActivity#getBackgroundMode），
+                 视频画面由垫在 FlutterView 下面的原生 SurfaceView 提供，
+                 Flutter 用透明像素把它露出来。 -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
@@ -76,6 +79,14 @@
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER"/>
             </intent-filter>
         </activity>
+        <!-- P0.5 临时探针：只由 App 内部（播放信息面板标题长按）拉起，
+             exported=false 不对外开放；验证完与 DvProbeActivity.kt 一起删除。 -->
+        <activity
+            android:name=".DvProbeActivity"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|screenLayout|density|uiMode"
+            android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen" />
         <!-- audio_service：前台服务（进程在后台 / 熄屏时不被冻结）+ 媒体键广播。
              MainActivity 必须继承 AudioServiceActivity，点通知才能回到 App。 -->
         <service
@@ -106,6 +117,12 @@
         <service
             android:name=".DownloadForegroundService"
             android:foregroundServiceType="dataSync"
+            android:exported="false" />
+        <!-- 视频媒体会话：播放电影时挂出通知栏 / 状态栏的媒体卡（标题、暂停继续、
+             进度），并由 Media3 自动申请音频焦点，顶掉音乐 / 播客 / 其它 App。 -->
+        <service
+            android:name=".VideoMediaSessionService"
+            android:foregroundServiceType="mediaPlayback"
             android:exported="false" />
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->

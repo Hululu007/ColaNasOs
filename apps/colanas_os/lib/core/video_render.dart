@@ -1,5 +1,12 @@
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart';
 import 'package:media_kit/media_kit.dart';
+
+/// 原生视频层（Android 裸 SurfaceView）是否正在显示。
+///
+/// App 根部的背景层（`NasStyleScope` 的 `spec.background`）画在 Navigator 下面。
+/// 播放页把 Flutter 画面做成透明洞时，这一层会整块把底下的原生视频盖住，
+/// 所以由播放页置位，根背景层据此让路。
+final ValueNotifier<bool> nativeVideoLayerActive = ValueNotifier<bool>(false);
 
 /// 播放渲染能力与 HDR 色调映射（PC / TV 共用）。
 ///
