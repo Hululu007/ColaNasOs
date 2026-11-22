@@ -14,9 +14,8 @@
          This Theme is only used starting with V2 of Flutter's Android embedding. -->
     <style name="NormalTheme" parent="@android:style/Theme.Light.NoTitleBar">
         <item name="android:windowBackground">?android:colorBackground</item>
-        <!-- P2：视频画面在 Activity 最底层的 SurfaceView 上，Flutter 画面本身
-             是透明的（MainActivity#getBackgroundMode = transparent）。窗口不透明
-             的话透明像素仍会被窗口底色挡住，所以这里必须开 translucent。 -->
-        <item name="android:windowIsTranslucent">true</item>
+        <!-- 窗口必须不透明：视频走 PlatformView（窗口内真实 Surface），
+             只有不透明窗口里的视频层才能拿到独占的 HDR / 杜比视界合成通道。 -->
+        <item name="android:windowIsTranslucent">false</item>
     </style>
 </resources>

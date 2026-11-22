@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
+import 'package:flutter/rendering.dart' show PlatformViewHitTestBehavior;
 import 'package:flutter/services.dart';
 
 class TvMedia3State {
@@ -82,6 +84,9 @@ class TvMedia3State {
 /// 插到 Activity 内容层最底部，Flutter 用透明像素把它露出来。所以这里只负责
 /// 「挂上 / 摘下原生层」和发控制命令、收状态事件。
 class TvMedia3PlayerController {
+  /// 原生 PlatformView 的注册名，与 `TvVideoViewFactory.VIEW_TYPE`（Kotlin）一致。
+  static const String viewType = 'colanasos.tv_media3_view';
+
   static const _methodChannel = MethodChannel('com.colanas.os/tv_media3');
   static const _eventChannel = EventChannel('com.colanas.os/tv_media3/events');
 
@@ -264,10 +269,15 @@ class TvMedia3PlayerController {
   }
 }
 
-/// 透明占位：真正的画面由 Activity 底层的原生 SurfaceView 提供。
+/// 视频画面：PlatformView（Hybrid Composition）。
 ///
-/// 它仍然要占据播放页的布局位置，这样 Flutter 不会在整页透明时把控件算成 0 尺寸；
-/// 同时通过 attach / detach 告诉原生层什么时候该挂、什么时候该摘。
+/// 用 `PlatformViewLink` + `AndroidViewSurface`，把原生 PlayerView（内部是裸
+/// SurfaceView）作为**窗口内**的一块真实 Surface 嵌进 Flutter 视图树。
+///
+/// 为什么不用「垫在整窗底部的 SurfaceView」：那条路要求整窗透明，透明窗口里的
+/// 视频层拿不到独占的 HDR 合成通道，杜比视界（IPT-PQ）会被当 SDR 混合 ——
+/// 徽章显示 HDR / DV 已激活，画面却是紫的（1.3.31 电视实测）。
+/// 窗口内 Surface + 不透明窗口，HDR 元数据才能一路到显示端。
 class TvMedia3PlayerSurface extends StatefulWidget {
   const TvMedia3PlayerSurface({
     required this.controller,
@@ -279,10 +289,7 @@ class TvMedia3PlayerSurface extends StatefulWidget {
   final TvMedia3PlayerController controller;
   final VoidCallback? onTap;
 
-  /// 原生 SurfaceView 真正挂进窗口后的回调。
-  ///
-  /// 播放页要等这一刻才把黑底 / 根背景撤掉：更早撤的话，窗口会短暂透明，
-  /// 手机桌面的画面可能从缝里闪出来。
+  /// 原生视图创建完成后的回调（播放页用来收掉「准备中」那层黑底）。
   final VoidCallback? onAttached;
 
   @override
@@ -291,37 +298,45 @@ class TvMedia3PlayerSurface extends StatefulWidget {
 
 class _TvMedia3PlayerSurfaceState extends State<TvMedia3PlayerSurface> {
   @override
-  void initState() {
-    super.initState();
-    unawaited(_attach());
-  }
-
-  Future<void> _attach() async {
-    await widget.controller.attach();
-    if (mounted) widget.onAttached?.call();
-  }
-
-  @override
-  void didUpdateWidget(covariant TvMedia3PlayerSurface oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.controller != widget.controller) {
-      unawaited(oldWidget.controller.detach());
-      unawaited(_attach());
-    }
-  }
-
-  @override
-  void dispose() {
-    unawaited(widget.controller.detach());
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
     if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
       return const SizedBox.shrink();
     }
-    // 不能返回不透明底色：Flutter 这一块必须全透明，才能看到下面原生 Surface。
-    return const SizedBox.expand();
+    return Stack(
+      fit: StackFit.expand,
+      children: <Widget>[
+        PlatformViewLink(
+          viewType: TvMedia3PlayerController.viewType,
+          surfaceFactory: (context, controller) => AndroidViewSurface(
+            controller: controller as AndroidViewController,
+            hitTestBehavior: PlatformViewHitTestBehavior.opaque,
+            gestureRecognizers: const <Factory<OneSequenceGestureRecognizer>>{},
+          ),
+          onCreatePlatformView: (params) {
+            final controller = PlatformViewsService.initExpensiveAndroidView(
+              id: params.id,
+              viewType: TvMedia3PlayerController.viewType,
+              layoutDirection: Directionality.of(context),
+              creationParams: const <String, Object?>{},
+              creationParamsCodec: const StandardMessageCodec(),
+              onFocus: () => params.onFocusChanged(true),
+            );
+            controller.addOnPlatformViewCreatedListener((_) {
+              if (mounted) widget.onAttached?.call();
+            });
+            controller.create();
+            return controller;
+          },
+        ),
+        if (widget.onTap != null)
+          Positioned.fill(
+            child: GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onTap: widget.onTap,
+            ),
+          ),
+      ],
+    );
   }
 }
+

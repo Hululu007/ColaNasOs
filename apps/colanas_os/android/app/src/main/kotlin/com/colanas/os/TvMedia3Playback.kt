@@ -35,6 +35,9 @@ import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
+import io.flutter.plugin.common.StandardMessageCodec
+import io.flutter.plugin.platform.PlatformView
+import io.flutter.plugin.platform.PlatformViewFactory
 import java.lang.ref.WeakReference
 
 private const val TV_MEDIA3_CHANNEL = "com.colanas.os/tv_media3"
@@ -182,6 +185,31 @@ internal object NativeVideoHost {
     private fun detach() {
         session?.detachView()
         playerView?.let { (it.parent as? ViewGroup)?.removeView(it) }
+    }
+
+    /**
+     * PlatformView 通道：视图由 Flutter 侧提供（Hybrid Composition），
+     * 这里只把它和播放器会话绑起来，**不再插到内容层底部**。
+     *
+     * 为什么要这条通道：把 SurfaceView 垫在 FlutterView 下面必须让整窗透明
+     * （`windowIsTranslucent`），而透明窗口里的视频层拿不到独占的 HDR 合成通道 ——
+     * 杜比视界（IPT-PQ）会被当 SDR 混合，画面发紫。1.3.31 在电视上踩到。
+     * Hybrid Composition 用的是窗口内的真实 Surface，窗口不透明，
+     * HDR10 / 杜比视界的元数据能一路到显示端。
+     */
+    fun attachPlatformView(activity: Activity, view: PlayerView) {
+        appContext = activity.applicationContext
+        playerView = view
+        viewOwner = WeakReference(activity)
+        ensureSession(activity.applicationContext).attachView(view)
+    }
+
+    /** PlatformView 被 Flutter 销毁：只解绑视图，播放器会话留给控制器释放。 */
+    fun detachPlatformView(view: PlayerView) {
+        if (playerView === view) {
+            session?.detachView()
+            playerView = null
+        }
     }
 
     private fun dispose() {
@@ -572,4 +600,40 @@ private class TvMedia3Session(
             "ts", "m2ts", "mts", "mpegts" -> MimeTypes.VIDEO_MP2T
             else -> null
         }
+}
+
+/**
+ * 视频画面的 PlatformView 工厂（Hybrid Composition）。
+ *
+ * 视频层必须是窗口内的一块真实 Surface（而不是垫在整窗下面的层），
+ * 这样窗口才能保持不透明 —— 不透明窗口才能让 HDR / 杜比视界拿到独占合成，
+ * 颜色才不会发紫。
+ */
+internal class TvVideoViewFactory(
+    private val activity: Activity,
+) : PlatformViewFactory(StandardMessageCodec.INSTANCE) {
+    companion object {
+        const val VIEW_TYPE = "colanasos.tv_media3_view"
+    }
+
+    override fun create(context: Context, viewId: Int, args: Any?): PlatformView =
+        TvVideoPlatformView(activity, context)
+}
+
+private class TvVideoPlatformView(
+    private val activity: Activity,
+    context: Context,
+) : PlatformView {
+    private val playerView =
+        LayoutInflater.from(context).inflate(R.layout.tv_media3_player, null, false) as PlayerView
+
+    init {
+        NativeVideoHost.attachPlatformView(activity, playerView)
+    }
+
+    override fun getView(): View = playerView
+
+    override fun dispose() {
+        NativeVideoHost.detachPlatformView(playerView)
+    }
 }

@@ -11,9 +11,7 @@ import android.view.View
 import android.view.ViewGroup
 import androidx.core.content.FileProvider
 import java.io.File
-import com.ryanheise.audioservice.AudioServiceFragmentActivity
-import io.flutter.embedding.android.FlutterActivityLaunchConfigs.BackgroundMode
-import io.flutter.embedding.android.RenderMode
+import com.ryanheise.audioservice.AudioServiceActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
@@ -21,38 +19,11 @@ import io.flutter.plugin.common.MethodChannel
 // audio_service 的前台服务把通知栏 / 锁屏的点击回传给 Activity，
 // 用这个基类才能回到同一个 Flutter 引擎，而不是重启一个。
 //
-// P1：改用 AudioServiceFragmentActivity + 纹理渲染模式。
-// 目的是让 Flutter 控件能盖在原生视频 Surface 之上（surface 模式下视频会被
-// 垫到 Flutter 画面下面，控件永远压不住）。渲染模式是 Activity 级的全局开关，
-// 所以这一步会影响所有页面；先只切模式、不做透明洞，用来验证整机稳定性。
-class MainActivity : AudioServiceFragmentActivity() {
-
-    private var renderModeLogged = false
-
-    // P1：纹理渲染模式。Flutter 画面改画进 TextureView，原生视频 Surface
-    // 才能垫在它下面、由 Flutter 用透明洞露出来。
-    override fun getRenderMode(): RenderMode = RenderMode.texture
-
-    // P2：整窗透明。视频 SurfaceView 在 Activity 内容层最底部，Flutter 画面
-    // 必须真的带 alpha（不能是 opaque 清屏），透明像素处才能看到视频。
-    // 配套：NormalTheme 里打开 windowIsTranslucent。
-    override fun getBackgroundMode(): BackgroundMode = BackgroundMode.transparent
-
-    // 首帧后打一条视图层级：确认真的切到了 FlutterTextureView。
-    // `adb logcat -s ColaNasRender` 可见；不影响正式行为。
-    override fun onPostResume() {
-        super.onPostResume()
-        if (renderModeLogged) return
-        renderModeLogged = true
-        val content = findViewById<ViewGroup>(android.R.id.content) ?: return
-        val names = mutableListOf<String>()
-        fun walk(v: View) {
-            names.add(v.javaClass.simpleName)
-            if (v is ViewGroup) for (i in 0 until v.childCount) walk(v.getChildAt(i))
-        }
-        walk(content)
-        Log.i("ColaNasRender", "renderMode=${getRenderMode()} hierarchy=$names")
-    }
+// 渲染模式用默认的 `surface` + **不透明窗口**：视频画面走 PlatformView
+// （Hybrid Composition）嵌在 Flutter 视图树里，是窗口内的一块真实 Surface。
+// 不透明窗口里这一层才能拿到独占的 HDR 合成通道 —— 一旦整窗透明
+// （`windowIsTranslucent` + texture 渲染），杜比视界会被当 SDR 混合，画面发紫。
+class MainActivity : AudioServiceActivity() {
 
     companion object {
         private const val BACKUP_CHANNEL = "com.colanas.os/photo_backup"
@@ -68,9 +39,12 @@ class MainActivity : AudioServiceFragmentActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         val messenger = flutterEngine.dartExecutor.binaryMessenger
-        // P2：视频不再走 Flutter PlatformView，而是由原生层把 PlayerView（裸
-        // SurfaceView）插到 Activity 内容层最底部，Flutter 用透明像素露出它。
-        // 控制命令 + 状态事件仍然走这条通道。
+        // 视频画面：PlatformView（Hybrid Composition，窗口内真实 Surface）。
+        // 控制命令 + 状态事件走 MethodChannel / EventChannel。
+        flutterEngine.platformViewsController.registry.registerViewFactory(
+            TvVideoViewFactory.VIEW_TYPE,
+            TvVideoViewFactory(this),
+        )
         TvMedia3MethodHandler.install(this, messenger)
         MethodChannel(messenger, BACKUP_CHANNEL)
             .setMethodCallHandler { call, result ->

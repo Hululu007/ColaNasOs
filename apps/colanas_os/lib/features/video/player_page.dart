@@ -5360,12 +5360,13 @@ class _PlayerPageState extends State<PlayerPage> {
     );
   }
 
-  /// 原生 SurfaceView 挂上窗口后，才把整页 / 根背景改成透明。
+  /// 原生视频视图（PlatformView）已创建：收起「准备中」那层黑底。
+  ///
+  /// 画面现在是**窗口内**的真实 Surface（Hybrid Composition），窗口不透明，
+  /// 根背景层不会盖住它 —— 不需要再让根背景让路（让路反而会在窗口上露底色）。
   void _onNativeSurfaceAttached() {
     if (!mounted || _nativeSurfaceReady) return;
     setState(() => _nativeSurfaceReady = true);
-    // 根背景层在 Navigator 下面，必须收起，否则会盖住视频
-    nativeVideoLayerActive.value = true;
   }
 
   /// 错误页上的恢复入口：重新打开当前地址。
