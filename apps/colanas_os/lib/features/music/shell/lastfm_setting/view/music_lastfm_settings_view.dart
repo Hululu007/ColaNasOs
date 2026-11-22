@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:nas_ui/nas_ui.dart' show NasStyleContext;
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../../../../core/page_origin.dart';
 import '../../compat/cola_api_controller.dart';
 import '../../compat/getx.dart';
 import '../../compat/host.dart';
@@ -44,7 +45,9 @@ class _MusicLastfmSettingsViewState extends State<MusicLastfmSettingsView> {
   ///
   /// 规则：baseUrl 是回环地址、而页面本身不是回环地址 → 用页面同源。
   String get _callbackUrl {
-    final origin = Uri.base.origin;
+    // 原生端没有「页面地址」：`Uri.base` 是 `file:`，直接取 `.origin` 会抛
+    // StateError，整个 build 失败 → release 里变成一整块灰色（＝看起来是空白页）。
+    final origin = pageOrigin();
     final raw = ApiController.instance.baseUrl.trim();
     final base = _pickBase(raw, origin).replaceAll(RegExp(r'/+$'), '');
     return '$base/api/v1/music/compat/lastfm/link/callback';

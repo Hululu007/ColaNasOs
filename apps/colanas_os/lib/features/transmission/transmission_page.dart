@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:nas_ui/nas_ui.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../core/page_origin.dart';
 import '../../core/session.dart';
 import '../../shell/mobile_frame.dart';
 
@@ -478,11 +479,16 @@ class _TransmissionPageState extends State<TransmissionPage> {
 
   /// 内置 Web UI 的地址：baseUrl 写死 127.0.0.1 时（外网/手机）改用页面同源，
   /// 再带上一次性票据换成 Cookie。
+  ///
+  /// 原生端 `Uri.base` 是 `file:`，取 `.origin` 会抛 StateError（`pageOrigin()` 内部已兜住），
+  /// 这时只能用配置里的服务端地址。
   String _webUiUrl() {
-    final origin = Uri.base.origin;
+    final origin = pageOrigin();
     var base = ApiSession.instance.baseUrl.trim();
-    if (base.isEmpty) base = origin;
-    if (_isLoopback(base) && !_isLoopback(origin)) base = origin;
+    if (base.isEmpty && origin.isNotEmpty) base = origin;
+    if (_isLoopback(base) && origin.isNotEmpty && !_isLoopback(origin)) {
+      base = origin;
+    }
     final path = _webPath.isEmpty ? '/transmission/web/' : _webPath;
     final q = _webTicket.isEmpty ? '' : '?t=${Uri.encodeComponent(_webTicket)}';
     return '${base.replaceAll(RegExp(r'/+$'), '')}$path$q';
