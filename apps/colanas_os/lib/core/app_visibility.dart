@@ -73,6 +73,9 @@ const Map<String, String> kAppScopeDomain = <String, String>{
 bool appVisibleToCurrentUser(AppDescriptor app) {
   final s = ApiSession.instance;
   if (s.isAdmin) return true;
+  // 设置永远可见：账号白名单也不该把它藏掉（改语言、退出登录、检查更新都在里面，
+  // 藏掉就等于这个账号被困在里面出不来 —— 用户 2026-11-22 要求）
+  if (app.id == 'settings') return true;
   final allowed = s.allowedApps;
   if (allowed != null) return allowed.contains(app.id);
   final domain = kAppScopeDomain[app.id];

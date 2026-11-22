@@ -248,8 +248,15 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     AppRegistry.apps.where((a) => a.available && _pageById.containsKey(a.id)),
   );
 
-  /// 应用 ≤4 个时不放「工作台」：直接把第一个应用当首页（用户 2026-11-12）。
-  static bool get _showHome => _apps.length > 4;
+  /// 是否要「工作台」作为落点。
+  ///
+  /// 只要可见应用 ≥2 就必须有：手机端没有一级导航栏，唯一的应用切换入口
+  /// 就是工作台上的卡片；顶栏那颗「房子」回的也是 `_ids.first`。
+  /// 以前「应用 ≤4 个就不放工作台、直接拿第一个应用当首页」在受限账号上等于
+  /// 把人锁死在第一个应用里 —— 2026-11-22 用户拿只有影视 + 音乐的电视账号
+  /// 登手机端，回不了主页、进不了音乐、也进不了设置，只能退出登录。
+  /// 只有一个应用时才省掉这一步。
+  static bool get _showHome => _apps.length >= 2;
 
   /// 页面顺序：有工作台时它在最前，否则第一个应用就是落点。
   static List<String> get _ids => <String>[

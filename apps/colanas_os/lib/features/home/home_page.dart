@@ -67,6 +67,12 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _load() async {
+    final s = ApiSession.instance;
+    if (!s.isAdmin && !s.scopes.contains('system:read')) {
+      // 没有系统权限：连请求都不发，界面也不显示这两块
+      _loading = false;
+      return;
+    }
     try {
       final d = await ApiSession.instance.client.systemMonitor();
       if (!mounted) return;
@@ -107,6 +113,10 @@ class _HomePageState extends State<HomePage> {
     final apps = _applyOrder(
       visibleAppsForCurrentUser(AppRegistry.apps.where((a) => a.available)),
     );
+    // 系统状态 / 硬盘要 `system:read`。受限账号拿不到数据，整块只会剩一排「—」，
+    // 直接不显示（也不发那个必然 403 的请求）。
+    final s = ApiSession.instance;
+    final showSystem = s.isAdmin || s.scopes.contains('system:read');
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -310,15 +320,19 @@ class _HomePageState extends State<HomePage> {
                 // 上传/任务/分享/索引在各自 App 里都有更直接的入口）。
                 if (compact) ...[
                   ...appsBlock,
-                  const SizedBox(height: NasTokens.spaceLg),
-                  ...statsBlock,
-                  const SizedBox(height: NasTokens.spaceLg),
-                  ...disksBlock,
+                  if (showSystem) ...[
+                    const SizedBox(height: NasTokens.spaceLg),
+                    ...statsBlock,
+                    const SizedBox(height: NasTokens.spaceLg),
+                    ...disksBlock,
+                  ],
                 ] else ...[
-                  ...statsBlock,
-                  const SizedBox(height: NasTokens.spaceLg),
-                  ...disksBlock,
-                  const SizedBox(height: NasTokens.spaceLg),
+                  if (showSystem) ...[
+                    ...statsBlock,
+                    const SizedBox(height: NasTokens.spaceLg),
+                    ...disksBlock,
+                    const SizedBox(height: NasTokens.spaceLg),
+                  ],
                   ...appsBlock,
                 ],
                 if (_loading) ...[
