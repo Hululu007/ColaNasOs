@@ -1,105 +1,114 @@
 {
   "schema": 1,
   "channel": "pre",
-  "releasedAt": "2026-11-21T14:06:18.614Z",
+  "releasedAt": "2026-11-22T10:05:44.674Z",
   "keyId": "k2026a",
   "notes": {
-    "zh": "开发版：修安卓音频滤镜崩溃、手机/平板 HDR 片改走系统播放器直推（能真输出杜比）、新增预发布更新通道。"
+    "zh": "电视端播放器重做渲染层（系统媒体会话 + 杜比视界直连）；修掉电视账号「检查更新」一直失败；重装安装包后内核跟随安装包。"
   },
   "components": {
     "server": {
-      "semver": "1.3.21",
-      "version": 10321,
+      "semver": "1.3.24",
+      "version": 10324,
       "delta": {
         "from": [
-          "1.3.20"
+          "1.3.21"
         ],
         "files": [
           {
             "path": "web/main.dart.js",
-            "size": 6143009,
-            "sha256": "ae4fb6acad109dda604568f5c7faeadf62246740acaab3814ce393d96181b874",
+            "size": 6139366,
+            "sha256": "e8b8edf55e3a06d9d4eabcd4b29bdcb5dfe5d96092d68d3356ed96628c33daa7",
             "br": {
-              "size": 1282044,
-              "sha256": "a0da0c3fae00cb223e5c0245f93e4c3fac06896c4e1d6580f7e126ee51061e83"
+              "size": 1281569,
+              "sha256": "4a97b442f5a7bb1c1d11d6c05cb9b0da7237b465e46b4b322674dd1ac04d94ad"
             },
             "urls": [
-              "https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.21/0-ae4fb6acad10-main.dart.js.br"
+              "https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.24/0-e8b8edf55e3a-main.dart.js.br"
             ]
           }
         ],
         "bundles": [
           {
-            "name": "smallfiles-2294743a6662.brb",
-            "size": 353,
-            "sha256": "2294743a6662c11d103e27589a1fdf1154d1bb552b95fcd56062a4c75e1c910b",
+            "name": "smallfiles-a5189df78053.brb",
+            "size": 154045,
+            "sha256": "a5189df78053d777c62e593297db502767e03f7474f9d3fccea51b040a657864",
             "members": [
+              "contracts/i18n.json",
+              "kernel/auth.js",
+              "kernel/index.js",
+              "kernel/update/service.js",
+              "src/modules/auth/index.js",
+              "src/modules/system/update.js",
               "version.json",
               "web/.last_build_id",
+              "web/assets/assets/i18n/en-US.json",
+              "web/assets/assets/i18n/zh-CN.json",
+              "web/assets/fonts/MaterialIcons-Regular.otf",
               "web/version.json"
             ],
             "urls": [
-              "https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.21/smallfiles-2294743a6662.brb"
+              "https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.24/smallfiles-a5189df78053.brb"
             ]
           }
         ],
         "urlBase": [
-          "https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.21"
+          "https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.24"
         ],
         "manifest": {
           "size": 65455,
-          "sha256": "772dbf4ee2408dde00d25c63556b28acc14314adf4a1a16c456e450e37446101",
+          "sha256": "cc84cdf1544205b5b3927465d609f4a18931f459c2cda6c606a5f2cbf9a5a78d",
           "urls": [
-            "https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.21/manifest-D10321-772dbf4ee240.json"
+            "https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.24/manifest-D10324-cc84cdf15442.json"
           ]
         }
       },
       "full": {
-        "size": 577574572,
-        "sha256": "f5727378f688cce582db178afaa2acf247a4bdae86460b3549532324b4da103f",
+        "size": 577578848,
+        "sha256": "55351a594c85d0e681408959a326b51821aca234c9ecdd6b3395af72ea5fbe8a",
         "urls": [
-          "https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.21/ColaNasOs-Server-1.3.21-Setup.exe"
+          "https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.24/ColaNasOs-Server-1.3.24-Setup.exe"
         ]
       }
     },
     "client_pc": {
-      "semver": "1.3.21",
-      "version": 10321,
-      "versionCode": 42,
+      "semver": "1.3.24",
+      "version": 10324,
+      "versionCode": 45,
       "assets": {
         "setup": {
-          "size": 30643840,
-          "sha256": "cd0abd43c6585c392d593e6e64cd4065e37847c62305b5aeb3b4a21ffb33cf76",
+          "size": 30651952,
+          "sha256": "4a6b372202700e4b84d7bbadb5b7c32dea76b722e76626b454907a170d386bfc",
           "urls": [
-            "https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.21/ColaNasOs-Client-1.3.21-Setup.exe"
+            "https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.24/ColaNasOs-Client-1.3.24-Setup.exe"
           ]
         },
         "portable": {
-          "size": 40537280,
-          "sha256": "55fda33d6ea5bf0d6fe44a849fc2f56646fc20bce38eaa343cf09e09cb267f30",
+          "size": 40558751,
+          "sha256": "5c3da477b68ec4cda49afcd5c8a45c9133de5e8e3f322c2740246118129dbe61",
           "urls": [
-            "https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.21/ColaNasOs-Client-1.3.21-windows-x64.zip"
+            "https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.24/ColaNasOs-Client-1.3.24-windows-x64.zip"
           ]
         }
       }
     },
     "client_android": {
-      "semver": "1.3.22",
-      "version": 1003022,
-      "versionCode": 43,
+      "semver": "1.3.24",
+      "version": 10324,
+      "versionCode": 45,
       "assets": {
         "apk": {
-          "size": 46949407,
-          "sha256": "fe237b1c41d0a9d906b7d7dd30e82ad9253122f5cf360600d7e5a6390e9b36e6",
+          "size": 47126962,
+          "sha256": "f8809c9dcfa1c7a373ebe13a5eab3b6d0852653ada8932f87df0e8755da03383",
           "urls": [
-            "https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.22/ColaNasOs-Client-1.3.22-android-arm64.apk"
+            "https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.24/ColaNasOs-Client-1.3.24-android-arm64.apk"
           ]
         },
         "apk_tv": {
-          "size": 46949407,
-          "sha256": "371512c0d73681ec0abe35e2f619f36ad2053b803769d835bd5d0fba5c468b2a",
+          "size": 47126962,
+          "sha256": "d6e86a1dc1d32c9d125937debda96434abd1e9b654954ec97ecf00e8efe94312",
           "urls": [
-            "https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.22/ColaNasOs-Client-1.3.22-android-arm64-tv.apk"
+            "https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.24/ColaNasOs-Client-1.3.24-android-arm64-tv.apk"
           ]
         }
       }
