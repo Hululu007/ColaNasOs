@@ -372,11 +372,21 @@ function buildVersionDir(versionDir, product) {
   }
   n += L.copyTree(web, path.join(versionDir, 'web'), skip);
 
-  // 契约：内核只读 locales.json，但 apps.json / errors.json 在部分路径也会查
+  /**
+   * 契约：**只放安装包里真正随包的那几个**（见 electron-builder.js 的
+   * `extraResources` 里 `contracts` 那条的 filter）。
+   *
+   * 为什么不能整目录拷：安装包只把 `resources/contracts/locales.json` 解出来，
+   * 装机后播种出来的版本目录里也就只有这一个文件。清单里多列 `apps.json` /
+   * `errors.json` 这些「本机根本没有」的文件，增量装配时会去当前目录硬链接它们
+   * → 缺文件 → 校验失败 → **每次增量都退化成 550 MB 全量**（2026-11-22 实测）。
+   * 内核运行时也只读 locales.json（`kernel/index.ts` 唯一一处 resolveContractFile）。
+   */
+  const shippedContracts = new Set(['locales.json']);
   const contracts = path.join(L.root, 'contracts');
   L.ensureDir(path.join(versionDir, 'contracts'));
   for (const name of fs.readdirSync(contracts)) {
-    if (!name.endsWith('.json') || name === 'openapi.json') continue;
+    if (!shippedContracts.has(name)) continue;
     fs.copyFileSync(path.join(contracts, name), path.join(versionDir, 'contracts', name));
     n += 1;
   }
