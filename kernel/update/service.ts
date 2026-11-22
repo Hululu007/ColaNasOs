@@ -1263,8 +1263,14 @@ export class UpdateService {
    * 任何一环出问题（提权残留、explorer 被占用、安装中途失败）留下的都是
    * 「包装完了、服务没了、得走到机器跟前点图标」—— NAS 往往不在手边。
    *
-   * 所以起一个 detached 的 PowerShell 陪跑：最多等 4 分钟，期间只要内核端口
-   * 有监听就退；一直没起来、也没有安装程序在跑，才去启动安装目录里的外壳。
+   * 所以起一个 detached 陪跑进程，分两段：
+   *   1. 等端口**掉下去**（安装器先杀本进程）。120 秒内没掉 = 安装根本没起来
+   *      （UAC 被拒 / 安装器提前退出），直接收工，不掺和；
+   *   2. 掉下去之后再等它**起来**（最多 4 分钟）。期间有安装程序在跑就继续等
+   *      —— 那会儿去拉起只会撞文件占用；一直没有才用安装目录里的外壳启动。
+   *
+   * 两段判断缺一不可：只看「端口活着」会在我还没被杀掉的那几秒里误判成
+   * 「已经回来了」然后退出，等于没有兜底。
    *
    * 它不在 `$INSTDIR` 下，安装器按路径匹配杀进程时不会误伤。
    */
@@ -1275,21 +1281,34 @@ export class UpdateService {
     const port = Number(process.env.PORT || 7788) || 7788;
     const script = [
       `$port = ${port}`,
-      "$deadline = (Get-Date).AddMinutes(4)",
-      'while ((Get-Date) -lt $deadline) {',
-      '  Start-Sleep -Seconds 3',
-      '  $up = $false',
+      '$exe = $env:COLANAS_SHELL_EXE',
+      'function Test-Port {',
       '  try {',
       '    $c = New-Object Net.Sockets.TcpClient',
-      "    $c.Connect('127.0.0.1', $port)",
-      '    $up = $true',
+      '    $c.Connect("127.0.0.1", $port)',
       '    $c.Close()',
-      '  } catch { }',
-      '  if ($up) { exit 0 }',
-      '  # 安装程序还在覆盖文件：现在拉起只会撞「文件占用」',
-      "  if (Get-Process | Where-Object { $_.ProcessName -like '*Setup*' }) { continue }",
+      '    return $true',
+      '  } catch { return $false }',
       '}',
-      'if (Test-Path $env:COLANAS_SHELL_EXE) { Start-Process -FilePath $env:COLANAS_SHELL_EXE }',
+      'function Test-Installer {',
+      '  return @(Get-Process | Where-Object { $_.ProcessName -like "*Setup*" }).Count -gt 0',
+      '}',
+      '# 第一段：等安装器把服务端杀掉（端口掉下去）',
+      '$deathline = (Get-Date).AddSeconds(120)',
+      'while ((Get-Date) -lt $deathline) {',
+      '  if (-not (Test-Port)) { break }',
+      '  Start-Sleep -Seconds 2',
+      '}',
+      'if (Test-Port) { exit 0 }',
+      '# 第二段：等它自己回来，回不来就拉起来',
+      '$deadline = (Get-Date).AddMinutes(4)',
+      'while ((Get-Date) -lt $deadline) {',
+      '  Start-Sleep -Seconds 3',
+      '  if (Test-Port) { exit 0 }',
+      '  if (Test-Installer) { continue }',
+      '}',
+      'if (Test-Port) { exit 0 }',
+      'if (Test-Path $exe) { Start-Process -FilePath $exe }',
     ].join('\n');
     try {
       const child = spawn(
