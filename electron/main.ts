@@ -9,6 +9,8 @@ import {
   ensureKernelModules,
   nativeModulePaths,
   prepareBoot,
+  preferInstalledKernel,
+  pruneOldKernels,
   resolveKernelEntry,
   seedIfNeeded,
   shellLog,
@@ -574,6 +576,11 @@ app.whenReady().then(() => {
     }
     try {
       seedIfNeeded(dataDir, seedSources());
+      // 重装安装包只换外壳，`versions/current.json` 不会自动前移：
+      // 安装包里的内核比指针新时切过去，否则会一直跑旧内核（新接口全 404）。
+      preferInstalledKernel(dataDir, seedSources());
+      // 只留当前 + 上一版：播种 / 重装也会产生新目录，不能只靠「应用内更新」时的清理
+      pruneOldKernels(dataDir, 2);
     } catch (err) {
       trace(`seed failed: ${String(err)}`);
       console.error('[shell] 版本目录播种失败，本次仍从安装目录启动', err);

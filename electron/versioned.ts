@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { Updater, versionId, resolvePackageVersion } from '../kernel/updater';
 import { evaluateBoot, readBoot, writeBoot } from '../kernel/update/boot';
-import { seedVersionDir } from '../kernel/update/service';
+import { seedVersionDir, pruneVersions } from '../kernel/update/service';
 
 /**
  * 「壳 + 版本目录」的装配逻辑（方案 §3-D1）。
@@ -189,8 +189,68 @@ export function seedIfNeeded(dataDir: string, seed: SeedSources): { id: string; 
     console.log(
       `[shell] 版本目录已播种：${created.id}（${semver}），之后内核从这里启动`,
     );
+    return created;
   }
-  return created;
+  /**
+   * 同版本目录已经在了（安装包重装时会主动删指针）：只把指针补回去。
+   * 不补的话外壳会退回安装目录内核，`managed` 变 false，下一次增量更新
+   * 又得重新播种 —— 白拷 55 MB。
+   */
+  const id = versionId(version);
+  if (fs.existsSync(path.join(versionsDir, id, 'version.json'))) {
+    new Updater(dataDir).activate(version);
+    console.log(`[shell] 复用已有版本目录 ${id}（${semver}），指针已恢复`);
+    return { id, files: 0 };
+  }
+  return null;
+}
+
+/**
+ * 安装包升级后的内核对齐。
+ *
+ * 拆壳之后，内核住在 `<dataDir>/versions/D<ver>/`，安装包只换外壳 ——
+ * 重装 Setup **不会**动 `versions/current.json`。结果就是「装了 1.3.22，
+ * 还在跑 1.3.21 的内核 / Web」，表现为新接口 404、本地更新查不到包。
+ *
+ * 规则：安装包版本比当前指针新 → 把安装包里的内核播种成新版本目录并切过去；
+ * 指针更新（内核自己增量更新过）或更旧（用户主动回滚）都不动。
+ */
+export function preferInstalledKernel(dataDir: string, seed: SeedSources): string | null {
+  const versionsDir = path.join(dataDir, 'versions');
+  const pointer = path.join(versionsDir, 'current.json');
+  if (!fs.existsSync(pointer)) return null; // 首装：交给 seedIfNeeded
+  const { semver, version } = resolvePackageVersion();
+  if (!version) return null;
+  const up = new Updater(dataDir);
+  const cur = up.current();
+  if (!cur || version <= cur.version) return null;
+  const created = seedVersionDir({ versionsDir, semver, version, seed });
+  const id = versionId(version);
+  // 同版本装过一次时 seedVersionDir 返回 null（目录已在），指针照样要切
+  if (!created && !fs.existsSync(path.join(versionsDir, id, 'version.json'))) {
+    throw new Error(`内核版本目录 ${id} 播种失败`);
+  }
+  up.activate(version);
+  const message = `[shell] 安装包内核 ${semver}（${id}）比当前 ${cur.id} 新，已切换`;
+  shellLog(dataDir, message);
+  console.log(message);
+  return id;
+}
+
+/** 只留当前版 + 上一版：回滚够用，磁盘不越滚越大（每版约 55 MB） */
+export function pruneOldKernels(dataDir: string, keep = 2): string[] {
+  try {
+    const removed = pruneVersions(path.join(dataDir, 'versions'), keep);
+    if (removed.length) {
+      const message = `[shell] 清理旧内核：${removed.join(', ')}`;
+      shellLog(dataDir, message);
+      console.log(message);
+    }
+    return removed;
+  } catch (err) {
+    shellLog(dataDir, `[shell] 清理旧内核失败：${String(err)}`);
+    return [];
+  }
 }
 
 export interface KernelEntry {

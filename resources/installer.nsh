@@ -44,3 +44,13 @@
 !macro customUnInit
   !insertmacro COLANAS_STOP_APP
 !macroend
+
+; 全量安装包必须让内核跟随安装包。
+;
+; 拆壳后内核住在 <dataDir>\versions\D<ver>，由 current.json 指向；重装只覆盖
+; 安装目录，指针不动 —— 结果就是「装了 1.3.22 还在跑 1.3.21 的内核」。
+; 安装结束时删掉指针，外壳下次启动会从本安装包重新播种，直接指向这一版内核。
+!macro customInstall
+  DetailPrint "重置内核版本指针（下次启动跟随本安装包）..."
+  Delete "$APPDATA\colanas_os_server\versions\current.json"
+!macroend
