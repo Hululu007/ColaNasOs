@@ -283,7 +283,13 @@ extension MusicPlayServicePlayback on MusicPlayServiceController {
     final state = _coreAdapter?.core.state;
     final playing = state?.isPlaying ?? isPlaying.value;
     final total = duration.value;
-    final key = '$i|${item.displayTitle}|${item.artist}|$playing|${total.inSeconds}';
+    // key 里带一个 5 秒粒度的进度桶：原来只比「曲目 + 播放态 + 总时长」，
+    // 一首歌播起来之后 key 恒定，`updatePosition` 就再也不刷新了 —— 状态栏 /
+    // 锁屏上的进度条只能靠系统按 speed 外推，长时间播放会明显偏。
+    // 现在每 5s 至少推一次，系统手里的基准点始终是新的。
+    final bucket = position.value.inSeconds ~/ 5;
+    final key =
+        '$i|${item.displayTitle}|${item.artist}|$playing|${total.inSeconds}|$bucket';
     if (!force && key == _lastSentMediaItemKey) return;
     _lastSentMediaItemKey = key;
 

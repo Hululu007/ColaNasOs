@@ -38,6 +38,19 @@ extension MusicPlayServiceLifecycle on MusicPlayServiceController {
       // 谁后 `AudioService.init` 谁就把命令通道抢走，先初始化那路的按键就全失效。
       // 所以音乐和播客共用 `core/audio_background` 这一份前台服务，
       // 各自往里推快照、按音频焦点决定谁能写 —— 播放中的那一路自动顶掉面板。
+      //
+      // Android 13+ 没有 POST_NOTIFICATIONS 时前台服务挂不住：既没有通知栏面板
+      // （状态栏看不到进度），App 一切后台 / 熄屏就会被系统掐掉。
+      // 这条以前只补在播客、离线下载和视频播放器里，音乐链路一直漏着。
+      if (defaultTargetPlatform == TargetPlatform.android) {
+        final granted = await ensureAndroidNotificationPermission();
+        if (!granted) {
+          ClientLogger.instance.warn(
+            '通知权限未授予：音乐前台服务无法常驻，状态栏也不会有播放面板',
+            route: 'music.bootstrap',
+          );
+        }
+      }
       await audioBackground.ensureStarted(channelName: '音乐播放');
     }
     if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {

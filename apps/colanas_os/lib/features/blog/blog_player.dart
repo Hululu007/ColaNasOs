@@ -35,11 +35,35 @@ class BlogPlayer extends ChangeNotifier {
   Timer? _watchdog;
   Duration _lastProgress = Duration.zero;
   DateTime _lastProgressAt = DateTime.now();
-  int _stallRecoveries = 0;
+
+  /// 连续失败次数。**位置一旦真的往前走了就清零**，所以正常播放期间恒为 0，
+  /// 只有「一直播不动」才会累加。
+  int _retryAttempt = 0;
+  Timer? _retryTimer;
+
+  /// 用户明确停过（停止 / 清队列）。置位后不再自动重连，避免「已经关了还自己响」。
+  bool _stopped = false;
   bool _recovering = false;
 
   static const Duration _stallCheckInterval = Duration(seconds: 5);
   static const Duration _stallThreshold = Duration(seconds: 20);
+
+  /// 断流后的退避序列。
+  ///
+  /// 为什么不是「一断就报错」（2026-11-22 用户反馈「播两三分钟就停，弹
+  /// ClientException with SocketException」）：日志里那段时间确实在重连
+  /// （21:28:36 起播 → 21:30:48 → 21:31:22 → 21:35:14），每次都是**新的流地址**，
+  /// 说明是连接中途断掉；而重连那一刻连 `blogAudioUrl` 本身都抛 SocketException，
+  /// 即手机侧网络瞬时不可用。这种抖动通常几秒就恢复，一上来就报错等于把这一期判死。
+  /// 6 次退避合计约 1 分半，足够跨过 WiFi 重连 / 熄屏省电切网。
+  static const List<Duration> _retryBackoff = <Duration>[
+    Duration(seconds: 2),
+    Duration(seconds: 4),
+    Duration(seconds: 8),
+    Duration(seconds: 15),
+    Duration(seconds: 30),
+    Duration(seconds: 30),
+  ];
 
   /// 当前播放队列（可编辑：加入 / 移除 / 跳转）。
   List<BlogEpisodeItem> _queue = const [];
@@ -79,7 +103,9 @@ class BlogPlayer extends ChangeNotifier {
       if (v > _lastProgress + const Duration(milliseconds: 300)) {
         _lastProgress = v;
         _lastProgressAt = DateTime.now();
-        _stallRecoveries = 0;
+        // 真的往前走了 = 这一路已经活了，把退避计数和残留错误一起清掉
+        _resetRetry();
+        if (error != null) error = null;
       }
       // 锁屏面板的进度：只有活跃音源能写，别把音乐的系统面板抢过来
       if (AudioFocus.instance.holds(this)) {
@@ -108,11 +134,7 @@ class BlogPlayer extends ChangeNotifier {
     _subs.add(p.stream.completed.listen((done) {
       if (done) unawaited(next());
     }));
-    _subs.add(p.stream.error.listen((message) {
-      error = message;
-      loading = false;
-      notifyListeners();
-    }));
+    _subs.add(p.stream.error.listen(_handleStreamError));
     _player = p;
     _startWatchdog();
     return p;
@@ -131,39 +153,78 @@ class BlogPlayer extends ChangeNotifier {
     if (duration <= Duration.zero) return;
     if (episode == null) return;
     if (DateTime.now().difference(_lastProgressAt) < _stallThreshold) return;
-    unawaited(_recoverFromStall());
+    _scheduleRetry('停滞 ${_stallThreshold.inSeconds}s');
   }
 
-  /// 卡住就重新取一次播放地址，从当前位置续上。
+  /// 流中途报错（连接被重置 / SocketException）不等于这一期坏了。
   ///
-  /// 重连要重新走 `blogAudioUrl`：URL 里带的是短期令牌，前一次链接可能早就
-  /// 过了有效期，拿旧地址重试只会 401。连续三次都续不上就停下来报错，
-  /// 不能无限重连把界面卡在「加载中」。
-  Future<void> _recoverFromStall() async {
-    if (_recovering) return;
-    _recovering = true;
-    final at = position;
-    _stallRecoveries += 1;
-    ClientLogger.instance.warn(
-      '播客播放停滞 ${_stallThreshold.inSeconds}s，第 $_stallRecoveries 次重连',
-      route: 'blog.player/${episodeId ?? '-'}',
-      detail:
-          'pos=${at.inMilliseconds}ms dur=${duration.inMilliseconds}ms '
-          'playing=$playing rate=$rate',
-    );
-    try {
-      if (_stallRecoveries > 3) {
-        playing = false;
-        loading = false;
-        error = I18n.instance.tr('blog.loadFailed');
-        notifyListeners();
-        return;
-      }
-      await _load(resumeAt: at);
-    } catch (e) {
-      error = '$e';
+  /// 以前这里直接把 error 抛到界面，而 [_checkStall] 又以 `error != null` 提前
+  /// 返回 —— 一次瞬时断网就让播放永久停住，看起来就是「播到一半忽然停了还报错」。
+  /// 现在改成交给 [_scheduleRetry]，退避重连、位置接上，只有连续失败才认栽。
+  void _handleStreamError(String message) {
+    loading = false;
+    notifyListeners();
+    _scheduleRetry('stream.error: $message');
+  }
+
+  void _resetRetry() {
+    _retryTimer?.cancel();
+    _retryTimer = null;
+    _retryAttempt = 0;
+  }
+
+  /// 失败后按退避序列排一次续播；次数用尽才把错误交给界面。
+  void _scheduleRetry(String reason) {
+    if (_stopped) return;
+    if (episode == null) {
+      error = reason;
       loading = false;
       notifyListeners();
+      return;
+    }
+    // 已经在等下一次重连了，别重复排（看门狗每 5s 一拍，会一直撞到这里）
+    if (_retryTimer?.isActive ?? false) return;
+    if (_retryAttempt >= _retryBackoff.length) {
+      playing = false;
+      loading = false;
+      error = I18n.instance.tr('blog.loadFailed');
+      notifyListeners();
+      ClientLogger.instance.warn(
+        '播客重连 ${_retryBackoff.length} 次仍失败，停止',
+        route: 'blog.player/${episodeId ?? '-'}',
+        detail:
+            'pos=${position.inMilliseconds}ms dur=${duration.inMilliseconds}ms '
+            'reason=$reason',
+      );
+      return;
+    }
+    final delay = _retryBackoff[_retryAttempt];
+    _retryAttempt += 1;
+    // 界面上只显示「加载中」，不弹红色错误：多数抖动会在 1~2 次内恢复
+    loading = true;
+    notifyListeners();
+    ClientLogger.instance.warn(
+      '播客断流，${delay.inSeconds}s 后第 $_retryAttempt/${_retryBackoff.length} 次重连',
+      route: 'blog.player/${episodeId ?? '-'}',
+      detail:
+          'pos=${position.inMilliseconds}ms dur=${duration.inMilliseconds}ms '
+          'playing=$playing reason=$reason',
+    );
+    _retryTimer = Timer(delay, () => unawaited(_retryNow()));
+  }
+
+  /// 重新取一次播放地址，从当前位置续上。
+  ///
+  /// 必须重走 `blogAudioUrl`：URL 里带的是短期令牌，前一次链接可能早就过了有效期，
+  /// 拿旧地址重试只会 401。
+  Future<void> _retryNow() async {
+    if (_recovering || episode == null) return;
+    _recovering = true;
+    final at = position;
+    try {
+      await _load(resumeAt: at);
+    } catch (e) {
+      _scheduleRetry('load 抛错: $e');
     } finally {
       _recovering = false;
       _lastProgress = position;
@@ -255,7 +316,8 @@ class BlogPlayer extends ChangeNotifier {
     position = Duration.zero;
     duration = Duration.zero;
     playing = false;
-    _stallRecoveries = 0;
+    _stopped = true;
+    _resetRetry();
     _lastProgress = Duration.zero;
     _lastProgressAt = DateTime.now();
     AudioFocus.instance.release(this);
@@ -272,6 +334,7 @@ class BlogPlayer extends ChangeNotifier {
   Future<void> _load({Duration? resumeAt}) async {
     final current = episode;
     if (current == null) return;
+    _stopped = false;
     // 开播前先让音乐 / 音色试听让路，避免两路声音叠在一起
     await AudioFocus.instance.request(this, pause);
     error = null;
@@ -284,7 +347,16 @@ class BlogPlayer extends ChangeNotifier {
       // Android 13+ 不给通知权限，前台服务挂不住，切后台 / 熄屏就被系统掐掉。
       // 音乐链路早申请了，播客以前漏了这一步（2026-11-10 反馈「切后台就断」）。
       if (!kIsWeb) {
-        await ensureAndroidNotificationPermission();
+        final granted = await ensureAndroidNotificationPermission();
+        if (!granted) {
+          // 没有通知权限就没有前台服务通知 → 系统不当它是前台服务，
+          // 切后台 / 熄屏后直接掐进程内连接。表现同时是「状态栏没有播放进度」
+          // 和「听几分钟就断」，值得在客户端日志里留一条以便对症。
+          ClientLogger.instance.warn(
+            '通知权限未授予：前台服务无法常驻，切后台/熄屏会被系统掐断',
+            route: 'blog.player/${current.id}',
+          );
+        }
         // 启动时初始化可能失败过（权限当时还没给），这里幂等重试一次
         await audioBackground.ensureStarted(
           channelName: I18n.instance.tr('audio.channelName'),
@@ -307,9 +379,11 @@ class BlogPlayer extends ChangeNotifier {
       _syncMediaSession();
       notifyListeners();
     } catch (e) {
-      error = '$e';
+      // 取地址 / open 失败也可能是瞬时网络问题（日志里就出现过重连时抛
+      // `ClientException with SocketException`），统一交给退避重连；
+      // 次数用尽才把错误交给界面，并且每次都落到客户端日志里方便回查。
       loading = false;
-      notifyListeners();
+      _scheduleRetry('load 失败: $e');
     }
   }
 
@@ -321,6 +395,7 @@ class BlogPlayer extends ChangeNotifier {
     }
     // 从暂停恢复也是「开播」，同样要抢焦点
     if (!playing) {
+      _stopped = false;
       _lastProgressAt = DateTime.now();
       await AudioFocus.instance.request(this, pause);
     }
@@ -331,7 +406,7 @@ class BlogPlayer extends ChangeNotifier {
     // 手动拖动后重新起算：不然「往回调」会被看门狗当成停滞
     _lastProgress = to;
     _lastProgressAt = DateTime.now();
-    _stallRecoveries = 0;
+    _resetRetry();
     await _player?.seek(to);
   }
 
@@ -351,7 +426,8 @@ class BlogPlayer extends ChangeNotifier {
     final held = AudioFocus.instance.holds(this);
     await _player?.stop();
     playing = false;
-    _stallRecoveries = 0;
+    _stopped = true;
+    _resetRetry();
     _lastProgressAt = DateTime.now();
     AudioFocus.instance.release(this);
     if (held) _clearMediaSession();
@@ -431,6 +507,8 @@ class BlogPlayer extends ChangeNotifier {
     AudioFocus.instance.release(this);
     _watchdog?.cancel();
     _watchdog = null;
+    _retryTimer?.cancel();
+    _retryTimer = null;
     for (final s in _subs) {
       unawaited(s.cancel());
     }

@@ -133,9 +133,12 @@ class ColaMusicFloatingBar extends StatelessWidget {
       builder: (context, constraints) {
         final theme = Theme.of(context);
         final palette = theme.extension<CustomColors>();
-        final barColor = (palette?.oprationBarBgColor ??
-                context.nasStyle.panelColor)
-            .withValues(alpha: 0.92);
+        // 原来在面板色上 `withValues(alpha: 0.92)`：极光暗色下面板色是 8% 白，
+        // 改 alpha 只会得到一条刺眼的近白条。改成合成到 baseColor，观感与卡片一致。
+        final barColor = Color.alphaBlend(
+          palette?.oprationBarBgColor ?? context.nasStyle.panelColor,
+          context.nasStyle.baseColor,
+        );
         final compact = constraints.maxWidth < 750;
 
         return Obx(() {

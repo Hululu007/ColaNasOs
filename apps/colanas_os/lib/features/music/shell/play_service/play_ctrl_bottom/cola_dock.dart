@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:nas_ui/nas_ui.dart' show NasStyleContext;
 
 import '../../compat/cola_api_controller.dart';
 import '../../compat/cola_custom_colors.dart';
@@ -213,7 +214,14 @@ class _ColaMusicDockBarState extends State<ColaMusicDockBar> {
         child: ClipRRect(
           child: Container(
             decoration: BoxDecoration(
-              color: customColors!.leftTreeBgColor,
+              // 不能直接用 leftTreeBgColor：它取的是 `style.panelColor`，极光暗色皮肤下
+              // 只有 8% 白（0x14FFFFFF）。这条 dock 是浮在封面网格上的，用半透明色等于
+              // 让封面透上来，进度条和时长完全看不清（2026-11-22 用户反馈）。
+              // 与 MiniPlayerBar 同一口径：把面板色合成到 baseColor 上，观感不变但绝不透。
+              color: Color.alphaBlend(
+                customColors!.leftTreeBgColor,
+                context.nasStyle.baseColor,
+              ),
               border: Border(
                 top: BorderSide(
                   color: palette.dividerColor.withValues(alpha: 0.55),
