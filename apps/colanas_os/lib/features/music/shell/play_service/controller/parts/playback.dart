@@ -276,7 +276,16 @@ extension MusicPlayServicePlayback on MusicPlayServiceController {
   /// 那一路能写，所以暂停中的音乐不会把播客刚放上去的面板顶掉。
   void _pushMediaSnapshot({int? index, bool force = false}) {
     if (playlist.isEmpty) return;
-    if (!AudioFocus.instance.holds(this)) return;
+    if (!AudioFocus.instance.holds(this)) {
+      if (!_loggedFocusMiss) {
+        _loggedFocusMiss = true;
+        ClientLogger.instance.info(
+          '未持有音频焦点，跳过写媒体面板',
+          route: 'music.panel',
+        );
+      }
+      return;
+    }
     final i = (index ?? currentIndex.value).clamp(0, playlist.length - 1);
     final item = playlist[i];
 

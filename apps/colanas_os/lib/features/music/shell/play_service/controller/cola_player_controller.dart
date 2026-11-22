@@ -142,6 +142,10 @@ class MusicPlayServiceController extends GetxController
   /// 已推送条目的指纹，用来过滤重复的 mediaItem 通知。
   String? _lastSentMediaItemKey;
 
+  /// 「没抢到音频焦点所以没推面板」只记一次：面板不出来时，日志里得能分清
+  /// 是「服务没起来」还是「根本没轮到我写」。
+  bool _loggedFocusMiss = false;
+
   final List<StreamSubscription<dynamic>> _audioSessionSubs = [];
   final Map<String, String> _lyricsCache = {};
   final Map<String, MusicListItem> _detailCache = {};
