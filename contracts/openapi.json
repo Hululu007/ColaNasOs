@@ -10651,6 +10651,8 @@
           "notes",
           "mode",
           "deltaBytes",
+          "deltaAvailable",
+          "fullBytes",
           "needsReshell",
           "managed",
           "minShell",
@@ -10700,6 +10702,12 @@
             "type": "string"
           },
           "deltaBytes": {
+            "type": "integer"
+          },
+          "deltaAvailable": {
+            "type": "boolean"
+          },
+          "fullBytes": {
             "type": "integer"
           },
           "needsReshell": {
@@ -10791,7 +10799,8 @@
           "startedAt",
           "updatedAt",
           "targetId",
-          "mode"
+          "mode",
+          "autoRun"
         ],
         "properties": {
           "phase": {
@@ -10835,6 +10844,9 @@
           },
           "mode": {
             "type": "string"
+          },
+          "autoRun": {
+            "type": "boolean"
           }
         }
       },
@@ -10952,6 +10964,11 @@
         "properties": {
           "force": {
             "type": "boolean"
+          },
+          "mode": {
+            "maxLength": 8,
+            "pattern": "^(auto|delta|full)$",
+            "type": "string"
           }
         }
       },

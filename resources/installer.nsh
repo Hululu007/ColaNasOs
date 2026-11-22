@@ -53,4 +53,14 @@
 !macro customInstall
   DetailPrint "重置内核版本指针（下次启动跟随本安装包）..."
   Delete "$APPDATA\colanas_os_server\versions\current.json"
+  ; 静默安装（应用内「下载并安装完整包」走的就是 `/S`）没有完成页，
+  ; electron-builder 的 runAfterFinish 不会执行 —— 装完不把服务端拉起来，
+  ; NAS 就一直停在「进程没了、页面打不开」的状态，得有人远程点一下。
+  ; 交互式安装有勾选「运行」的完成页，交给它自己的 runAfterFinish，别抢。
+  ;
+  ; 走 explorer 而不是直接 Exec：安装程序多半是提权运行的，直接 Exec 出来的
+  ; 服务端会带着管理员令牌；经 shell 打开才能回到普通用户身份，和平时一致。
+  IfSilent 0 +3
+    SetOutPath $INSTDIR
+    Exec 'explorer.exe "$INSTDIR\${APP_EXECUTABLE_FILENAME}"'
 !macroend

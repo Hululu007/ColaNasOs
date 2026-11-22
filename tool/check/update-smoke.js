@@ -231,6 +231,9 @@ async function waitJob(svc, timeoutMs = 60_000) {
 
   process.env.COLANAS_UPDATE_MANIFEST = `http://127.0.0.1:${port}/update.json`;
   process.env.COLANAS_UPDATE_PUBKEY = pubPem;
+  // 全量下载完会真的 `spawn /S` 安装程序：夹具里的 setup.exe 只是个假 PE，
+  // 这里显式关掉，别让测试机弹 UAC 或装进真实目录。
+  process.env.COLANAS_UPDATE_NO_AUTORUN = '1';
 
   const svc = new UpdateService({ dataDir });
   const cur = svc.current();
@@ -240,6 +243,11 @@ async function waitJob(svc, timeoutMs = 60_000) {
   check('检查到新版本', checked.hasUpdate && checked.latest?.semver === '0.1.2', JSON.stringify(checked.latest));
   check('增量模式可用', checked.mode === 'delta', `mode=${checked.mode}`);
   check('增量体积远小于全量', checked.deltaBytes > 0 && checked.deltaBytes < 900 * 1024, `${(checked.deltaBytes / 1024).toFixed(0)} KB`);
+  check(
+    '检查结果带增量可用性（这份夹具只发增量，没有全量包）',
+    checked.deltaAvailable === true && checked.fullBytes === 0,
+    `deltaAvailable=${checked.deltaAvailable} fullBytes=${checked.fullBytes}`,
+  );
 
   await svc.install({ force: true });
   const job = await waitJob(svc);
@@ -320,6 +328,12 @@ async function waitJob(svc, timeoutMs = 60_000) {
   L.copyTree(path.join(old.dir), path.join(fbData, 'versions', 'D101'));
   fs.writeFileSync(path.join(fbData, 'versions', 'current.json'), JSON.stringify({ id: 'D101' }));
   const fbSvc = new UpdateService({ dataDir: fbData });
+  const fbChecked = await fbSvc.checkServer({ force: true });
+  check(
+    '有全量包时检查结果给出其体积',
+    fbChecked.fullBytes === setupBytes.length,
+    `${fbChecked.fullBytes} vs ${setupBytes.length}`,
+  );
   await fbSvc.install({ force: true });
   const fbJob = await waitJob(fbSvc);
   check('增量失败自动降级全量', fbJob.phase === 'ready' && fbJob.mode === 'full', `${fbJob.phase}/${fbJob.mode}`);
@@ -328,8 +342,24 @@ async function waitJob(svc, timeoutMs = 60_000) {
     Boolean(fbJob.hint) && fs.existsSync(fbJob.hint) && L.sha256FileHex(fbJob.hint) === L.sha256Hex(setupBytes),
     fbJob.hint ? path.basename(fbJob.hint) : '(无路径)',
   );
+  check('测试环境不会真的去执行安装程序', fbJob.autoRun === false, String(fbJob.autoRun));
   const fbPtr = JSON.parse(fs.readFileSync(path.join(fbData, 'versions', 'current.json'), 'utf8'));
   check('降级全量时不动指针', fbPtr.id === 'D101', fbPtr.id);
+
+  // ---- 界面「下载并安装完整包」：能增量也按用户选的全量走 --------------
+  const forceData = path.join(work, 'data-forcefull');
+  fs.mkdirSync(forceData, { recursive: true });
+  L.copyTree(path.join(old.dir), path.join(forceData, 'versions', 'D101'));
+  fs.writeFileSync(path.join(forceData, 'versions', 'current.json'), JSON.stringify({ id: 'D101' }));
+  process.env.COLANAS_UPDATE_MANIFEST = `http://127.0.0.1:${port}/update-full.json`;
+  const forceSvc = new UpdateService({ dataDir: forceData });
+  await forceSvc.install({ force: true, mode: 'full' });
+  const forceJob = await waitJob(forceSvc);
+  check(
+    '指定全量时直接下整包（不试增量）',
+    forceJob.phase === 'ready' && forceJob.mode === 'full',
+    `${forceJob.phase}/${forceJob.mode}`,
+  );
 
   // ---- boot.json 自愈 --------------------------------------------------
   const bootDir = path.join(work, 'boot');

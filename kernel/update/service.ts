@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { Updater, versionId, parseVersionId } from '../updater';
@@ -219,6 +220,11 @@ export interface JobStatus {
   updatedAt: number;
   targetId: string;
   mode: 'delta' | 'full' | '';
+  /**
+   * 全量下载完成后是否已把安装程序拉起来（界面据此决定说「正在自动安装」
+   * 还是「包在这，手动运行」）。增量态恒为 false —— 它靠切指针 + 重启生效。
+   */
+  autoRun: boolean;
 }
 
 export interface CurrentVersion {
@@ -245,11 +251,18 @@ export interface ServerCheck {
   mode: 'delta' | 'full' | 'none';
   /** 增量包预计字节数（压缩后），给界面显示「约 3 MB」 */
   deltaBytes: number;
+  /** 这次能不能走增量（列表外的情况：基线没有当前版本 = 只能全量） */
+  deltaAvailable: boolean;
+  /** 全量安装包字节数（0 = 清单里没给全量包） */
+  fullBytes: number;
   /** 需要重装服务端（壳版本不足）时的提示 */
   needsReshell: boolean;
   /** 清单要求的最低壳版本（空串 = 没要求） */
   minShell: string;
 }
+
+/** 安装方式：auto = 能增量就增量；delta / full = 界面按钮指定的那一种 */
+export type InstallMode = 'auto' | 'delta' | 'full';
 
 export interface ClientCheck {
   component: 'client_pc' | 'client_android';
@@ -365,6 +378,7 @@ export class UpdateService {
   private static idleJob(): JobStatus {
     return {
       phase: 'idle',
+      autoRun: false,
       percent: 0,
       loaded: 0,
       total: 0,
@@ -573,6 +587,8 @@ export class UpdateService {
         latest: null,
         mode: 'none',
         deltaBytes: 0,
+        deltaAvailable: false,
+        fullBytes: 0,
         needsReshell: false,
         minShell: '',
       };
@@ -589,6 +605,8 @@ export class UpdateService {
         latest: null,
         mode: 'none',
         deltaBytes: 0,
+        deltaAvailable: false,
+        fullBytes: 0,
         needsReshell: false,
         minShell: String(manifest.minShell || ''),
       };
@@ -625,6 +643,8 @@ export class UpdateService {
       },
       mode: needsReshell ? 'full' : mode,
       deltaBytes: canDelta ? deltaBytes(delta!) : 0,
+      deltaAvailable: canDelta,
+      fullBytes: server.full?.size ?? 0,
       needsReshell,
       minShell: String(manifest.minShell || ''),
     };
@@ -832,7 +852,7 @@ export class UpdateService {
    *
    * 只允许一个任务在跑：并发下载会互相抢带宽，还会抢同一个 staging 目录。
    */
-  async install(opts: { force?: boolean } = {}): Promise<JobStatus> {
+  async install(opts: { force?: boolean; mode?: InstallMode } = {}): Promise<JobStatus> {
     if (this.busy) return this.jobStatus();
     this.busy = true;
     this.abort = new AbortController();
@@ -874,7 +894,7 @@ export class UpdateService {
     this.opts.log?.(msg, extra);
   }
 
-  private async runInstall(opts: { force?: boolean }): Promise<void> {
+  private async runInstall(opts: { force?: boolean; mode?: InstallMode }): Promise<void> {
     const signal = this.abort!.signal;
     try {
       const check = await this.checkServer({ force: opts.force });
@@ -882,8 +902,21 @@ export class UpdateService {
         this.setJob({ phase: 'idle', message: '已是最新版本' });
         return;
       }
+      /**
+       * 用户明确点了哪个按钮就按哪个来（`delta` / `full`）；`auto` 是旧行为：
+       * 能增量就增量，不能就全量。界面上「增量 / 全量」两个按钮就是这个参数。
+       */
+      const want = opts.mode ?? 'auto';
+      if (want === 'delta' && !check.deltaAvailable) {
+        this.fail(
+          new Error('这个版本没有可用的增量包（当前版本不在增量基线里），请用完整安装包'),
+          'manual',
+        );
+        return;
+      }
+      const useDelta = want === 'delta' || (want === 'auto' && check.mode === 'delta');
       const targetId = versionId(check.latest.version);
-      this.setJob({ targetId, mode: check.mode === 'delta' ? 'delta' : 'full' });
+      this.setJob({ targetId, mode: useDelta ? 'delta' : 'full' });
 
       if (check.needsReshell) {
         this.fail(
@@ -901,8 +934,9 @@ export class UpdateService {
        * 全量要落一份完整安装包 + 解压，按 1.2 GB 算。一律按 1.1 GB 卡，会把
        * 快满的 NAS 直接挡在更新之外，而它其实只差几 MB。
        */
-      const need =
-        check.mode === 'delta' ? Math.max(300 * MB, check.deltaBytes * 4 + 100 * MB) : 1200 * MB;
+      const need = useDelta
+        ? Math.max(300 * MB, check.deltaBytes * 4 + 100 * MB)
+        : Math.max(1200 * MB, check.fullBytes * 2 + 200 * MB);
       const free = freeSpace(this.dataDir);
       if (free > 0 && free < need) {
         this.fail(
@@ -912,7 +946,7 @@ export class UpdateService {
         return;
       }
 
-      if (check.mode === 'delta') {
+      if (useDelta) {
         try {
           await this.installDelta(check, targetId, signal);
         } catch (err) {
@@ -936,7 +970,7 @@ export class UpdateService {
           });
           await this.installFull(check, signal);
         }
-      } else if (check.mode === 'full') {
+      } else if (check.fullBytes > 0) {
         await this.installFull(check, signal);
       } else {
         this.fail(new Error('这个版本没有可用的增量包，也没有全量包'), 'manual');
@@ -1102,14 +1136,51 @@ export class UpdateService {
       signal,
       onProgress: (p) => this.onDownloadProgress(p, name, 0, full.br?.size ?? full.size),
     });
-    // 全量走安装器：它自己会关掉旧进程（installer.nsh 的 STOP_RUNNING_APP）
+    // 全量走安装器：它自己会关掉旧进程（installer.nsh 的 STOP_RUNNING_APP），
+    // 装完再把自己拉起来（customInstall 里的 Exec），所以这里下载完就直接跑，
+    // 不留一个「请手动双击」的路径给用户。
+    const launched = this.autoRunInstaller(dest);
     this.setJob({
       phase: 'ready',
       percent: 100,
-      message: '安装包已就绪',
+      message: launched ? '安装包已下载，正在启动安装程序' : '安装包已就绪',
       hint: dest,
+      autoRun: launched,
       mode: 'full',
     });
+  }
+
+  /**
+   * 下载完立刻静默安装。
+   *
+   * 延迟 2 秒再 spawn：安装程序第一步就是杀掉本进程，留一点时间让界面把
+   * 「正在安装」这一帧取走，不然进度条永远停在 99%。
+   *
+   * 三个不跑的情况：测试开关（smoke 用的假安装包）、不是 PE 文件、非 Windows。
+   */
+  private autoRunInstaller(exe: string): boolean {
+    if (process.platform !== 'win32') return false;
+    if (process.env.COLANAS_UPDATE_NO_AUTORUN === '1') return false;
+    try {
+      const fd = fs.openSync(exe, 'r');
+      const head = Buffer.alloc(2);
+      fs.readSync(fd, head, 0, 2, 0);
+      fs.closeSync(fd);
+      if (head.toString('latin1') !== 'MZ') return false;
+    } catch {
+      return false;
+    }
+    const timer = setTimeout(() => {
+      try {
+        const child = spawn(exe, ['/S'], { detached: true, stdio: 'ignore', windowsHide: true });
+        child.on('error', (err) => this.log('installer spawn failed', { err: String(err) }));
+        child.unref();
+      } catch (err) {
+        this.log('installer spawn failed', { err: String(err) });
+      }
+    }, 2000);
+    timer.unref?.();
+    return true;
   }
 
   /**

@@ -49,6 +49,10 @@ const UpdateCheckResponse = Type.Object(
     mode: Type.String(),
     /** 增量包字节数（压缩后），给界面显示「约 3 MB」 */
     deltaBytes: Type.Integer(),
+    /** 这一版能不能走增量（当前版本不在基线里 = 只能全量） */
+    deltaAvailable: Type.Boolean(),
+    /** 全量安装包字节数（0 = 清单里没有全量包） */
+    fullBytes: Type.Integer(),
     /** 需要重装服务端（Electron 大版本变了） */
     needsReshell: Type.Boolean(),
     /** 版本目录是否已拆壳（false = 老安装，只能全量） */
@@ -96,6 +100,8 @@ const JobSchema = Type.Object(
     updatedAt: Type.Integer(),
     targetId: Type.String(),
     mode: Type.String(),
+    /** 全量包是否已交给安装程序自动执行（true 时界面不再让人手动双击） */
+    autoRun: Type.Boolean(),
   },
   { $id: 'SystemUpdateJob' },
 );
@@ -134,7 +140,14 @@ const UpdateConfigBody = Type.Object(
 );
 
 const InstallBody = Type.Object(
-  { force: Type.Optional(Type.Boolean()) },
+  {
+    force: Type.Optional(Type.Boolean()),
+    /**
+     * 装哪种：`auto`（默认，能增量就增量）/ `delta` / `full`。
+     * 界面上「增量更新」「下载并安装完整包」两个按钮分别对应后两个。
+     */
+    mode: Type.Optional(Type.String({ maxLength: 8, pattern: '^(auto|delta|full)$' })),
+  },
   { $id: 'SystemUpdateInstallBody' },
 );
 const OfflineBody = Type.Object({ name: Type.String({ maxLength: 200 }) }, { $id: 'SystemUpdateOfflineBody' });
@@ -313,6 +326,8 @@ export function registerSystemUpdate(app: FastifyInstance, k: KernelApi): void {
         notes: server?.latest?.notes ?? {},
         mode: server?.mode ?? 'none',
         deltaBytes: server?.deltaBytes ?? 0,
+        deltaAvailable: server?.deltaAvailable ?? false,
+        fullBytes: server?.fullBytes ?? 0,
         needsReshell: server?.needsReshell ?? false,
         managed: cur.managed,
         minShell: server?.minShell ?? '',
@@ -379,8 +394,8 @@ export function registerSystemUpdate(app: FastifyInstance, k: KernelApi): void {
           message: '已有更新任务在进行',
         });
       }
-      const body = (req.body || {}) as { force?: boolean };
-      const job = await svc.install({ force: body.force });
+      const body = (req.body || {}) as { force?: boolean; mode?: 'auto' | 'delta' | 'full' };
+      const job = await svc.install({ force: body.force, mode: body.mode });
       return { job: { ...job } };
     },
   );

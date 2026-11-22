@@ -4211,6 +4211,14 @@
     "update.restartingServer": {},
     "update.modeDelta": {"size": {}},
     "update.modeFull": {},
+    "update.deltaInstall": {
+      "size": {}
+    },
+    "update.fullInstall": {
+      "size": {}
+    },
+    "update.deltaAutoRestart": {},
+    "update.fullAutoInstall": {},
     "update.needsReshell": {},
     "update.rollback": {},
     "update.autoCheck": {},

@@ -9723,6 +9723,8 @@ class SystemUpdateCheckResponse {
   final Map<String, dynamic> notes;
   final String mode;
   final int deltaBytes;
+  final bool deltaAvailable;
+  final int fullBytes;
   final bool needsReshell;
   final bool managed;
   final String minShell;
@@ -9744,6 +9746,8 @@ class SystemUpdateCheckResponse {
     required this.notes,
     required this.mode,
     required this.deltaBytes,
+    required this.deltaAvailable,
+    required this.fullBytes,
     required this.needsReshell,
     required this.managed,
     required this.minShell,
@@ -9766,6 +9770,8 @@ class SystemUpdateCheckResponse {
         notes: json['notes'] as Map<String, dynamic>,
         mode: json['mode'] as String,
         deltaBytes: json['deltaBytes'] as int,
+        deltaAvailable: json['deltaAvailable'] as bool,
+        fullBytes: json['fullBytes'] as int,
         needsReshell: json['needsReshell'] as bool,
         managed: json['managed'] as bool,
         minShell: json['minShell'] as String,
@@ -9788,6 +9794,8 @@ class SystemUpdateCheckResponse {
         'notes': notes,
         'mode': mode,
         'deltaBytes': deltaBytes,
+        'deltaAvailable': deltaAvailable,
+        'fullBytes': fullBytes,
         'needsReshell': needsReshell,
         'managed': managed,
         'minShell': minShell,
@@ -9813,6 +9821,7 @@ class SystemUpdateJob {
   final int updatedAt;
   final String targetId;
   final String mode;
+  final bool autoRun;
 
   const SystemUpdateJob({
     required this.phase,
@@ -9829,6 +9838,7 @@ class SystemUpdateJob {
     required this.updatedAt,
     required this.targetId,
     required this.mode,
+    required this.autoRun,
   });
 
   factory SystemUpdateJob.fromJson(Map<String, dynamic> json) => SystemUpdateJob(
@@ -9846,6 +9856,7 @@ class SystemUpdateJob {
         updatedAt: json['updatedAt'] as int,
         targetId: json['targetId'] as String,
         mode: json['mode'] as String,
+        autoRun: json['autoRun'] as bool,
       );
 
   Map<String, dynamic> toJson() => <String, dynamic>{
@@ -9863,6 +9874,7 @@ class SystemUpdateJob {
         'updatedAt': updatedAt,
         'targetId': targetId,
         'mode': mode,
+        'autoRun': autoRun,
       };
 }
 
@@ -9976,17 +9988,21 @@ class SystemUpdateConfigBody {
 
 class SystemUpdateInstallBody {
   final bool? force;
+  final String? mode;
 
   const SystemUpdateInstallBody({
     this.force,
+    this.mode,
   });
 
   factory SystemUpdateInstallBody.fromJson(Map<String, dynamic> json) => SystemUpdateInstallBody(
         force: json['force'] == null ? null : json['force'] as bool,
+        mode: json['mode'] == null ? null : json['mode'] as String,
       );
 
   Map<String, dynamic> toJson() => <String, dynamic>{
         if (force != null) 'force': force!,
+        if (mode != null) 'mode': mode!,
       };
 }
 

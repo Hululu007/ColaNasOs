@@ -3150,6 +3150,10 @@ class I18nKeys {
   static const updateRestartingServer = 'update.restartingServer';
   static const updateModeDelta = 'update.modeDelta';
   static const updateModeFull = 'update.modeFull';
+  static const updateDeltaInstall = 'update.deltaInstall';
+  static const updateFullInstall = 'update.fullInstall';
+  static const updateDeltaAutoRestart = 'update.deltaAutoRestart';
+  static const updateFullAutoInstall = 'update.fullAutoInstall';
   static const updateNeedsReshell = 'update.needsReshell';
   static const updateRollback = 'update.rollback';
   static const updateAutoCheck = 'update.autoCheck';
@@ -3164,4 +3168,4 @@ class I18nKeys {
 }
 
 /// 契约键总数（生成时确定），供完整性自检使用。
-const int i18nKeyCount = 3112;
+const int i18nKeyCount = 3116;

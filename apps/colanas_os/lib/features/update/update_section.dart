@@ -29,6 +29,9 @@ class _UpdateSectionState extends State<UpdateSection> {
   bool _checking = false;
   bool _autoCheck = false;
 
+  /// 增量装完后自动重启只做一次（轮询会在 ready 上反复进来）
+  bool _autoRestarting = false;
+
   /// 服务端拉清单用的通道：`stable` / `pre`。勾了预发布才看得到开发中的版本。
   String _channel = 'stable';
   String? _error;
@@ -87,10 +90,15 @@ class _UpdateSectionState extends State<UpdateSection> {
     }
   }
 
-  Future<void> _startServerUpdate() async {
+  /// `mode`：`delta` / `full` 对应界面上两个按钮；`auto` 是「能增量就增量」。
+  Future<void> _startServerUpdate({String mode = 'auto'}) async {
     try {
+      setState(() {
+        _autoRestarting = false;
+        _error = null;
+      });
       final res = await ApiSession.instance.client.systemUpdateInstall(
-        body: SystemUpdateInstallBody(force: true),
+        body: SystemUpdateInstallBody(force: true, mode: mode),
       );
       if (!mounted) return;
       setState(() => _job = res.job);
@@ -118,12 +126,37 @@ class _UpdateSectionState extends State<UpdateSection> {
             phase != 'assembling' &&
             phase != 'activating') {
           timer.cancel();
-          if (phase == 'ready') await _refreshServer(force: false);
+          if (phase == 'ready') {
+            // 增量：文件已经落到新版本目录，只差重启内核，别让用户再点一下
+            if (res.job.mode == 'delta') {
+              unawaited(_autoRestartServer());
+            }
+            // 全量：服务端下载完会自己拉起安装程序（installer.nsh 装完再启回来），
+            // 这里只需要把「正在安装」的状态显示出来，不要再去打接口
+            await _refreshServer(force: false);
+          }
         }
       } catch (_) {
         timer.cancel();
       }
     });
+  }
+
+  /// 增量装完自动重启：界面不再问「立即重启 / 稍后重启」。
+  ///
+  /// 留 1.2 秒是因为重启请求一发出内核就没了，先把「正在重启」这一帧画出去。
+  Future<void> _autoRestartServer() async {
+    if (_autoRestarting) return;
+    _autoRestarting = true;
+    await Future<void>.delayed(const Duration(milliseconds: 1200));
+    if (!mounted) return;
+    try {
+      await ApiSession.instance.client.systemUpdateRestart();
+    } catch (_) {
+      // 内核先死、请求被截断是正常的，不用报错
+    }
+    if (!mounted) return;
+    NasSnack.show(context, tr('update.restartingServer'));
   }
 
   Future<void> _restartServer() async {
@@ -359,16 +392,22 @@ class _UpdateSectionState extends State<UpdateSection> {
       );
     }
     if (job?.phase == 'ready') {
-      // 全量模式下载的是安装包：重启内核装不上它，只能把路径交给人
+      // 全量：服务端下载完会自己用 `/S` 拉起安装程序（`hint == 'auto'`），
+      // 装完由 installer.nsh 把服务端启回来。这里只把状态说清楚，
+      // 不再给一个「运行它即可」的路径让人自己找。
+      //
+      // `hint != 'auto'` 只出现在跑不了安装程序的兜底（非 Windows / 测试环境），
+      // 这时才需要把路径显示出来。
       if (job?.mode == 'full') {
+        final auto = job?.autoRun == true;
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              tr('update.fullReady'),
+              auto ? tr('update.fullAutoInstall') : tr('update.fullReady'),
               style: TextStyle(fontSize: NasTokens.fontCaption, color: scheme.primary),
             ),
-            if ((job?.hint ?? '').isNotEmpty)
+            if (!auto && (job?.hint ?? '').isNotEmpty)
               SelectableText(
                 job?.hint ?? '',
                 style: TextStyle(
@@ -379,20 +418,22 @@ class _UpdateSectionState extends State<UpdateSection> {
           ],
         );
       }
+      // 增量：已经自动重启了，这里只留一句说明 + 万一自动重启没成功的兜底按钮
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            tr('update.serverReady'),
+            _autoRestarting ? tr('update.deltaAutoRestart') : tr('update.serverReady'),
             style: TextStyle(fontSize: NasTokens.fontCaption, color: scheme.primary),
           ),
-          Row(
-            children: [
-              FilledButton(onPressed: _restartServer, child: Text(tr('update.restartNow'))),
-              const SizedBox(width: NasTokens.spaceSm),
-              TextButton(onPressed: _restartServer, child: Text(tr('update.serverRestart'))),
-            ],
-          ),
+          if (!_autoRestarting)
+            Row(
+              children: [
+                FilledButton(onPressed: _restartServer, child: Text(tr('update.restartNow'))),
+                const SizedBox(width: NasTokens.spaceSm),
+                TextButton(onPressed: _restartServer, child: Text(tr('update.serverRestart'))),
+              ],
+            ),
         ],
       );
     }
@@ -402,9 +443,17 @@ class _UpdateSectionState extends State<UpdateSection> {
         style: TextStyle(fontSize: NasTokens.fontCaption, color: context.nasTextSecondary),
       );
     }
-    final modeText = server.mode == 'delta'
-        ? tr('update.modeDelta', {'size': UpdateService.formatBytes(server.deltaBytes)})
-        : tr('update.modeFull');
+    // 增量能不能用由服务端算（当前版本必须在增量基线里）：
+    //   - 能用 → 「增量更新（1.4 MB）」+「下载并安装完整包（551 MB）」两个按钮；
+    //   - 不能用（跨版本 / 基线对不上 / 需要换外壳）→ 只给全量那一个。
+    final canDelta = server.deltaAvailable && !server.needsReshell;
+    final fullBytes = server.fullBytes;
+    final deltaText = tr('update.deltaInstall', {
+      'size': UpdateService.formatBytes(server.deltaBytes),
+    });
+    final fullText = tr('update.fullInstall', {
+      'size': UpdateService.formatBytes(fullBytes),
+    });
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -413,7 +462,9 @@ class _UpdateSectionState extends State<UpdateSection> {
           style: TextStyle(fontSize: NasTokens.fontCaption, color: scheme.primary),
         ),
         Text(
-          modeText,
+          canDelta
+              ? tr('update.modeDelta', {'size': UpdateService.formatBytes(server.deltaBytes)})
+              : tr('update.modeFull'),
           style: TextStyle(fontSize: NasTokens.fontCaption, color: context.nasTextSecondary),
         ),
         if (server.needsReshell)
@@ -424,9 +475,28 @@ class _UpdateSectionState extends State<UpdateSection> {
         const SizedBox(height: NasTokens.spaceXs),
         Wrap(
           spacing: NasTokens.spaceSm,
+          crossAxisAlignment: WrapCrossAlignment.center,
           children: [
-            if (!server.needsReshell)
-              FilledButton(onPressed: _startServerUpdate, child: Text(tr('update.serverInstall'))),
+            if (canDelta)
+              FilledButton(
+                onPressed: () => _startServerUpdate(mode: 'delta'),
+                child: Text(deltaText),
+              ),
+            if (fullBytes > 0)
+              canDelta
+                  ? TextButton(
+                      onPressed: () => _startServerUpdate(mode: 'full'),
+                      child: Text(fullText),
+                    )
+                  : FilledButton(
+                      onPressed: () => _startServerUpdate(mode: 'full'),
+                      child: Text(fullText),
+                    ),
+            if (!canDelta && fullBytes == 0)
+              Text(
+                tr('update.noAsset'),
+                style: TextStyle(fontSize: NasTokens.fontCaption, color: scheme.error),
+              ),
             TextButton(onPressed: _rollback, child: Text(tr('update.rollback'))),
           ],
         ),
