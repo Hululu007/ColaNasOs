@@ -1,7 +1,7 @@
 name: music_client
 description: ColaNasOs 音乐独立端（通过 path 依赖复用主客户端代码）
 publish_to: 'none'
-version: 1.3.26+46
+version: 1.3.27+47
 
 environment:
   sdk: ^3.13.7
