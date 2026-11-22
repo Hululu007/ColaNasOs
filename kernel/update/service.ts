@@ -739,44 +739,83 @@ export class UpdateService {
     return null;
   }
 
+  /**
+   * 调试目录里的包是否比客户端当前版本新。
+   *
+   * 这个目录是开发期覆盖源，放在那里不会自动消失，必然会有过期的一天。
+   * 过期后如果还报「有更新」，界面就会出现 `v1.3.27 → v1.3.24` 这种倒退的弹窗。
+   *
+   * 判定顺序：有 versionCode 就只比 versionCode（安卓真正拿来做覆盖安装的闸门）；
+   * 否则比 semver；两者都没有（手丢的 APK、没写 `.json`）保持调试语义 —— 恒为「新」。
+   */
+  private localApkIsNewer(
+    cand: { name: string; meta: { semver?: string; versionCode?: number } },
+    currentSemver: string,
+    currentVersionCode: number,
+  ): boolean {
+    const vc = Number(cand.meta.versionCode) || 0;
+    if (vc > 0 && currentVersionCode > 0) return vc > currentVersionCode;
+    const sv = String(cand.meta.semver || /(\d+\.\d+\.\d+)/.exec(cand.name)?.[1] || '').trim();
+    if (/^\d+\.\d+\.\d+$/.test(sv) && /^\d+\.\d+\.\d+$/.test(currentSemver)) {
+      return compareSemver(sv, currentSemver) > 0;
+    }
+    return true;
+  }
+
   private localClientCheck(
     component: 'client_pc' | 'client_android',
-    opts: { lanBase?: string },
+    opts: { lanBase?: string; currentSemver?: string; currentVersionCode?: number },
   ): ClientCheck | null {
     // 本地调试包只有安卓需要：PC 的安装包不是 APK
     if (component !== 'client_android') return null;
     const phone = this.localApkCandidate();
     const tv = this.localTvApkCandidate();
     // 两个目录各自可以独立投放；只有一个时也照常下发（客户端按 kind 取）
-    const main = phone ?? tv;
-    if (!main) return null;
+    if (!phone && !tv) return null;
     const base = (opts.lanBase || '').replace(/\/+$/, '');
     if (!base) return null;
+
+    const currentSemver = String(opts.currentSemver || '').trim();
+    const currentVersionCode = Number(opts.currentVersionCode) || 0;
+    /** 手机包和 TV 包一起下发：TV 客户端按 kTvBuild 只认 apk_tv，手机只认 apk */
+    const fresh: Array<{
+      cand: NonNullable<ReturnType<UpdateService['apkCandidateIn']>>;
+      kind: ClientAssetKind;
+    }> = [];
+    for (const item of [
+      { cand: phone, kind: 'apk' as ClientAssetKind },
+      { cand: tv, kind: 'apk_tv' as ClientAssetKind },
+    ]) {
+      if (!item.cand) continue;
+      if (!this.localApkIsNewer(item.cand, currentSemver, currentVersionCode)) {
+        this.log('local apk not newer than client, skipped', {
+          name: item.cand.name,
+          currentSemver,
+          currentVersionCode,
+        });
+        continue;
+      }
+      fresh.push({ cand: item.cand, kind: item.kind });
+    }
+    // 目录里有包但都不比客户端新：明确回「没有更新」，再往下走清单源只会白等
+    if (!fresh.length) return { component, hasUpdate: false, latest: null, assets: [] };
+
+    const main = fresh[0].cand;
     const fromName = /(\d+\.\d+\.\d+)/.exec(main.name)?.[1] ?? '';
     const semver = String(main.meta.semver || fromName || 'local').trim() || 'local';
     const versionCode = Number(main.meta.versionCode) || 0;
     const notes = String(main.meta.notes || '').trim() || `本地调试包：${main.name}`;
-    const assets: ClientCheck['assets'] = [];
-    /** 手机包和 TV 包一起下发：TV 客户端按 kTvBuild 只认 apk_tv，手机只认 apk */
-    const add = (
-      cand: ReturnType<UpdateService['apkCandidateIn']>,
-      kind: ClientAssetKind,
-    ): void => {
-      if (!cand) return;
-      assets.push({
-        kind,
-        size: cand.size,
-        sha256: cand.sha256,
-        urls: [
-          `${base}/api/v1/system/update/local-apk/${cand.sha256}/${encodeURIComponent(cand.name)}`,
-        ],
-      });
-    };
-    add(phone, 'apk');
-    add(tv, 'apk_tv');
+    const assets: ClientCheck['assets'] = fresh.map(({ cand, kind }) => ({
+      kind,
+      size: cand.size,
+      sha256: cand.sha256,
+      urls: [
+        `${base}/api/v1/system/update/local-apk/${cand.sha256}/${encodeURIComponent(cand.name)}`,
+      ],
+    }));
     return {
       component,
-      hasUpdate: assets.length > 0,
+      hasUpdate: true,
       latest: { semver, version: 0, versionCode, notes: { zh: notes, en: notes } },
       assets,
     };
