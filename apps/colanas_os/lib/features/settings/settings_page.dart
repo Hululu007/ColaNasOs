@@ -26,13 +26,17 @@ import '../../shell/mobile_frame.dart';
 import '../../shell/app_nav_shell.dart';
 import '../../shell/desktop_tray.dart';
 
-/// 设置（配置中心）：左侧二级导航分五组 —— 服务器（服务器配置 + 服务与账号）、
-/// 外观（外观 + 语言）、日志（服务端日志）、其他（性能 + 索引维护）、
-/// 关于（版本号 + 项目主页 + 检查更新）。
+/// 设置（配置中心）：左侧二级导航分组 —— 服务器（服务器配置 + AI 服务）、
+/// 账号（服务与账号 + 当前登录账号 + 退出登录）、外观（外观 + 语言）、
+/// 日志（服务端日志）、其他（性能 + 索引维护）、关于（版本号 + 项目主页 + 检查更新）。
 ///
 /// 媒体库管理已移到各模块（相册来源 / 影视库管理 / 音乐库管理 / 书房），
 /// 设置页不再放「媒体库」栏目。
-/// 服务器相关区块需要 `system:read` / `system:write`，无权限时显示明确提示。
+///
+/// 权限口径（用户 2026-11-22 定）：
+///   * **每个登录账号都能进设置**（改语言、看版本、退出、检查更新不需要系统权限）；
+///   * 只有「服务器」与「日志」两个分组要 `system:read` —— 那才是服务端页面；
+///   * 「账号 / 外观 / 其他 / 关于」四个分组人人可见。
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
 
@@ -74,14 +78,34 @@ class _SettingsPageState extends State<SettingsPage> {
 
   bool _restarting = false;
 
-  /// 二级导航当前分组：server / appearance / logs / other / about
+  /// 二级导航当前分组：server / account / appearance / logs / other / about
   String _tab = _initialTab();
 
-  static const _tabs = {'server', 'appearance', 'logs', 'other', 'about'};
+  static const _tabs = {'server', 'account', 'appearance', 'logs', 'other', 'about'};
+
+  /// 能不能看「服务端」相关分组（服务器配置 / 日志）。
+  ///
+  /// 与内核 `secured('system:read')` 同口径：管理员等同全权。其余账号只有
+  /// 「账号 / 外观 / 其他 / 关于」——设置本身对所有人开放。
+  static bool get _canSystem {
+    final s = ApiSession.instance;
+    return s.isAdmin || s.scopes.contains('system:read');
+  }
+
+  /// 能不能做服务端运维动作（清缓存 / 整理库 / 重启）。
+  static bool get _canSystemWrite {
+    final s = ApiSession.instance;
+    return s.isAdmin || s.scopes.contains('system:write');
+  }
 
   static String _initialTab() {
     final saved = SettingsStore.instance.getString('ui.settings.tab');
-    return saved != null && _tabs.contains(saved) ? saved : 'server';
+    if (saved == null || !_tabs.contains(saved)) {
+      return _canSystem ? 'server' : 'account';
+    }
+    // 上次停在服务端分组、但这次登录的账号没有系统权限：回落到账号分组
+    if (!_canSystem && (saved == 'server' || saved == 'logs')) return 'account';
+    return saved;
   }
 
   /// 二级导航收起状态（沿用各模块一致的持久化键）
@@ -104,8 +128,9 @@ class _SettingsPageState extends State<SettingsPage> {
   @override
   void initState() {
     super.initState();
-    _loadServer();
-    _loadCache();
+    // 没有系统权限的账号根本看不到服务端分组：别去请求，免得白拿一条 403
+    if (_canSystem) _loadServer();
+    if (_canSystem) _loadCache();
     if (_tab == 'logs') _loadLogs();
   }
 
@@ -1034,6 +1059,75 @@ class _SettingsPageState extends State<SettingsPage> {
     ]);
   }
 
+  /// 账号分组：当前登录账号 + 服务与账号（服务端地址）+ 退出登录。
+  ///
+  /// 退出登录原来挂在「关于」最下面，跟版本号混在一起；它是账号动作，
+  /// 挪到这里才对得上（用户 2026-11-22 要求）。
+  Widget _accountTab() {
+    final s = ApiSession.instance;
+    final scheme = Theme.of(context).colorScheme;
+    final name = (s.username ?? '').trim();
+    final initial = name.isEmpty ? '?' : name.substring(0, 1).toUpperCase();
+    return Column(
+      children: [
+        _section(tr('settings.account.title'), [
+          Row(
+            children: [
+              CircleAvatar(
+                radius: 22,
+                backgroundColor: scheme.primary.withValues(alpha: 0.16),
+                child: Text(
+                  initial,
+                  style: TextStyle(
+                    fontWeight: FontWeight.w700,
+                    color: scheme.primary,
+                  ),
+                ),
+              ),
+              const SizedBox(width: NasTokens.spaceSm),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      name.isEmpty ? tr('settings.notLoggedIn') : name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: NasTokens.fontBody,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    Text(
+                      s.isAdmin
+                          ? tr('settings.account.roleAdmin')
+                          : tr('settings.account.roleLimited'),
+                      style: TextStyle(
+                        fontSize: NasTokens.fontCaption,
+                        color: context.nasTextSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: NasTokens.spaceMd),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton.icon(
+              onPressed: () => ApiSession.instance.logout(),
+              icon: const Icon(Icons.logout, size: 18),
+              label: Text(tr('ui.settings.016')),
+            ),
+          ),
+        ]),
+        _connection(),
+        const SizedBox(height: NasTokens.spaceLg),
+      ],
+    );
+  }
+
   Widget _connection() {
     return _section(tr('ui.settings.he700d5'), [
       Row(
@@ -1064,28 +1158,39 @@ class _SettingsPageState extends State<SettingsPage> {
     ]);
   }
 
-  Widget _maintenance() {
-    return _section(tr('ui.settings.h59156f'), [
-      InkWell(
-        borderRadius: BorderRadius.circular(NasTokens.radiusSm),
-        onTap: () => Navigator.of(context)
-            .push(MaterialPageRoute<void>(builder: (_) => const HelpPage())),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: NasTokens.spaceSm),
-          child: Row(
-            children: [
-              const Icon(Icons.help_outline, size: 20),
-              const SizedBox(width: NasTokens.spaceSm),
-              Expanded(child: Text(tr('help.title'))),
-              Icon(
-                Icons.chevron_right,
-                size: 18,
-                color: context.nasTextSecondary,
-              ),
-            ],
-          ),
+  /// 「帮助」入口：任何账号都能看（帮助页是纯客户端内容）。
+  Widget _helpRow() {
+    return InkWell(
+      borderRadius: BorderRadius.circular(NasTokens.radiusSm),
+      onTap: () => Navigator.of(
+        context,
+      ).push(MaterialPageRoute<void>(builder: (_) => const HelpPage())),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: NasTokens.spaceSm),
+        child: Row(
+          children: [
+            const Icon(Icons.help_outline, size: 20),
+            const SizedBox(width: NasTokens.spaceSm),
+            Expanded(child: Text(tr('help.title'))),
+            Icon(
+              Icons.chevron_right,
+              size: 18,
+              color: context.nasTextSecondary,
+            ),
+          ],
         ),
       ),
+    );
+  }
+
+  Widget _maintenance() {
+    // 缓存清理 / 数据库整理 / 重启都要 `system:write`：没有权限的账号只留帮助，
+    // 免得点一下弹一条 403。
+    if (!_canSystemWrite) {
+      return _section(tr('ui.settings.h59156f'), [_helpRow()]);
+    }
+    return _section(tr('ui.settings.h59156f'), [
+      _helpRow(),
       const Divider(height: 1),
       Row(
         children: [
@@ -1540,12 +1645,6 @@ class _SettingsPageState extends State<SettingsPage> {
           color: context.nasTextSecondary,
         ),
       ),
-      const SizedBox(height: NasTokens.spaceSm),
-      OutlinedButton.icon(
-        onPressed: () => ApiSession.instance.logout(),
-        icon: const Icon(Icons.logout),
-        label: Text(tr('ui.settings.016')),
-      ),
       const SizedBox(height: NasTokens.spaceMd),
       Text(
         tr('update.sectionTitle'),
@@ -1598,8 +1697,13 @@ class _SettingsPageState extends State<SettingsPage> {
     }
     if (_tab == 'appearance') return;
     if (_tab == 'about') return;
+    if (_tab == 'account') {
+      // 账号分组只读会话快照；顺手刷新一次授权（改了权限不用重登就能看到）
+      unawaited(ApiSession.instance.refreshAccess());
+      return;
+    }
     if (_tab == 'other') {
-      _loadCache();
+      if (_canSystem) _loadCache();
       return;
     }
     _loadServer();
@@ -1608,6 +1712,8 @@ class _SettingsPageState extends State<SettingsPage> {
   /// 当前分组的内容（二级导航只换这里，不重建整页）
   List<Widget> _tabChildren() {
     switch (_tab) {
+      case 'account':
+        return [_accountTab()];
       case 'appearance':
         return [
           _appearance(),
@@ -1625,10 +1731,10 @@ class _SettingsPageState extends State<SettingsPage> {
           const SizedBox(height: NasTokens.spaceLg),
         ];
       default:
+        // 「服务与账号」已经搬到账号分组；服务端分组只留服务器配置与 AI 服务
         return [
           _serverSection(),
           _llmSection(),
-          _connection(),
           const SizedBox(height: NasTokens.spaceLg),
         ];
     }
@@ -1640,22 +1746,30 @@ class _SettingsPageState extends State<SettingsPage> {
       padding: const EdgeInsets.symmetric(vertical: NasTokens.spaceSm),
       children: _tabChildren(),
     );
+    // 服务端 / 日志要 system:read；其余分组每个账号都有
     final tabs = <NasTabItem>[
+      if (_canSystem)
+        NasTabItem(
+          id: 'server',
+          label: tr('settings.nav.server'),
+          icon: Icons.dns_outlined,
+        ),
       NasTabItem(
-        id: 'server',
-        label: tr('settings.nav.server'),
-        icon: Icons.dns_outlined,
+        id: 'account',
+        label: tr('settings.nav.account'),
+        icon: Icons.person_outline,
       ),
       NasTabItem(
         id: 'appearance',
         label: tr('settings.nav.appearance'),
         icon: Icons.palette_outlined,
       ),
-      NasTabItem(
-        id: 'logs',
-        label: tr('settings.nav.logs'),
-        icon: Icons.receipt_long_outlined,
-      ),
+      if (_canSystem)
+        NasTabItem(
+          id: 'logs',
+          label: tr('settings.nav.logs'),
+          icon: Icons.receipt_long_outlined,
+        ),
       NasTabItem(
         id: 'other',
         label: tr('settings.nav.other'),
@@ -1704,21 +1818,28 @@ class _SettingsPageState extends State<SettingsPage> {
             groups: [
               NasNavGroup(
                 entries: [
+                  if (_canSystem)
+                    NasNavEntry(
+                      id: 'server',
+                      label: tr('settings.nav.server'),
+                      icon: Icons.dns_outlined,
+                    ),
                   NasNavEntry(
-                    id: 'server',
-                    label: tr('settings.nav.server'),
-                    icon: Icons.dns_outlined,
+                    id: 'account',
+                    label: tr('settings.nav.account'),
+                    icon: Icons.person_outline,
                   ),
                   NasNavEntry(
                     id: 'appearance',
                     label: tr('settings.nav.appearance'),
                     icon: Icons.palette_outlined,
                   ),
-                  NasNavEntry(
-                    id: 'logs',
-                    label: tr('settings.nav.logs'),
-                    icon: Icons.receipt_long_outlined,
-                  ),
+                  if (_canSystem)
+                    NasNavEntry(
+                      id: 'logs',
+                      label: tr('settings.nav.logs'),
+                      icon: Icons.receipt_long_outlined,
+                    ),
                   NasNavEntry(
                     id: 'other',
                     label: tr('settings.nav.other'),

@@ -1842,6 +1842,10 @@ class I18nKeys {
   static const settingsLogsLevelWarn = 'settings.logsLevelWarn';
   static const settingsLogsTruncated = 'settings.logsTruncated';
   static const settingsMediaSection = 'settings.mediaSection';
+  static const settingsNavAccount = 'settings.nav.account';
+  static const settingsAccountTitle = 'settings.account.title';
+  static const settingsAccountRoleAdmin = 'settings.account.roleAdmin';
+  static const settingsAccountRoleLimited = 'settings.account.roleLimited';
   static const settingsNavAbout = 'settings.nav.about';
   static const settingsNavAppearance = 'settings.nav.appearance';
   static const settingsNavLogs = 'settings.nav.logs';
@@ -3178,4 +3182,4 @@ class I18nKeys {
 }
 
 /// 契约键总数（生成时确定），供完整性自检使用。
-const int i18nKeyCount = 3126;
+const int i18nKeyCount = 3130;

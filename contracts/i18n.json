@@ -2479,6 +2479,10 @@
       "lines": {}
     },
     "settings.mediaSection": {},
+    "settings.nav.account": {},
+    "settings.account.title": {},
+    "settings.account.roleAdmin": {},
+    "settings.account.roleLimited": {},
     "settings.nav.about": {},
     "settings.nav.appearance": {},
     "settings.nav.logs": {},

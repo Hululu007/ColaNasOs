@@ -46,6 +46,10 @@ List<AppDescriptor> visibleAppsOnThisClient(Iterable<AppDescriptor> apps) =>
     apps.where(appVisibleOnThisClient).toList(growable: false);
 
 /// 应用 id → 权限域：没配应用白名单时，按账号 scopes 兜底推导可见应用。
+///
+/// `settings` 刻意不在这张表里：**每个登录账号都必须能进设置**（改语言、看版本、
+/// 退出登录、检查更新这些都不该要系统权限）。设置内部的「服务端 / 日志」分组
+/// 才按 `system:read` 判定，见 `SettingsPage`。
 const Map<String, String> kAppScopeDomain = <String, String>{
   'photo': 'photo',
   'files': 'files',
@@ -60,7 +64,6 @@ const Map<String, String> kAppScopeDomain = <String, String>{
   'transmission': 'pt',
   'accounts': 'user',
   'terminal': 'system',
-  'settings': 'system',
 };
 
 /// 「这个 App 对当前登录用户可不可见」。
