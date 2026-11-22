@@ -52,6 +52,9 @@ class TvPlayerButton extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final enabled = onTap != null;
     final color = enabled ? Colors.white : Colors.white38;
+    // 内边距 / 图标 / 字号全部按 size 换算：只缩放宽度、内距写死的话，
+    // 窄屏（scale < 0.7 的电视）上按钮会比宽度还高，看着是个竖着的长方形。
+    final padding = size * 0.07;
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: onTap,
@@ -60,8 +63,10 @@ class TvPlayerButton extends StatelessWidget {
         duration: const Duration(milliseconds: 140),
         curve: Curves.easeOutCubic,
         child: Container(
+          // 宽高相等 = 正方形；高度不再由内容撑开
           width: size,
-          padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 6),
+          height: size,
+          padding: EdgeInsets.symmetric(horizontal: padding, vertical: padding),
           decoration: BoxDecoration(
             color: highlighted
                 ? scheme.primary.withValues(alpha: 0.22)
@@ -83,16 +88,17 @@ class TvPlayerButton extends StatelessWidget {
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(icon, size: size * 0.32, color: color),
-              const SizedBox(height: 6),
+              Icon(icon, size: size * 0.34, color: color),
+              SizedBox(height: size * 0.05),
               Text(
                 label,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   color: color,
-                  fontSize: 13,
+                  fontSize: (size * 0.15).clamp(10.0, 16.0),
                   fontWeight: FontWeight.w600,
                 ),
               ),
@@ -131,8 +137,10 @@ class TvPlayerProgress extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final m = TvLayout.of(context);
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+      // 内距跟着版面缩放：大屏不显得挤、小屏也不白占高度
+      padding: EdgeInsets.symmetric(horizontal: m.px(18), vertical: m.px(10)),
       decoration: BoxDecoration(
         color: Colors.white.withValues(alpha: 0.06),
         borderRadius: BorderRadius.circular(14),

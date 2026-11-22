@@ -5831,7 +5831,9 @@ class _PlayerPageState extends State<PlayerPage> {
       right: 0,
       bottom: 0,
       child: Container(
-        padding: EdgeInsets.fromLTRB(m.px(24), m.px(40), m.px(24), m.px(20)),
+        // 上边距收一点、进度条与按钮之间也收紧：整块变矮后进度条自然落到更低的位置，
+        // 四种屏宽（1280/1920/2560/3840）都是同一套比例，不会一边贴死一边留白。
+        padding: EdgeInsets.fromLTRB(m.px(24), m.px(26), m.px(24), m.px(16)),
         decoration: const BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.bottomCenter,
@@ -5845,17 +5847,17 @@ class _PlayerPageState extends State<PlayerPage> {
             mainAxisSize: MainAxisSize.min,
             children: [
               _tvProgress(),
-              SizedBox(height: m.px(14)),
+              SizedBox(height: m.px(8)),
               TvPlayerBar(
                 focusedIndex: _tvRow == 1 ? _tvIndex : -1,
-                itemWidth: m.px(96),
-                gap: m.px(12),
+                itemWidth: m.px(88),
+                gap: m.px(10),
                 buttons: [
                   for (var i = 0; i < actions.length; i += 1)
                     TvPlayerButton(
                       icon: actions[i].icon,
                       label: actions[i].label,
-                      size: m.px(96),
+                      size: m.px(88),
                       highlighted: _tvRow == 1 && _tvIndex == i,
                       onTap: () {
                         setState(() {
