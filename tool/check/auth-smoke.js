@@ -88,6 +88,15 @@ process.chdir(root);
   const login = r.json();
   check('login_ok', r.statusCode === 200 && login.token && login.scopes.includes('files:read'), 'status=' + r.statusCode);
 
+  // 会话的基础能力（events:read / tasks:read）不在账号 scope 里：登录时注入进 JWT，
+  // 请求时按库里账号覆盖 scopes 还得再并一次，否则 alice 这种受限账号一拉事件流就 403。
+  r = await app.inject({
+    method: 'GET',
+    url: '/api/v1/events/recent?since=0&limit=1',
+    headers: { authorization: 'Bearer ' + login.token },
+  });
+  check('session_base_scope_events', r.statusCode === 200, 'status=' + r.statusCode);
+
   r = await app.inject({ method: 'POST', url: '/api/v1/auth/login', payload: { username: 'alice', password: 'wrong' } });
   check('login_bad_password', r.statusCode === 401, 'status=' + r.statusCode);
 
@@ -189,6 +198,16 @@ process.chdir(root);
   });
   check('disabled_login_401', r.statusCode === 200 && afterDisable.statusCode === 401, 'login=' + afterDisable.statusCode);
 
+  // 后面的应用白名单 / 路径 ACL 用例还要用这个账号。实时授权层会按库里的
+  // disabled 标志直接 403（account disabled），所以禁用验证完必须放回来。
+  r = await app.inject({
+    method: 'POST',
+    url: '/api/v1/accounts/users/disable',
+    headers: admin,
+    payload: { id: alice.id, disabled: false },
+  });
+  check('disabled_reenable_200', r.statusCode === 200, 'status=' + r.statusCode);
+
   // ---- IP 规则 API ----
   r = await app.inject({
     method: 'POST',
@@ -219,6 +238,20 @@ process.chdir(root);
   check('ip_api_remove', r.statusCode === 200 && afterRemove.json().items.length === 0, 'items=' + afterRemove.json().items.length);
 
   // ---- 子账号双层授权：应用白名单 + 路径 ACL ----
+  // JWT 里的 scopes 会被库里的账号实时覆盖（见 kernel/index.ts），所以先把
+  // 账号权限补上；否则 dev-token 里多带的 photo:read 会被裁掉，photo 用例必 403。
+  r = await app.inject({
+    method: 'POST',
+    url: '/api/v1/accounts/users/update',
+    headers: admin,
+    payload: { id: alice.id, scopes: ['files:read', 'files:write', 'photo:read'] },
+  });
+  check(
+    'user_scopes_update',
+    r.statusCode === 200 && (r.json().scopes || []).includes('photo:read'),
+    'status=' + r.statusCode,
+  );
+
   const dev2 = await app.inject({
     method: 'POST',
     url: '/api/v1/auth/dev-token',

@@ -221,6 +221,45 @@ const alive = (pid) => {
     JSON.stringify(r.json()),
   );
 
+  // 受限账号（电视账号这类只有业务域 scope 的）必须能查**客户端**更新：
+  // 这条路由以前整体挂 system:read，电视上「检查更新」永远 403，界面显示
+  // 「检查失败，点此重试」，看起来像网络问题。服务端更新信息仍要 system:read。
+  //
+  // 用真实账号走一遍（建号 → 密码登录 → 请求），因为「请求时按库里 scopes 覆盖
+  // JWT」这一层只有真账号才会触发，dev-token 走不到。
+  const rootTok = await app.inject({
+    method: 'POST',
+    url: '/api/v1/auth/dev-token',
+    payload: { sub: 'root-smoke', scopes: ['*'] },
+  });
+  const rootBearer = { authorization: 'Bearer ' + (rootTok.json().token || '') };
+  r = await app.inject({
+    method: 'POST',
+    url: '/api/v1/accounts/users/create',
+    headers: rootBearer,
+    payload: { username: 'tvsmoke', password: 'tv-pass-123', scopes: ['video:read'] },
+  });
+  const tvLoing = await app.inject({
+    method: 'POST',
+    url: '/api/v1/auth/login',
+    payload: { username: 'tvsmoke', password: 'tv-pass-123' },
+  });
+  const tvBearer = { authorization: 'Bearer ' + (tvLoing.json().token || '') };
+  r = await app.inject({
+    method: 'GET',
+    url: '/api/v1/system/update/check?component=client_android&current=1.0.0&currentCode=1',
+    headers: tvBearer,
+  });
+  check(
+    'update_check_client_limited_account',
+    // 403 是本次要防的回归；清单源可达时还必须带回 client 资产块，否则客户端
+    // 拿不到「有没有新版本」。离线环境（error 非空）只断言不掉权限。
+    r.statusCode === 200 && (r.json().error !== '' || typeof r.json().client === 'object'),
+    'status=' + r.statusCode + ' ' + JSON.stringify(r.json()).slice(0, 300),
+  );
+  r = await app.inject({ method: 'GET', url: '/api/v1/system/update/check', headers: tvBearer });
+  check('update_check_server_needs_scope', r.statusCode === 403, 'status=' + r.statusCode);
+
   // HTTPS 证书（用户上传方案）：空态 / 非法 PEM 400 / 删除
   r = await app.inject({ method: 'GET', url: '/api/v1/system/tls', headers: bearer });
   check(

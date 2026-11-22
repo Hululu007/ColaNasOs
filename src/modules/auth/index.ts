@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { Type } from '@sinclair/typebox';
 import { sql } from 'kysely';
 import { secured } from '../../../kernel/route';
+import { SESSION_BASE_SCOPES } from '../../../kernel/auth';
 import { isSealed, openSecret, sealSecret } from '../../../kernel/secret-box';
 import { isFullAccess, readPolicy, writePolicy, type AccessPolicy } from '../../../kernel/access-policy';
 import type { ServerModule } from '../../../kernel/types';
@@ -623,15 +624,13 @@ export const accounts: ServerModule = {
     /**
      * 会话 token：密码登录与设备授权共用。
      *
-     * 两个「所有登录用户的基础能力」单独注入而不改响应里的 `scopes`：
-     * - `events:read`：事件流只含「哪个域有扫描完成」的摘要，具体资源仍按 scope / owner 过滤；
-     * - `tasks:read`：扫描 / 索引 / 刮削都改成入队了，界面必须能轮询 `/tasks/{id}` 拿进度。
+     * 基础能力（`SESSION_BASE_SCOPES`：events:read / tasks:read）单独注入，
+     * 不改响应里的 `scopes`；请求时的账号实时授权也会再并一次，见 kernel/index.ts。
      */
     const issueSessionToken = (userId: string, rawScopes: string[]): string => {
-      const baseScopes = ['events:read', 'tasks:read'];
       const tokenScopes = rawScopes.includes('*')
         ? rawScopes
-        : [...new Set([...rawScopes, ...baseScopes])];
+        : [...new Set([...rawScopes, ...SESSION_BASE_SCOPES])];
       return k.auth.sign({ sub: userId, scopes: tokenScopes }, 30 * 24 * 3600);
     };
 

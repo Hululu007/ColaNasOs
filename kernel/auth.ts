@@ -61,6 +61,19 @@ export function verifyToken(token: string, secret: string): TokenPayload | null 
   }
 }
 
+/**
+ * 所有会话令牌都会带上的「基础能力」。
+ *
+ * 这两项不属于任何业务域，但每一个登录端都要用：
+ * - `events:read`：事件流只含「哪个域有扫描完成」的摘要，具体资源仍按 scope / owner 过滤；
+ * - `tasks:read`：扫描 / 索引 / 刮削都改成入队了，界面必须能轮询 `/tasks/{id}` 拿进度。
+ *
+ * 登录签发时注入一份，**请求时的账号实时授权也要再并一次** —— 否则库里那份
+ * scopes（例如只给视频 / 音乐的电视账号）会把这个基础能力覆盖掉，
+ * 表现成「受限账号一登录就 403 事件流」。
+ */
+export const SESSION_BASE_SCOPES = ['events:read', 'tasks:read'] as const;
+
 export function hasScope(payload: TokenPayload, scope: string): boolean {
   if (payload.scopes.includes('*')) return true;
   if (payload.scopes.includes(scope)) return true;

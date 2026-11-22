@@ -4,6 +4,7 @@ import { Type } from '@sinclair/typebox';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { sql } from 'kysely';
 import { secured } from '../../../kernel/route';
+import { hasScope } from '../../../kernel/auth';
 import type { KernelApi } from '../../../kernel/types';
 import { Err } from '../../../kernel/errors';
 import { resolvePackageVersion, versionId } from '../../../kernel/updater';
@@ -235,10 +236,17 @@ export function registerSystemUpdate(app: FastifyInstance, k: KernelApi): void {
    *
    * `component` 省略 = 只查服务端；带 `client_pc` / `client_android` 时附带该组件的
    * 资产列表（客户端登录后就走这个接口，不需要知道 GitCode 地址）。
+   *
+   * 权限分两层（不用 `secured('system:read')` 一刀切）：
+   * - **客户端自查**（`client_pc` / `client_android`）是每个登录端的基础能力：
+   *   受限账号（例如只给视频 / 音乐的电视账号）没有 `system:read`，但它照样要能升级
+   *   自己的 APK。要求 `system:read` 的结果是电视上「检查更新」永远 403 → 界面
+   *   显示「检查失败，点此重试」，看起来像网络问题。
+   * - **服务端更新信息**（`component` 缺省 / `server`）属于系统域，仍要 `system:read`。
    */
   app.get(
     '/api/v1/system/update/check',
-    secured('system:read', {
+    secured('', {
       schema: {
         operationId: 'systemUpdateCheck',
         tags: TAG,
@@ -257,43 +265,77 @@ export function registerSystemUpdate(app: FastifyInstance, k: KernelApi): void {
     async (req, reply) => {
       const q = (req.query || {}) as { component?: string; current?: string; currentCode?: number; force?: string };
       const svc = serviceFor(k);
-      const force = q.force === '1';
-      try {
-        const server = await svc.checkServer({ force });
-        const appVersion = resolvePackageVersion();
-        const currentSemver = server.current.semver || appVersion.semver;
+      const isClient = q.component === 'client_pc' || q.component === 'client_android';
+      const canSeeSystem = req.user ? hasScope(req.user, 'system:read') : false;
+      if (!isClient && !canSeeSystem) {
+        return reply.code(403).send({ error: Err.forbidden, message: '需要 system:read', required: 'system:read' });
+      }
+      // 受限账号不许强刷清单源（`force=1` 会主动打 GitCode），只用 6 小时缓存
+      const force = canSeeSystem && q.force === '1';
+      /**
+       * 本地调试包优先：安卓 + 调试目录里有 APK 时，连清单源都不碰。
+       * 否则离线 NAS 会先在 GitCode / GitHub 上等满超时，用户看到的是「检查半天」。
+       */
+      const useLocalApk = q.component === 'client_android' && svc.hasLocalApk();
+      /**
+       * 检查失败**不是**接口错误：内网 NAS 常年离线，清单源也可能临时不可达。
+       * 这里返回 200 + `error` 字段，让界面显示「检查失败，可稍后重试」，
+       * 而不是把一个登录后的红点检查变成一条报错日志。
+       *
+       * 客户端检查（安卓）不能因为服务端清单拉不到就整个失败：本地调试包
+       * 目录里有 APK 时，客户端更新完全不依赖清单源，必须继续往下走。
+       *
+       * 只有拿到 `system:read` 的账号才查服务端：受限账号的这次请求只为客户端
+       * 自查，既不该让它等清单源超时，也不该把服务端版本号透露出去。
+       */
+      let server: Awaited<ReturnType<UpdateService['checkServer']>> | null = null;
+      let failure = '';
+      if (canSeeSystem && !useLocalApk) {
+        try {
+          server = await svc.checkServer({ force });
+        } catch (err) {
+          failure = String((err as Error).message || err);
+          app.log.info({ err: failure }, 'update check unavailable');
+        }
+      }
+      const cur = server?.current ?? svc.current();
 
-        const payload: Record<string, unknown> = {
-          currentId: server.current.id,
-          currentVersion: server.current.version,
-          latestId: server.latest ? versionId(server.latest.version) : null,
-          latestVersion: server.latest?.version ?? null,
-          hasUpdate: server.hasUpdate,
-          versions: countVersions(k.paths.dataDir),
-          currentSemver,
-          latestSemver: server.latest?.semver ?? '',
-          releasedAt: server.latest?.releasedAt ?? '',
-          notes: server.latest?.notes ?? {},
-          mode: server.mode,
-          deltaBytes: server.deltaBytes,
-          needsReshell: server.needsReshell,
-          managed: server.current.managed,
-          minShell: server.minShell,
-          cached: !force,
-          checkedAt: Date.now(),
-          error: '',
-        };
+      const payload: Record<string, unknown> = {
+        currentId: cur.id,
+        currentVersion: cur.version,
+        latestId: server?.latest ? versionId(server.latest.version) : null,
+        latestVersion: server?.latest?.version ?? null,
+        hasUpdate: server?.hasUpdate ?? false,
+        versions: countVersions(k.paths.dataDir),
+        currentSemver: cur.semver || resolvePackageVersion().semver,
+        latestSemver: server?.latest?.semver ?? '',
+        releasedAt: server?.latest?.releasedAt ?? '',
+        notes: server?.latest?.notes ?? {},
+        mode: server?.mode ?? 'none',
+        deltaBytes: server?.deltaBytes ?? 0,
+        needsReshell: server?.needsReshell ?? false,
+        managed: cur.managed,
+        minShell: server?.minShell ?? '',
+        cached: server ? !force : false,
+        checkedAt: Date.now(),
+        error: failure,
+      };
 
-        if (q.component === 'client_pc' || q.component === 'client_android') {
-          const client = await svc.checkClient(q.component, {
+      if (isClient) {
+        try {
+          const component = q.component as 'client_pc' | 'client_android';
+          const client = await svc.checkClient(component, {
             currentSemver: q.current,
             currentVersionCode: q.currentCode,
             lanBase: lanBase(req),
             force,
           });
-          // 顺手把安装包缓存到本机：下次客户端来要时，局域网地址就是第一条
+          // 顺手把安装包缓存到本机：下次客户端来要时，局域网地址就是第一条。
+          // 本地调试包本身就是局域网文件，再去拉清单预取只会白等超时。
           if (client.hasUpdate) {
-            void svc.prefetchClientAsset(q.component as 'client_pc' | 'client_android');
+            if (!useLocalApk) void svc.prefetchClientAsset(component);
+            // 本地调试包不依赖清单源：服务端清单失败也别把整次检查判成失败
+            payload.error = '';
           }
           payload.client = {
             component: client.component,
@@ -307,39 +349,13 @@ export function registerSystemUpdate(app: FastifyInstance, k: KernelApi): void {
               urls: a.urls,
             })),
           };
+        } catch (err) {
+          const message = String((err as Error).message || err);
+          if (!payload.error) payload.error = message;
         }
-
-        return payload;
-      } catch (err) {
-        /**
-         * 检查失败**不是**接口错误：内网 NAS 常年离线，清单源也可能临时不可达。
-         * 这里返回 200 + `error` 字段，让界面显示「检查失败，可稍后重试」，
-         * 而不是把一个登录后的红点检查变成一条报错日志。
-         */
-        const message = String((err as Error).message || err);
-        app.log.info({ err: message }, 'update check unavailable');
-        const cur = svc.current();
-        return {
-          currentId: cur.id,
-          currentVersion: cur.version,
-          latestId: null,
-          latestVersion: null,
-          hasUpdate: false,
-          versions: countVersions(k.paths.dataDir),
-          currentSemver: cur.semver || resolvePackageVersion().semver,
-          latestSemver: '',
-          releasedAt: '',
-          notes: {},
-          mode: 'none',
-          deltaBytes: 0,
-          needsReshell: false,
-          managed: cur.managed,
-          minShell: '',
-          cached: false,
-          checkedAt: Date.now(),
-          error: message,
-        };
       }
+
+      return payload;
     },
   );
 
@@ -576,6 +592,44 @@ export function registerSystemUpdate(app: FastifyInstance, k: KernelApi): void {
     const size = fs.statSync(file).size;
     reply.header('accept-ranges', 'bytes');
     reply.header('content-type', 'application/octet-stream');
+    const range = String(req.headers.range || '');
+    const m = /^bytes=(\d+)-(\d*)$/.exec(range);
+    if (m) {
+      const start = Number(m[1]);
+      const end = m[2] ? Math.min(Number(m[2]), size - 1) : size - 1;
+      if (start >= size) {
+        reply.header('content-range', `bytes */${size}`);
+        return reply.code(416).send();
+      }
+      reply.code(206);
+      reply.header('content-range', `bytes ${start}-${end}/${size}`);
+      reply.header('content-length', String(end - start + 1));
+      return reply.send(fs.createReadStream(file, { start, end }));
+    }
+    reply.header('content-length', String(size));
+    return reply.send(fs.createReadStream(file));
+  });
+
+  /**
+   * 本地调试包分发。
+   *
+   * APK 放在 `<dataDir>/update/local-apk/`（或 `COLANAS_LOCAL_APK_DIR`），
+   * 客户端检查更新时会拿到这个地址 —— 局域网直连，不经过 GitCode / GitHub。
+   * 与资产缓存一样支持 Range 续传。
+   */
+  app.get('/api/v1/system/update/local-apk/:sha/:name', { schema: { hide: true } }, async (req, reply) => {
+    const params = req.params as { sha?: string; name?: string };
+    const sha = String(params.sha || '');
+    if (!/^[a-f0-9]{64}$/i.test(sha)) {
+      return reply.code(400).send({ error: Err.badRequest, message: 'bad sha' });
+    }
+    const file = serviceFor(k).localAssetPath(sha);
+    if (!file || !fs.existsSync(file)) {
+      return reply.code(404).send({ error: Err.notFound, message: 'local apk not found' });
+    }
+    const size = fs.statSync(file).size;
+    reply.header('accept-ranges', 'bytes');
+    reply.header('content-type', 'application/vnd.android.package-archive');
     const range = String(req.headers.range || '');
     const m = /^bytes=(\d+)-(\d*)$/.exec(range);
     if (m) {

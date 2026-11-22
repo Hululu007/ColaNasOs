@@ -18,7 +18,7 @@ import { resolveContractFile } from './contracts';
 import { ContractRegistry } from './contract';
 import { TaskQueue } from './queue';
 import { CacheStats } from './cache-stats';
-import { hasScope, resolveSecret, signToken, verifyToken } from './auth';
+import { hasScope, resolveSecret, SESSION_BASE_SCOPES, signToken, verifyToken } from './auth';
 import { secured } from './route';
 import { MediaBridge } from './sidecar/media-bridge';
 import { IndexerService } from './sidecar/indexer-service';
@@ -424,6 +424,15 @@ export async function startKernel(opts: KernelOptions) {
     // （`/api/**` 的未匹配请求保持原有 401 行为，避免暴露「接口存在与否」）
     if (!req.routeOptions?.url && !url.startsWith('/api/')) return;
     if (PUBLIC_PATHS.has(url)) return;
+    // 更新包下载：客户端下载器 / 系统下载器拿不到 JWT，也没法带 Authorization 头。
+    // 路径里带内容的 sha256，只读且不外泄数据；不带这一条时「局域网更新」会 401，
+    // 客户端只能灰溜溜回退到 GitCode / GitHub 公网源。
+    if (
+      url.startsWith('/api/v1/system/update/asset/') ||
+      url.startsWith('/api/v1/system/update/local-apk/')
+    ) {
+      return;
+    }
     // 内置 transmission Web UI（静态页 + RPC 反代）：浏览器里的页面拿不到 JWT，
     // 由该模块自己用「一次性票据换 Cookie」鉴权（见 src/modules/pt/webui.ts）。
     if (url === '/transmission' || url.startsWith('/transmission/')) return;
@@ -481,7 +490,12 @@ export async function startKernel(opts: KernelOptions) {
         if (live.disabled) {
           return reply.code(403).send({ error: Err.forbidden, message: 'account disabled' });
         }
-        payload = { ...payload, scopes: live.scopes };
+        // 库里的是账号真实授权面，但会话的基础能力（events:read / tasks:read）
+        // 不在账号行里 —— 直接覆盖掉，受限账号连事件流都拿不到。
+        payload = {
+          ...payload,
+          scopes: [...new Set([...live.scopes, ...SESSION_BASE_SCOPES])],
+        };
       }
     }
 

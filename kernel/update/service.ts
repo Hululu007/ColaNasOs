@@ -313,6 +313,23 @@ export class UpdateService {
   readonly cacheDir: string;
   readonly workDir: string;
   readonly assetDir: string;
+  /**
+   * 本地调试包目录：把任意 `.apk` 丢进来，客户端检查更新时就会把它当成
+   * 「最新版」并通过局域网分发，不依赖 GitCode / GitHub 清单源。
+   *
+   * 默认 `<dataDir>/update/local-apk`，可用 `COLANAS_LOCAL_APK_DIR` 覆盖。
+   */
+  readonly localApkDir: string;
+  /**
+   * TV 版调试包目录。
+   *
+   * TV 包与手机包是**同一个 applicationId**（同一个 App，只是编译期 `COLANAS_TV=1`），
+   * 没法靠包名区分，只能分目录投放。检查更新时两个一起下发，客户端按
+   * `kTvBuild` 选 `apk` / `apk_tv`。
+   */
+  readonly localTvApkDir: string;
+  /** 本地 APK 的 sha256 缓存（按 文件名 + size + mtime 失效） */
+  private readonly localApkMemo = new Map<string, { key: string; sha256: string }>();
   private readonly memo: SourceMemo;
   private job: JobStatus = UpdateService.idleJob();
   /**
@@ -336,6 +353,12 @@ export class UpdateService {
     this.cacheDir = path.join(this.updateDir, 'cache');
     this.workDir = path.join(this.updateDir, 'work');
     this.assetDir = path.join(this.updateDir, 'assets');
+    this.localApkDir = process.env.COLANAS_LOCAL_APK_DIR
+      ? path.resolve(process.env.COLANAS_LOCAL_APK_DIR)
+      : path.join(this.updateDir, 'local-apk');
+    this.localTvApkDir = process.env.COLANAS_LOCAL_TV_APK_DIR
+      ? path.resolve(process.env.COLANAS_LOCAL_TV_APK_DIR)
+      : path.join(this.updateDir, 'local-apk-tv');
     this.memo = new SourceMemo(path.join(this.updateDir, 'source-memo.json'));
   }
 
@@ -608,6 +631,131 @@ export class UpdateService {
   }
 
   /**
+   * 本地调试包：目录里有 `.apk` 就优先当成客户端最新版。
+   *
+   * 用途是开发期快速迭代：构建机把 APK 丢到 NAS 的
+   * `<dataDir>/update/local-apk/`（或 `COLANAS_LOCAL_APK_DIR` 指定的目录），
+   * 手机连着这台 NAS 打开「检查更新」就能直接走局域网下载安装，
+   * 不需要等 GitCode / GitHub 发版，也不消耗公网流量。
+   *
+   * 版本信息可选：放一个同名 `<apk>.json`（或目录里的 `local-update.json`）：
+   * `{ "semver": "1.3.23", "versionCode": 1324, "notes": "..." }`；
+   * 没有元数据时从文件名里取 semver，取不到就固定报有更新（调试模式自己控制）。
+   */
+  private localApkCandidate() {
+    return this.apkCandidateIn(this.localApkDir);
+  }
+
+  private localTvApkCandidate() {
+    return this.apkCandidateIn(this.localTvApkDir);
+  }
+
+  private apkCandidateIn(dir: string): {
+    file: string;
+    name: string;
+    size: number;
+    sha256: string;
+    meta: { semver?: string; versionCode?: number; notes?: string };
+  } | null {
+    let names: string[];
+    try {
+      names = fs.readdirSync(dir).filter((n) => /\.apk$/i.test(n));
+    } catch {
+      return null;
+    }
+    let best: { file: string; name: string; size: number; mtimeMs: number } | null = null;
+    for (const name of names) {
+      const file = path.join(dir, name);
+      try {
+        const st = fs.statSync(file);
+        if (!st.isFile()) continue;
+        if (!best || st.mtimeMs > best.mtimeMs) {
+          best = { file, name, size: st.size, mtimeMs: st.mtimeMs };
+        }
+      } catch {
+        /* 正在写入 / 没权限：跳过 */
+      }
+    }
+    if (!best) return null;
+    const key = `${best.size}:${best.mtimeMs}`;
+    // 按绝对路径缓存：手机包和 TV 包经常同名，按文件名会互相串
+    const memo = this.localApkMemo.get(best.file);
+    const digest = memo && memo.key === key ? memo.sha256 : sha256File(best.file);
+    this.localApkMemo.set(best.file, { key, sha256: digest });
+    const meta =
+      readJson<{ semver?: string; versionCode?: number; notes?: string }>(`${best.file}.json`) ??
+      readJson<{ semver?: string; versionCode?: number; notes?: string }>(
+        path.join(dir, 'local-update.json'),
+      ) ??
+      {};
+    return { file: best.file, name: best.name, size: best.size, sha256: digest, meta };
+  }
+
+  /** 目录里是否有调试 APK（不做哈希，供路由决定是否跳过清单源） */
+  hasLocalApk(): boolean {
+    for (const dir of [this.localApkDir, this.localTvApkDir]) {
+      try {
+        if (fs.readdirSync(dir).some((n) => /\.apk$/i.test(n))) return true;
+      } catch {
+        /* 目录不存在：看下一个 */
+      }
+    }
+    return false;
+  }
+
+  /** 局域网下载地址的 sha 校验：只允许分发当前目录里真实存在的那个 APK */
+  localAssetPath(sha256Hex: string): string | null {
+    const want = sha256Hex.toLowerCase();
+    for (const cand of [this.localApkCandidate(), this.localTvApkCandidate()]) {
+      if (cand && cand.sha256.toLowerCase() === want) return cand.file;
+    }
+    return null;
+  }
+
+  private localClientCheck(
+    component: 'client_pc' | 'client_android',
+    opts: { lanBase?: string },
+  ): ClientCheck | null {
+    // 本地调试包只有安卓需要：PC 的安装包不是 APK
+    if (component !== 'client_android') return null;
+    const phone = this.localApkCandidate();
+    const tv = this.localTvApkCandidate();
+    // 两个目录各自可以独立投放；只有一个时也照常下发（客户端按 kind 取）
+    const main = phone ?? tv;
+    if (!main) return null;
+    const base = (opts.lanBase || '').replace(/\/+$/, '');
+    if (!base) return null;
+    const fromName = /(\d+\.\d+\.\d+)/.exec(main.name)?.[1] ?? '';
+    const semver = String(main.meta.semver || fromName || 'local').trim() || 'local';
+    const versionCode = Number(main.meta.versionCode) || 0;
+    const notes = String(main.meta.notes || '').trim() || `本地调试包：${main.name}`;
+    const assets: ClientCheck['assets'] = [];
+    /** 手机包和 TV 包一起下发：TV 客户端按 kTvBuild 只认 apk_tv，手机只认 apk */
+    const add = (
+      cand: ReturnType<UpdateService['apkCandidateIn']>,
+      kind: ClientAssetKind,
+    ): void => {
+      if (!cand) return;
+      assets.push({
+        kind,
+        size: cand.size,
+        sha256: cand.sha256,
+        urls: [
+          `${base}/api/v1/system/update/local-apk/${cand.sha256}/${encodeURIComponent(cand.name)}`,
+        ],
+      });
+    };
+    add(phone, 'apk');
+    add(tv, 'apk_tv');
+    return {
+      component,
+      hasUpdate: assets.length > 0,
+      latest: { semver, version: 0, versionCode, notes: { zh: notes, en: notes } },
+      assets,
+    };
+  }
+
+  /**
    * 客户端检查（PC / 安卓）。
    *
    * `lanBase` 由路由传入（`http://192.168.x.x:7788`），服务端已缓存的资产会插到
@@ -617,6 +765,9 @@ export class UpdateService {
     component: 'client_pc' | 'client_android',
     opts: { currentSemver?: string; currentVersionCode?: number; lanBase?: string; force?: boolean },
   ): Promise<ClientCheck> {
+    // 调试目录里有 APK 就直接走它：完全不碰清单源，离线也能更新
+    const local = this.localClientCheck(component, opts);
+    if (local) return local;
     const manifest = await this.loadManifest({ force: opts.force });
     const c = manifest.components[component] as ClientComponent | undefined;
     if (!c) {
