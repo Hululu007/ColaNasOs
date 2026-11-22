@@ -212,7 +212,7 @@ class VideoDetailHeader extends StatelessWidget {
       color: context.nasTextSecondary,
     );
     final original = (originalTitle ?? '').trim();
-    return Column(
+    final textBlock = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
         Padding(
@@ -268,6 +268,14 @@ class VideoDetailHeader extends StatelessWidget {
             children: <Widget>[for (final b in badges) VideoTagBadge(b)],
           ),
         ],
+      ],
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        // 片名 / 原文名 / 番号 / 元信息都可选中：鼠标停上去变 I 型光标，
+        // 可以拖选复制。操作按钮留在选区之外，拖选时不会误触播放。
+        SelectionArea(child: textBlock),
         if (actions != null) ...<Widget>[const SizedBox(height: 14), actions!],
       ],
     );
@@ -437,14 +445,17 @@ class _VideoExpandableTextState extends State<VideoExpandableText> {
         )..layout(maxWidth: c.maxWidth);
         final overflowing = painter.didExceedMaxLines;
 
+        // 简介正文可选中（复制剧情、番号等）；「展开 / 收起」按钮留在外面。
         final body = AnimatedSize(
           duration: const Duration(milliseconds: 180),
           alignment: Alignment.topCenter,
-          child: Text(
-            text,
-            style: style,
-            maxLines: _expanded ? null : widget.maxLines,
-            overflow: _expanded ? TextOverflow.visible : TextOverflow.ellipsis,
+          child: SelectionArea(
+            child: Text(
+              text,
+              style: style,
+              maxLines: _expanded ? null : widget.maxLines,
+              overflow: _expanded ? TextOverflow.visible : TextOverflow.ellipsis,
+            ),
           ),
         );
 
@@ -611,7 +622,9 @@ class VideoFilePanel extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 2),
-          SelectableText(
+          // 整块面板共用一个选区（见 `build` 末尾的 SelectionArea），
+          // 这里用普通 Text 才能跨格连续拖选。
+          Text(
             value,
             style: const TextStyle(
               fontSize: NasTokens.fontCaption,
@@ -694,33 +707,37 @@ class VideoFilePanel extends StatelessWidget {
       group(tr('video.detail.audioSub'), Icons.audiotrack_outlined, audio),
     ];
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        _PathRow(path: item.path),
-        const SizedBox(height: 12),
-        if (mode == LayoutMode.compact)
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              for (var i = 0; i < groups.length; i++) ...<Widget>[
-                if (i > 0) const SizedBox(height: 12),
-                groups[i],
+    return SelectionArea(
+      // 路径 + 底层参数全部可选中：只想要路径的人也能从这整块里拖，
+      // 右上的复制按钮保留（移动端没有拖选习惯）。
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          _PathRow(path: item.path),
+          const SizedBox(height: 12),
+          if (mode == LayoutMode.compact)
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                for (var i = 0; i < groups.length; i++) ...<Widget>[
+                  if (i > 0) const SizedBox(height: 12),
+                  groups[i],
+                ],
               ],
-            ],
-          )
-        else
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              Expanded(child: groups[0]),
-              const SizedBox(width: 12),
-              Expanded(child: groups[1]),
-              const SizedBox(width: 12),
-              Expanded(child: groups[2]),
-            ],
-          ),
-      ],
+            )
+          else
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Expanded(child: groups[0]),
+                const SizedBox(width: 12),
+                Expanded(child: groups[1]),
+                const SizedBox(width: 12),
+                Expanded(child: groups[2]),
+              ],
+            ),
+        ],
+      ),
     );
   }
 }

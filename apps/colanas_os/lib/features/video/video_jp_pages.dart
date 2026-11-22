@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:nas_core/nas_core.dart';
 import 'package:nas_ui/nas_ui.dart';
 
@@ -165,13 +166,16 @@ class _VideoJpRankPageState extends State<VideoJpRankPage> {
                     title: tr('video.jp.empty'),
                     icon: Icons.leaderboard_outlined,
                   )
-                : ListView.separated(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: NasTokens.spaceMd,
+                // 榜单只读：整列表包一个选区，片名 / 番号可以跨行拖选复制
+                : SelectionArea(
+                    child: ListView.separated(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: NasTokens.spaceMd,
+                      ),
+                      itemCount: _items.length,
+                      separatorBuilder: (_, _) => const Divider(height: 1),
+                      itemBuilder: (context, i) => _row(context, _items[i]),
                     ),
-                    itemCount: _items.length,
-                    separatorBuilder: (_, _) => const Divider(height: 1),
-                    itemBuilder: (context, i) => _row(context, _items[i]),
                   ),
           ),
         ],
@@ -268,6 +272,11 @@ class _VideoJpActorPageState extends State<VideoJpActorPage> {
   String _worksSortBy = 'smart';
   bool _onlyFavorite = false;
   bool _onlyUnwatched = false;
+
+  /// 是否连「已屏蔽」的演员一起显示。
+  ///
+  /// 屏蔽只影响默认视图：平时列表里不再出现，勾上这个才回来（用来取消屏蔽）。
+  bool _showBlocked = false;
   bool _showFanart = false;
   bool _showMovies = false;
 
@@ -382,6 +391,7 @@ class _VideoJpActorPageState extends State<VideoJpActorPage> {
         jpTag: _filter.jpTag.isEmpty ? null : _filter.jpTag,
         genre: _filter.genre.isEmpty ? null : _filter.genre,
         sourceId: _filter.sourceId.isEmpty ? null : _filter.sourceId,
+        includeBlocked: _showBlocked ? '1' : null,
       );
       if (!mounted) return;
       setState(() {
@@ -598,20 +608,18 @@ class _VideoJpActorPageState extends State<VideoJpActorPage> {
     }
   }
 
-  /// 删除「当前筛选下这位演员的全部作品」——不是删除这个演员。
+  /// 删除「当前范围下这位演员的全部作品」——不是删除这个演员。
   ///
-  /// 批量删除的三条底线：范围说清楚、可恢复、不牵连范围外的数据。
-  ///   · 名单就是作品接口按同一份筛选返回的 ids（触到上限就拒绝，避免「全部」名不副实）；
+  /// 三条底线：范围说清楚、可恢复、不牵连范围外的数据。
+  ///   · 名单就是作品接口按同一份筛选返回的 ids（没有筛选时 = 她全部作品，
+  ///     这时候确认框会换成「全部 N 部」的口径，不能让人以为是筛出来的那几部）；
   ///   · 走回收站（permanent: false）；
   ///   · 服务端只删这些条目及其关联行，绝不 delete jp_actors。
   Future<void> _deleteFilteredWorks(
     Map<String, dynamic> actor, {
     List<VideoItem>? scopedWorks,
   }) async {
-    if (_filter.isEmpty && !_onlyUnwatched) {
-      NasSnack.show(context, tr('video.jp.deleteNeedFilter'));
-      return;
-    }
+    final noFilter = _filter.isEmpty && !_onlyUnwatched;
     final candidates = scopedWorks ?? _works;
     final filtered = _onlyUnwatched
         ? candidates.where((work) => !work.watched)
@@ -630,7 +638,12 @@ class _VideoJpActorPageState extends State<VideoJpActorPage> {
       builder: (ctx) => AlertDialog(
         title: Text(tr('common.delete')),
         content: Text(
-          tr('video.jp.deleteWorksBody', {'count': '${ids.length}'}),
+          noFilter
+              ? tr('video.jp.deleteWorksBodyAll', {
+                  'name': _str(actor['name']),
+                  'count': '${ids.length}',
+                })
+              : tr('video.jp.deleteWorksBody', {'count': '${ids.length}'}),
         ),
         actions: [
           TextButton(
@@ -679,10 +692,6 @@ class _VideoJpActorPageState extends State<VideoJpActorPage> {
   }
 
   Future<void> _deleteFilteredWorksFromGrid(Map<String, dynamic> actor) async {
-    if (_filter.isEmpty && !_onlyUnwatched) {
-      NasSnack.show(context, tr('video.jp.deleteNeedFilter'));
-      return;
-    }
     try {
       final works = await _fetchGridActorWorks(actor);
       if (works == null) return;
@@ -718,7 +727,10 @@ class _VideoJpActorPageState extends State<VideoJpActorPage> {
   List<NasMenuEntry> _actorMenuEntries(Map<String, dynamic> actor) {
     final count = _int(actor['count'] ?? actor['items']);
     final unwatched = _int(actor['unwatchedCount']);
+    final blocked = actor['blocked'] == true;
     final deleteCount = _onlyUnwatched ? unwatched : count;
+    // 没有任何筛选时，「删除当前筛选下的作品」这个名字会误导：那等于她全部作品。
+    final noFilter = _filter.isEmpty && !_onlyUnwatched;
     return [
       NasMenuEntry(
         label: tr('video.jp.markFilteredWatched', {'count': '$unwatched'}),
@@ -729,12 +741,70 @@ class _VideoJpActorPageState extends State<VideoJpActorPage> {
       ),
       const NasMenuEntry.divider(),
       NasMenuEntry(
-        label: tr('video.jp.deleteWorksCount', {'count': '$deleteCount'}),
+        label: tr('video.jp.copyActorName'),
+        icon: Icons.content_copy,
+        onSelected: () => unawaited(_copyActorName(actor)),
+      ),
+      NasMenuEntry(
+        label: blocked ? tr('video.jp.unblockActor') : tr('video.jp.blockActor'),
+        icon: blocked ? Icons.visibility_outlined : Icons.visibility_off_outlined,
+        onSelected: () => unawaited(_toggleActorBlocked(actor)),
+      ),
+      const NasMenuEntry.divider(),
+      NasMenuEntry(
+        label: noFilter
+            ? tr('video.jp.deleteAllWorksCount', {'count': '$deleteCount'})
+            : tr('video.jp.deleteWorksCount', {'count': '$deleteCount'}),
         icon: Icons.delete_outline,
         danger: true,
         onSelected: () => unawaited(_deleteFilteredWorksFromGrid(actor)),
       ),
     ];
+  }
+
+  /// 复制演员名：卡片上右键要留给菜单，所以这里给一条显式入口，
+  /// 详情页那边是可以直接拖选的。
+  Future<void> _copyActorName(Map<String, dynamic> actor) async {
+    final name = _str(actor['name']);
+    if (name.isEmpty) return;
+    await Clipboard.setData(ClipboardData(text: name));
+    if (mounted) NasSnack.show(context, tr('common.copied'));
+  }
+
+  /// 屏蔽 / 取消屏蔽：只改「这个用户的演员列表视图」，不动演员档案与影片。
+  Future<void> _toggleActorBlocked(Map<String, dynamic> actor) async {
+    final name = _str(actor['name']);
+    if (name.isEmpty) return;
+    final target = actor['blocked'] != true;
+    try {
+      await ApiSession.instance.client.videoJpActorBlock(
+        body: <String, dynamic>{'name': name, 'blocked': target},
+      );
+      if (!mounted) return;
+      setState(() {
+        actor['blocked'] = target;
+        _actorsRevision++;
+        if (_selected == actor) {
+          _selected = Map<String, dynamic>.from(actor);
+        }
+        // 默认视图不显示已屏蔽的：刚屏蔽的人立刻从当前列表里拿掉，
+        // 不然要手动刷新才「消失」，会让人误以为没生效。
+        if (target && !_showBlocked) {
+          _actors = _actors
+              .where((candidate) => !identical(candidate, actor))
+              .toList();
+        }
+      });
+      NasSnack.show(
+        context,
+        tr(
+          target ? 'video.jp.blockedDone' : 'video.jp.unblockedDone',
+          {'name': name},
+        ),
+      );
+    } catch (e) {
+      if (mounted) NasSnack.show(context, '$e');
+    }
   }
 
   Future<void> _showActorActionSheet(Map<String, dynamic> actor) async {
@@ -918,9 +988,14 @@ class _VideoJpActorPageState extends State<VideoJpActorPage> {
                 libraryId: widget.libraryId,
                 onlyFavorite: _onlyFavorite,
                 onlyUnwatched: _onlyUnwatched,
+                showBlocked: _showBlocked,
                 onOnlyFavoriteChanged: (v) => setState(() => _onlyFavorite = v),
                 onOnlyUnwatchedChanged: (v) =>
                     setState(() => _onlyUnwatched = v),
+                onShowBlockedChanged: (v) {
+                  setState(() => _showBlocked = v);
+                  _load();
+                },
                 onChanged: (v) {
                   setState(() => _filter = v);
                   _load();
@@ -1126,14 +1201,40 @@ class _VideoJpActorPageState extends State<VideoJpActorPage> {
             ),
           ),
           const SizedBox(height: 6),
-          Text(
-            _str(actor['name']),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              fontSize: NasTokens.fontBody,
-              fontWeight: FontWeight.w600,
-            ),
+          Row(
+            children: [
+              if (actor['blocked'] == true) ...[
+                Container(
+                  margin: const EdgeInsets.only(right: 5),
+                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                  decoration: BoxDecoration(
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.error.withValues(alpha: 0.16),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    tr('video.jp.blockedBadge'),
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                ),
+              ],
+              Expanded(
+                child: Text(
+                  _str(actor['name']),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: NasTokens.fontBody,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
           ),
           Text(
             '$count ${tr('video.jp.items')}',
@@ -1326,7 +1427,8 @@ class _VideoJpActorPageState extends State<VideoJpActorPage> {
             ],
           ),
         ),
-        _ActorHeader(actor: actor),
+        // 演员名 / 影片数 / 三围 / 生日都能拖选复制，鼠标停上去是 I 型光标
+        SelectionArea(child: _ActorHeader(actor: actor)),
         Expanded(
           child: _worksLoading
               ? const NasLoading()

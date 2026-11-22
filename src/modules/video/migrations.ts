@@ -913,4 +913,28 @@ export const VIDEO_MIGRATIONS: Migration[] = [
         `).execute(db);
       },
     },
+    {
+      /**
+       * 演员屏蔽名单（按用户）。
+       *
+       * 日本库演员动辄几百人，其中总有一批「不想在列表里再看到」的。
+       * 屏蔽只影响**演员列表的默认视图**：她的影片、档案、作品页都还在，
+       * 取消屏蔽立刻恢复 —— 不是删除，也不动 `jp_actors` / `jp_actor_items`。
+       *
+       * 按 uid 存（与 `video_actor_favorite` 同口径）：一台 NAS 上不同账号
+       * 对「谁该被收起来」的偏好本来就不该互相影响。
+       */
+      id: '189_video_actor_block',
+      async up(db) {
+        await sql`
+          create table if not exists video_actor_block (
+            uid text not null,
+            actor_key text not null,
+            actor_name text not null,
+            created_at integer not null,
+            primary key (uid, actor_key)
+          )
+        `.execute(db);
+      },
+    },
 ];

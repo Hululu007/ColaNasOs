@@ -76,6 +76,8 @@ class VideoJpFilterButton extends StatefulWidget {
     required this.onlyUnwatched,
     required this.onOnlyFavoriteChanged,
     required this.onOnlyUnwatchedChanged,
+    this.showBlocked = false,
+    this.onShowBlockedChanged,
     this.libraryId,
   });
 
@@ -87,6 +89,13 @@ class VideoJpFilterButton extends StatefulWidget {
   final bool onlyUnwatched;
   final ValueChanged<bool> onOnlyFavoriteChanged;
   final ValueChanged<bool> onOnlyUnwatchedChanged;
+
+  /// 「显示已屏蔽的演员」：只在演员页传，影片页不需要这个维度。
+  ///
+  /// 屏蔽只影响演员列表的默认视图，所以它是一个**显隐**开关，
+  /// 不是筛选条件（不参与 `VideoJpFilter` 的口径，也不会把影片列表带歪）。
+  final bool showBlocked;
+  final ValueChanged<bool>? onShowBlockedChanged;
 
   final String? libraryId;
 
@@ -188,7 +197,10 @@ class _VideoJpFilterButtonState extends State<VideoJpFilterButton> {
   @override
   Widget build(BuildContext context) {
     final active =
-        widget.value.isNotEmpty || widget.onlyFavorite || widget.onlyUnwatched;
+        widget.value.isNotEmpty ||
+        widget.onlyFavorite ||
+        widget.onlyUnwatched ||
+        widget.showBlocked;
     final scheme = Theme.of(context).colorScheme;
     return IconButton(
       tooltip: tr('video.list.filter'),
@@ -214,6 +226,7 @@ class _VideoJpFilterButtonState extends State<VideoJpFilterButton> {
     var draft = widget.value;
     var fav = widget.onlyFavorite;
     var unwatched = widget.onlyUnwatched;
+    var blocked = widget.showBlocked;
     final ok = await showModalBottomSheet<bool>(
       context: context,
       showDragHandle: true,
@@ -298,6 +311,12 @@ class _VideoJpFilterButtonState extends State<VideoJpFilterButton> {
                         selected: unwatched,
                         onSelected: (v) => setLocal(() => unwatched = v),
                       ),
+                      if (widget.onShowBlockedChanged != null)
+                        NasChip(
+                          label: Text(tr('video.jp.showBlocked')),
+                          selected: blocked,
+                          onSelected: (v) => setLocal(() => blocked = v),
+                        ),
                     ],
                   ),
                   const SizedBox(height: NasTokens.spaceSm),
@@ -310,6 +329,7 @@ class _VideoJpFilterButtonState extends State<VideoJpFilterButton> {
                           draft = const VideoJpFilter();
                           fav = false;
                           unwatched = false;
+                          blocked = false;
                         }),
                         icon: const Icon(Icons.refresh, size: 18),
                         label: Text(tr('video.list.reset')),
@@ -339,6 +359,9 @@ class _VideoJpFilterButtonState extends State<VideoJpFilterButton> {
     if (fav != widget.onlyFavorite) widget.onOnlyFavoriteChanged(fav);
     if (unwatched != widget.onlyUnwatched) {
       widget.onOnlyUnwatchedChanged(unwatched);
+    }
+    if (blocked != widget.showBlocked) {
+      widget.onShowBlockedChanged?.call(blocked);
     }
   }
 }

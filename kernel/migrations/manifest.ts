@@ -235,6 +235,8 @@ export const MIGRATION_ORDER: readonly string[] = Object.freeze([
   '187_video_jp_uncensored_tags',
   // 传输来源分层：同步 / 备份这类后台搬运不进传输中心的默认列表与统计
   '188_transfer_scope',
+  // 演员屏蔽名单（按用户）：只影响演员列表的默认视图，不动演员与关联数据
+  '189_video_actor_block',
 ]);
 
 export interface OrderCheck {

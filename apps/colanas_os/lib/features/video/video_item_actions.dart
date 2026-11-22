@@ -24,6 +24,7 @@ class VideoItemAction {
   static const watched = 'watched';
   static const addToCollection = 'addToCollection';
   static const copyPath = 'copyPath';
+  static const copyTitle = 'copyTitle';
   static const scrape = 'scrape';
   static const match = 'match';
   static const cleanup = 'cleanup';
@@ -81,6 +82,11 @@ List<VideoItemActionSpec> videoItemActionSpecs(
     VideoItemAction.detail,
     tr('video.action.locateFile'),
     Icons.open_in_new,
+  ),
+  VideoItemActionSpec(
+    VideoItemAction.copyTitle,
+    tr('video.action.copyTitle'),
+    Icons.title,
   ),
   VideoItemActionSpec(
     VideoItemAction.copyPath,
@@ -307,6 +313,10 @@ Future<bool> runVideoItemAction(
         NasSnack.showOn(messenger, '$e');
         return false;
       }
+    case VideoItemAction.copyTitle:
+      await Clipboard.setData(ClipboardData(text: item.title));
+      NasSnack.showOn(messenger, tr('common.copied'));
+      return false;
     case VideoItemAction.copyPath:
       await Clipboard.setData(ClipboardData(text: item.path));
       NasSnack.showOn(messenger, tr('video.media.copyLink'));

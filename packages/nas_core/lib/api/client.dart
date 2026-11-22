@@ -2786,7 +2786,7 @@ class ApiClient {
   }
 
   /// 演员列表（影片数 / 未看数 / 热度 / 封面片 / 收藏 / 档案）
-  Future<Map<String, dynamic>> videoJpActorList({String? libraryId, String? limit, String? resolution, String? jpTag, String? genre, String? sourceId}) async {
+  Future<Map<String, dynamic>> videoJpActorList({String? libraryId, String? limit, String? resolution, String? jpTag, String? genre, String? sourceId, String? includeBlocked}) async {
     final query = <String, String>{
       if (libraryId != null) 'libraryId': libraryId,
       if (limit != null) 'limit': limit,
@@ -2794,6 +2794,7 @@ class ApiClient {
       if (jpTag != null) 'jpTag': jpTag,
       if (genre != null) 'genre': genre,
       if (sourceId != null) 'sourceId': sourceId,
+      if (includeBlocked != null) 'includeBlocked': includeBlocked,
     };
     final res = await transport.send('GET', _uri('/api/v1/video/jp_actor/list', query), headers: await _headers());
     return _asMap(_decode(res));
@@ -2802,6 +2803,12 @@ class ApiClient {
   /// 收藏 / 取消收藏演员
   Future<Map<String, dynamic>> videoJpActorFavorite({required Map<String, dynamic> body}) async {
     final res = await transport.send('POST', _uri('/api/v1/video/jp_actor/favorite'), headers: await _headers(jsonBody: true), body: utf8.encode(jsonEncode(body)));
+    return _asMap(_decode(res));
+  }
+
+  /// 屏蔽 / 取消屏蔽演员（只影响演员列表的默认视图）
+  Future<Map<String, dynamic>> videoJpActorBlock({required Map<String, dynamic> body}) async {
+    final res = await transport.send('POST', _uri('/api/v1/video/jp_actor/block'), headers: await _headers(jsonBody: true), body: utf8.encode(jsonEncode(body)));
     return _asMap(_decode(res));
   }
 

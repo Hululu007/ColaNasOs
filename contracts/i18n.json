@@ -3237,6 +3237,7 @@
     "ui.video.hd179a3": {},
     "ui.video.he348df": {},
     "ui.video.he63140": {},
+    "video.action.copyTitle": {},
     "video.action.copyPath": {},
     "video.action.deleteSeason": {
       "count": {}
@@ -3514,6 +3515,7 @@
     },
     "video.jp.deleteWorks": {},
     "video.jp.deleteWorksBody": {
+    "video.jp.deleteWorksBodyAll": { "name": {}, "count": {} },
       "count": {}
     },
     "video.jp.deleteWorksDone": {
@@ -3522,6 +3524,7 @@
     "video.jp.deleteWorksCount": {
       "count": {}
     },
+    "video.jp.deleteAllWorksCount": { "count": {} },
     "video.jp.markFilteredWatched": {
       "count": {}
     },
@@ -3529,6 +3532,13 @@
       "count": {}
     },
     "video.jp.actorWorksTooMany": {},
+    "video.jp.blockActor": {},
+    "video.jp.unblockActor": {},
+    "video.jp.blockedBadge": {},
+    "video.jp.blockedDone": { "name": {} },
+    "video.jp.unblockedDone": { "name": {} },
+    "video.jp.copyActorName": {},
+    "video.jp.showBlocked": {},
     "video.jp.actorScopeChanged": {},
     "video.jp.empty": {},
     "video.jp.emptyActors": {},

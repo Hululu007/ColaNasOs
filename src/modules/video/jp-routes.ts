@@ -78,6 +78,9 @@ const ActorListQuery = Type.Object({
   jpTag: Type.Optional(Type.String({ description: 'uncensored / cracked / ltx' })),
   genre: Type.Optional(Type.String({ description: 'NFO 题材名' })),
   sourceId: Type.Optional(Type.String({ description: '来源 id（多来源库）' })),
+  includeBlocked: Type.Optional(
+    Type.String({ description: '1 = 连「已屏蔽」的演员一起返回（默认不带）' }),
+  ),
 });
 
 const ActorListItem = Type.Object(
@@ -86,6 +89,8 @@ const ActorListItem = Type.Object(
     name: Type.String(),
     items: Type.Integer({ description: '影片数（= count，保留旧字段名）' }),
     favorite: Type.Boolean(),
+    /** 是否在这个用户的屏蔽名单里（仅在 includeBlocked=1 时会返回 true 的项） */
+    blocked: Type.Optional(Type.Boolean()),
     avatarUrl: Type.Union([Type.String(), Type.Null()]),
     sampleCover: Type.Union([Type.String(), Type.Null()]),
     /** 影片数（与 items 同值，新字段名） */
@@ -367,9 +372,14 @@ export async function registerJpRoutes(app: any, k: KernelApi): Promise<void> {
         jpTag?: string;
         genre?: string;
         sourceId?: string;
+        includeBlocked?: string;
       };
       const limit = Math.max(1, Math.min(Number(q.limit) || 500, 2000));
       const owner = uidOf(req);
+      // 屏蔽名单默认生效：被屏蔽的演员不进列表（但她在「显示已屏蔽」里能找回来）
+      const includeBlocked = ['1', 'true', 'yes'].includes(
+        String(q.includeBlocked || '').toLowerCase(),
+      );
 
       // ⓪ 离线来源要先算：主查询就得排除离线影片。
       //    以前只在「② 补封面片」那一步过滤，结果离线影片照旧计入 count ——
@@ -422,6 +432,14 @@ export async function registerJpRoutes(app: any, k: KernelApi): Promise<void> {
         ).rows.map((r) => r.actor_key),
       );
 
+      const blocks = new Set(
+        (
+          await sql<{ actor_key: string }>`
+            select actor_key from video_actor_block where uid = ${owner}
+          `.execute(k.db)
+        ).rows.map((r) => r.actor_key),
+      );
+
       interface Agg {
         key: string;
         name: string;
@@ -441,6 +459,8 @@ export async function registerJpRoutes(app: any, k: KernelApi): Promise<void> {
       }
       const map = new Map<string, Agg>();
       for (const r of rows) {
+        // 屏蔽是这个用户的视图偏好：默认不出现，`includeBlocked=1` 时才一起返回
+        if (!includeBlocked && blocks.has(r.actor_id)) continue;
         let g = map.get(r.actor_id);
         if (!g) {
           g = {
@@ -524,6 +544,7 @@ export async function registerJpRoutes(app: any, k: KernelApi): Promise<void> {
           // 兼容旧字段名（历史 UI 读 items / favorite / sampleCover）
           items: g.count,
           favorite: favs.has(g.key),
+          blocked: blocks.has(g.key),
           avatarUrl: g.thumb || String(profile.avatarUrl ?? '') || null,
           sampleCover: null,
           // —— 排序与卡片用的聚合值
@@ -590,6 +611,39 @@ export async function registerJpRoutes(app: any, k: KernelApi): Promise<void> {
       } else {
         await sql`
           delete from video_actor_favorite where uid = ${uidOf(req)} and actor_key = ${key}
+        `.execute(k.db);
+      }
+      return { ok: true };
+    },
+  );
+
+  app.post(
+    '/api/v1/video/jp_actor/block',
+    secured('video:write', {
+      schema: {
+        operationId: 'videoJpActorBlock',
+        tags: TAG,
+        summary: '屏蔽 / 取消屏蔽演员（只影响演员列表的默认视图）',
+        body: Type.Object({
+          name: Type.String({ minLength: 1 }),
+          blocked: Type.Boolean(),
+        }),
+        response: { 200: OkResponse },
+      },
+    }),
+    async (req: FastifyRequest) => {
+      const body = (req.body || {}) as { name?: string; blocked?: boolean };
+      const key = actorKey(String(body.name || ''));
+      if (body.blocked) {
+        await sql`
+          insert into video_actor_block (uid, actor_key, actor_name, created_at)
+          values (${uidOf(req)}, ${key}, ${String(body.name || '')}, ${now()})
+          on conflict(uid, actor_key) do update set
+            actor_name = excluded.actor_name
+        `.execute(k.db);
+      } else {
+        await sql`
+          delete from video_actor_block where uid = ${uidOf(req)} and actor_key = ${key}
         `.execute(k.db);
       }
       return { ok: true };

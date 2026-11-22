@@ -39605,6 +39605,15 @@
             "name": "sourceId",
             "required": false,
             "description": "来源 id（多来源库）"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "query",
+            "name": "includeBlocked",
+            "required": false,
+            "description": "1 = 连「已屏蔽」的演员一起返回（默认不带）"
           }
         ],
         "security": [
@@ -39648,6 +39657,9 @@
                             "type": "integer"
                           },
                           "favorite": {
+                            "type": "boolean"
+                          },
+                          "blocked": {
                             "type": "boolean"
                           },
                           "avatarUrl": {
@@ -39750,6 +39762,63 @@
                     "type": "string"
                   },
                   "favorite": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/video/jp_actor/block": {
+      "post": {
+        "operationId": "videoJpActorBlock",
+        "summary": "屏蔽 / 取消屏蔽演员（只影响演员列表的默认视图）",
+        "tags": [
+          "video"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "name",
+                  "blocked"
+                ],
+                "properties": {
+                  "name": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "blocked": {
                     "type": "boolean"
                   }
                 }

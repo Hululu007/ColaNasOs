@@ -2495,6 +2495,7 @@ class I18nKeys {
   static const uiVideoHe348df = 'ui.video.he348df';
   static const uiVideoHe63140 = 'ui.video.he63140';
   // ---- video ----
+  static const videoActionCopyTitle = 'video.action.copyTitle';
   static const videoActionCopyPath = 'video.action.copyPath';
   static const videoActionDeleteSeason = 'video.action.deleteSeason';
   static const videoActionDeleteSeries = 'video.action.deleteSeries';
@@ -2702,9 +2703,17 @@ class I18nKeys {
   static const videoJpDeleteWorksBody = 'video.jp.deleteWorksBody';
   static const videoJpDeleteWorksDone = 'video.jp.deleteWorksDone';
   static const videoJpDeleteWorksCount = 'video.jp.deleteWorksCount';
+  static const videoJpDeleteAllWorksCount = 'video.jp.deleteAllWorksCount';
   static const videoJpMarkFilteredWatched = 'video.jp.markFilteredWatched';
   static const videoJpMarkFilteredWatchedDone = 'video.jp.markFilteredWatchedDone';
   static const videoJpActorWorksTooMany = 'video.jp.actorWorksTooMany';
+  static const videoJpBlockActor = 'video.jp.blockActor';
+  static const videoJpUnblockActor = 'video.jp.unblockActor';
+  static const videoJpBlockedBadge = 'video.jp.blockedBadge';
+  static const videoJpBlockedDone = 'video.jp.blockedDone';
+  static const videoJpUnblockedDone = 'video.jp.unblockedDone';
+  static const videoJpCopyActorName = 'video.jp.copyActorName';
+  static const videoJpShowBlocked = 'video.jp.showBlocked';
   static const videoJpActorScopeChanged = 'video.jp.actorScopeChanged';
   static const videoJpEmpty = 'video.jp.empty';
   static const videoJpEmptyActors = 'video.jp.emptyActors';
@@ -3169,4 +3178,4 @@ class I18nKeys {
 }
 
 /// 契约键总数（生成时确定），供完整性自检使用。
-const int i18nKeyCount = 3117;
+const int i18nKeyCount = 3126;
