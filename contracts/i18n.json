@@ -2279,7 +2279,13 @@
     "player.directFailed": {
       "actual": {}
     },
+    "player.tunnelOffRetry": {},
     "player.dvDirect": {},
+    "player.hdrDirect": {},
+    "player.active": {},
+    "player.inactiveTranscode": {},
+    "player.inactiveNativeOff": {},
+    "player.inactiveToneMap": {},
     "player.renderer": {},
     "player.compatOn": {},
     "player.dolbyVision": {},

@@ -63,6 +63,12 @@ class _TvMovieHomeState extends State<TvMovieHome> {
   String? _focusLane;
   String? _lastEntryId;
 
+  /// 「全部影片」网格的列数（`LayoutBuilder` 每次算出来都会写回）。
+  int _gridColumns = 1;
+
+  /// 网格里当前聚焦卡片的下标 —— 判断「是不是第一行」要用它。
+  int _gridFocusIndex = 0;
+
   FocusNode get _firstFocus => widget.firstFocusNode ?? _ownedFirst;
 
   /// 「最近添加」始终单独成行：小库（十几部）里它和全库数量相同，
@@ -167,7 +173,23 @@ class _TvMovieHomeState extends State<TvMovieHome> {
     final down = key == LogicalKeyboardKey.arrowDown;
     if (!up && !down) return KeyEventResult.ignored;
     final lane = _focusLane;
-    if (lane == null) return KeyEventResult.ignored;
+    // 焦点在「全部影片」网格里：↑ 回到上面最后一条泳道的同一张卡片。
+    //
+    // 以前这里一律 ignored，交给外壳按焦点矩形找「上一行」—— 外壳是从整页
+    // 找最近的矩形，网格第一行上方最近的是……泳道下面那圈留白，于是经常
+    // 直接落到顶部 tab，用户看到的就是「跳过最近添加那一条」。
+    if (lane == null) {
+      if (!up || _gridFocusIndex >= _gridColumns) return KeyEventResult.ignored;
+      if (_lanes.isEmpty) return KeyEventResult.ignored;
+      final last = _lanes.last;
+      if (last.count <= 0) return KeyEventResult.ignored;
+      final target = _node(
+        '${last.id}:${(_lastLaneIndex[last.id] ?? 0).clamp(0, last.count - 1)}',
+      );
+      target.requestFocus();
+      _ensureVisible(target);
+      return KeyEventResult.handled;
+    }
     final index = _lanes.indexWhere((item) => item.id == lane);
     if (index < 0) return KeyEventResult.ignored;
 
@@ -463,6 +485,7 @@ class _TvMovieHomeState extends State<TvMovieHome> {
             builder: (context, constraints) {
               final gap = m.px(14);
               final columns = tvGridColumns(constraints.maxWidth, m);
+              _gridColumns = columns;
               // 减 1px 余量：浮点误差会让最后一列刚好溢出、掉到下一行。
               final width =
                   (constraints.maxWidth - gap * (columns - 1)) / columns - 1;
@@ -470,8 +493,8 @@ class _TvMovieHomeState extends State<TvMovieHome> {
                 spacing: gap,
                 runSpacing: m.px(14),
                 children: [
-                  for (final entry in widget.entries)
-                    _buildEntryCard(entry, width),
+                  for (var i = 0; i < widget.entries.length; i += 1)
+                    _buildEntryCard(widget.entries[i], width, i),
                 ],
               );
             },
@@ -481,9 +504,12 @@ class _TvMovieHomeState extends State<TvMovieHome> {
     );
   }
 
-  Widget _buildEntryCard(TvMovieEntry entry, double width) {
+  Widget _buildEntryCard(TvMovieEntry entry, double width, int index) {
     final movie = entry.movie;
-    void onFocused() => _rememberEntry(entry);
+    void onFocused() {
+      _gridFocusIndex = index;
+      _rememberEntry(entry);
+    }
     if (movie != null) {
       return TvMoviePosterCard(
         item: movie,

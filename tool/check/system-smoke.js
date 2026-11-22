@@ -233,18 +233,18 @@ const alive = (pid) => {
     payload: { sub: 'root-smoke', scopes: ['*'] },
   });
   const rootBearer = { authorization: 'Bearer ' + (rootTok.json().token || '') };
-  r = await app.inject({
+  await app.inject({
     method: 'POST',
     url: '/api/v1/accounts/users/create',
     headers: rootBearer,
     payload: { username: 'tvsmoke', password: 'tv-pass-123', scopes: ['video:read'] },
   });
-  const tvLoing = await app.inject({
+  const tvLogin = await app.inject({
     method: 'POST',
     url: '/api/v1/auth/login',
     payload: { username: 'tvsmoke', password: 'tv-pass-123' },
   });
-  const tvBearer = { authorization: 'Bearer ' + (tvLoing.json().token || '') };
+  const tvBearer = { authorization: 'Bearer ' + (tvLogin.json().token || '') };
   r = await app.inject({
     method: 'GET',
     url: '/api/v1/system/update/check?component=client_android&current=1.0.0&currentCode=1',

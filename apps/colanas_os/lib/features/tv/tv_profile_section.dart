@@ -89,6 +89,13 @@ class _TvProfileSectionState extends State<TvProfileSection> {
     if (mounted) setState(() {});
   }
 
+  /// 「混为立体声」：电视接双声道音箱 / 回音壁时必须能手动降混。
+  /// 默认关（不勾），勾上就是把 5.1 / 7.1 压成两声道。
+  Future<void> _toggleDownmix(bool value) async {
+    await PlayPreferences.saveAudio(downmix: value);
+    if (mounted) setState(() {});
+  }
+
   Future<void> _logout(BuildContext context) async {
     final ok = await showDialog<bool>(
       context: context,
@@ -289,6 +296,17 @@ class _TvProfileSectionState extends State<TvProfileSection> {
             hint: tr('video.client.audioNormalizeHint'),
             value: _normalizeLabel(PlayPreferences.audioNormalizeMode),
             onTap: _pickNormalize,
+          ),
+          SizedBox(height: m.px(12)),
+          // 降混：电视接的是双声道音箱 / 回音壁时，5.1 / 7.1 的片源必须能压成
+          // 两声道，否则人声对白被混进中置声道，听起来就是「背景声大、说话小」。
+          // 默认不勾（与其它端一致）；勾上后由服务端把音频轨降混成 AAC 立体声。
+          _ToggleSettingRow(
+            icon: Icons.surround_sound_outlined,
+            label: tr('video.client.downmix'),
+            hint: tr('video.client.downmixHint'),
+            value: PlayPreferences.audioDownmix,
+            onChanged: _toggleDownmix,
           ),
           SizedBox(height: m.px(28)),
           Wrap(

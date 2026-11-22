@@ -1678,7 +1678,13 @@ class I18nKeys {
   static const playerColorFallback = 'player.colorFallback';
   static const playerAudioFallback = 'player.audioFallback';
   static const playerDirectFailed = 'player.directFailed';
+  static const playerTunnelOffRetry = 'player.tunnelOffRetry';
   static const playerDvDirect = 'player.dvDirect';
+  static const playerHdrDirect = 'player.hdrDirect';
+  static const playerActive = 'player.active';
+  static const playerInactiveTranscode = 'player.inactiveTranscode';
+  static const playerInactiveNativeOff = 'player.inactiveNativeOff';
+  static const playerInactiveToneMap = 'player.inactiveToneMap';
   static const playerRenderer = 'player.renderer';
   static const playerCompatOn = 'player.compatOn';
   static const playerDolbyVision = 'player.dolbyVision';
@@ -3158,4 +3164,4 @@ class I18nKeys {
 }
 
 /// 契约键总数（生成时确定），供完整性自检使用。
-const int i18nKeyCount = 3106;
+const int i18nKeyCount = 3112;

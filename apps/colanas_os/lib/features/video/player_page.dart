@@ -1,7 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart'
-    show kIsWeb, defaultTargetPlatform, TargetPlatform;
+    show kIsWeb, kReleaseMode, defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
@@ -10,6 +10,7 @@ import 'package:nas_core/nas_core.dart';
 import 'package:nas_ui/nas_ui.dart';
 
 import '../../core/app_settings.dart';
+import '../../core/android_notification_permission.dart';
 import '../../core/audio_focus.dart';
 import '../../core/audio_track_label.dart';
 import '../../core/client_log.dart';
@@ -157,7 +158,14 @@ class _PlayerPageState extends State<PlayerPage> {
   late final TvMedia3PlayerController _tvMedia3Player;
   TvMedia3State _lastTvMedia3State = const TvMedia3State();
   bool _nativeTvActive = false;
+
+  /// 原生 SurfaceView 已经挂进窗口。只有它为 true 才敢把 Flutter 画面做成透明：
+  /// 否则窗口短暂透明，手机桌面可能从缝里闪出来。
+  bool _nativeSurfaceReady = false;
   bool _nativeFallbackAttempted = false;
+
+  /// 隧道模式失败后退回「非隧道」重开过没有（每个播放页只试一次）。
+  bool _tunnelOffRetried = false;
   int _nativeDecoderLoggedGeneration = -1;
   int _nativeFirstFrameLoggedGeneration = -1;
 
@@ -277,26 +285,24 @@ class _PlayerPageState extends State<PlayerPage> {
   /// InheritedWidget，而 TV 模式本来就是全局开关，两者取值一致。
   bool get _tvMode => AppSettings.instance.tvMode.value;
 
-  /// Android 上「系统播放器直通」是否可用。
+  /// Android 上「原生播放器直通」是否可用。
   ///
-  /// HDR / 杜比视界片源交给 Media3 + SurfaceView：DV RPU 由系统解码器处理，
-  /// 手机上能真输出杜比视界；libmpv 那条链路不解析 DV RPU，Profile 5 直连必紫。
+  /// HDR / 杜比视界片源交给 Media3 + 裸 SurfaceView：DV RPU 由系统解码器处理，
+  /// 能真输出杜比视界；libmpv 那条链路不解析 DV RPU，Profile 5 直连必紫。
+  /// 用户开了「HDR 色调映射」就表示他要服务端转码，这里主动让路。
   ///
-  /// 用户开了「HDR 色调映射」就表示他要服务端转码，这里主动让路（走 libmpv + 转码）。
-  /// 手机 / 平板同样适用 —— 既能用上本机的杜比，也方便在手机上验电视端表现。
+  /// 手机 / 平板 / 电视统一走原生 Media3 + 裸 SurfaceView；画面不再经过
+  /// Flutter 纹理，HDR / 杜比视界元数据能直达显示端。
   bool get _androidNativeHdrEligible =>
       !kIsWeb &&
       defaultTargetPlatform == TargetPlatform.android &&
       _srcHdr.isHdr &&
       !PlayPreferences.toneMap;
 
-  /// 电视与手机 / 平板共用同一个播放内核。
-  ///
-  /// 直连、原片封装（视频 copy + 音频 AAC）、重编码三种流都交给 Media3 ——
-  /// 之前只在「直连」时切过去，结果是：音频不支持的片子被换成
-  /// 「视频 copy + 音频 AAC」会话后又退回 libmpv，而 libmpv 播不了
-  /// 杜比视界封装流（DV Profile 5 无 RPU 解析），画面直接黑 / 紫。
-  bool get _shouldUseNativeTvPlayer => _androidNativeHdrEligible;
+  /// Android 上视频一律交给原生 Media3（含 SDR / 转码 HLS）。
+  /// 其它平台（桌面 / Web）仍用 media_kit。
+  bool get _shouldUseNativeTvPlayer =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
 
   Duration get _playbackPosition =>
       _nativeTvActive ? _tvMedia3Player.state.position : _player.state.position;
@@ -324,10 +330,24 @@ class _PlayerPageState extends State<PlayerPage> {
     return decoder.isEmpty ? 'Media3' : 'Media3 · $decoder';
   }
 
-  bool get _dolbyVisionDirectActive =>
+  /// 片源 HDR 是否走了「原生 Surface 直出」。
+  ///
+  /// 只有 Media3 原生通道（安卓电视）才算激活：手机上 libmpv 渲染进 Flutter
+  /// 纹理，HDR 元数据到不了屏幕；转码（非视频 copy）也已经是 SDR。
+  bool get _hdrDirectActive =>
       _nativeTvActive &&
-      _srcHdr == HdrLevel.dolbyVision &&
+      _srcHdr.isHdr &&
       (!_isTranscode || _isVideoCopySession);
+
+  /// 播放信息面板里的「已激活 / 未激活 + 原因」。
+  String get _directStatusText {
+    if (!_srcHdr.isHdr) return '—';
+    if (_hdrDirectActive) return tr('player.active');
+    if (PlayPreferences.toneMap) return tr('player.inactiveToneMap');
+    if (_isTranscode) return tr('player.inactiveTranscode');
+    return tr('player.inactiveNativeOff');
+  }
+
   Stream<Duration> get _positionStream => _nativeTvActive
       ? _tvMedia3Player.positionStream
       : _player.stream.position;
@@ -545,6 +565,9 @@ class _PlayerPageState extends State<PlayerPage> {
   /// 其他设备或网络异常显示错误与可选转码入口，不以码率/分辨率自动改变策略。
   static const _directBlockKey = 'player.directBlock';
 
+  /// 直连清单一次性清空的标记（见 [_clearLegacyDirectBlocks]）。
+  static const _directBlockResetKey = 'player.directBlock.resetMedia3';
+
   /// 服务端回传的**实际**编码（降级后以它为准）；为空表示还没出片。
   String? _actualCodec;
   bool? _actualToneMap;
@@ -626,6 +649,25 @@ class _PlayerPageState extends State<PlayerPage> {
     return raw.split(',').contains(key);
   }
 
+  /// 一次性清空「直连解不动」清单。
+  ///
+  /// 那些记录是 libmpv 判出来的（它不解析 DV RPU，DV / 10bit HEVC 直连必黑，
+  /// 于是写进 `hevc@1608` 这类指纹）。安卓现在统一走 Media3 + 系统解码器，
+  /// 失败会明确回调，不认这份旧账 —— 但用户在旧版本里已经攒下的记录不会自己消失，
+  /// 表现就是「这部 DV 片永远强制转码」。这里清一次并打上标记。
+  Future<void> _clearLegacyDirectBlocks() async {
+    final store = SettingsStore.instance;
+    if (store.getString(_directBlockResetKey) == '1') return;
+    if ((store.getString(_directBlockKey) ?? '').isNotEmpty) {
+      await store.setString(_directBlockKey, '');
+      ClientLogger.instance.info(
+        '清空旧的直连失败记录（libmpv 时代）',
+        route: 'player.migrate',
+      );
+    }
+    await store.setString(_directBlockResetKey, '1');
+  }
+
   /// 记住 / 忘掉「这台机器直连解不动这个特征」。
   Future<void> _markDirectBlocked(bool blocked) async {
     final key = _directKey;
@@ -686,6 +728,14 @@ class _PlayerPageState extends State<PlayerPage> {
     _player = Player();
     _tvMedia3Player = TvMedia3PlayerController();
     _logSubs.add(_tvMedia3Player.states.listen(_onTvMedia3State));
+    // Android 13+ 没有 POST_NOTIFICATIONS 就看不到状态栏的媒体卡。
+    // 音乐 / 播客链路早就申请了，视频这条以前漏了 —— 用户反馈「播电影状态栏没有卡片」。
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      unawaited(ensureAndroidNotificationPermission());
+      // 安卓早已全量交给原生 Media3（系统解码器），但早期 libmpv 链路学到的
+      // 「直连解不动」记录还留在设置里，会把 HDR / 杜比视界片永久锁进转码档。
+      unawaited(_clearLegacyDirectBlocks());
+    }
     // 停滞看门狗**在这里起一次**，之后整页生命周期内不再取消（除 dispose）。
     // 以前是每个 seek / 每次 open 各挂一个、还互相 cancel，于是留下了三次
     // 「画面冻住了但日志里一条告警都没有」的事故。常驻之后，任何一条路径都
@@ -1005,7 +1055,9 @@ class _PlayerPageState extends State<PlayerPage> {
       _nativeDecoderLoggedGeneration = _openGen;
       ClientLogger.instance.info(
         'Media3 首帧/解码器就绪 decoder=${state.videoDecoder} '
-        'size=${state.videoWidth}x${state.videoHeight}',
+        'size=${state.videoWidth}x${state.videoHeight} '
+        'view=${state.viewWidth}x${state.viewHeight} '
+        'surface=${state.surfaceWidth}x${state.surfaceHeight}',
         route: 'player.decode/${_sessionId ?? 'direct'}',
       );
     }
@@ -1020,8 +1072,16 @@ class _PlayerPageState extends State<PlayerPage> {
       );
     }
     final error = state.error;
-    if (error != null && error.isNotEmpty) {
+    if (_nativeTvActive && error != null && error.isNotEmpty) {
       unawaited(_handleTvMedia3Error(error));
+    }
+    // 音频没有解码器（手机上的 E-AC3 / DTS-HD）：画面继续走原片，
+    // 另外向服务端要一条 AAC 音频流合并进来。整片转封装会丢杜比配置，
+    // 所以只换音轨、视频不动。
+    if (_nativeTvActive &&
+        state.audioUnsupported &&
+        !_nativeAudioFallbackAttempted) {
+      unawaited(_startAudioMerge());
     }
     if (_nativeTvActive &&
         error == null &&
@@ -1067,7 +1127,9 @@ class _PlayerPageState extends State<PlayerPage> {
     // 绝不能走 `_transcodeFallback` —— 那会把 4K 杜比视界整片重压成 1440p，
     // 为了一个音轨把画质和起播时间全赔进去（实测：转码任务直接排不上队、
     // 首片等 8 秒后被取消，用户看到的就是「转码也播不出来」）。
-    final audioOnly = message.toLowerCase().contains('no suitable decoder for audio');
+    final audioOnly = message.toLowerCase().contains(
+      'no suitable decoder for audio',
+    );
     if (_nativeTvActive &&
         audioOnly &&
         widget.itemId != null &&
@@ -1081,7 +1143,12 @@ class _PlayerPageState extends State<PlayerPage> {
         if (mounted) setState(() => _preparing = true);
         // 只让服务端转音频（视频原件不动）：返回的 HLS 里视频是 copy，
         // 我们只取它的音频轨，视频轨在 Media3 侧被禁用。
-        final audioStream = await _ensureTranscode('original', defaultTranscodeCodec());
+        // `audioOnly`：别让服务端顺手把 4K DV 也 tonemap 一遍，这条流只取音频。
+        final audioStream = await _ensureTranscode(
+          'original',
+          defaultTranscodeCodec(),
+          audioOnly: true,
+        );
         if (!mounted) return;
         final resumeAt = _playbackPosition;
         setState(() {
@@ -1102,6 +1169,30 @@ class _PlayerPageState extends State<PlayerPage> {
         if (mounted) setState(() => _preparing = false);
         ClientLogger.instance.warn('音频分离失败：$e', route: 'player.audio');
       }
+      return;
+    }
+    // 电视上的「隧道模式」先关掉再试一次：部分电视芯片（尤其杜比视界）不支持
+    // tunneled playback，Media3 打开就报 no suitable decoder / decoder init，
+    // 而同一路原片关掉隧道后能正常出帧。不先试这一步，表现就是
+    // 「这片在手机上原片直出，在电视上被直接丢去转码」。
+    if (_nativeTvActive &&
+        _tvMode &&
+        !_tunnelOffRetried &&
+        !_isTranscode &&
+        widget.itemId != null &&
+        _isExplicitDecoderOpenFailure(message)) {
+      _tunnelOffRetried = true;
+      ClientLogger.instance.warn(
+        'Media3 隧道模式失败 → 关隧道重开原片：$message',
+        route: 'player',
+      );
+      _showNotice(tr('player.tunnelOffRetry'), log: '关隧道重试原片');
+      final resumeAt = _playbackPosition;
+      await _openUrl(
+        _url,
+        seekTo: resumeAt > Duration.zero ? resumeAt : null,
+        retries: 0,
+      );
       return;
     }
     // 直连解不了就退到「视频 copy + 音频转 AAC」的转码会话。
@@ -1130,6 +1221,47 @@ class _PlayerPageState extends State<PlayerPage> {
     _renewIfTokenExpired(message);
   }
 
+  /// 音频没有解码器时：建一条「视频原样 copy + 音频 AAC」的会话，
+  /// 只把这条流的音频合并到原片视频上播放。
+  ///
+  /// 不能整片转封装后再播 —— ffmpeg 传不出杜比的 dvcC 配置（实测三种 tag
+  /// 都不写），画面会黑；而重编码又要为一条音轨赔掉整片画质。
+  Future<void> _startAudioMerge() async {
+    if (_nativeAudioFallbackAttempted || widget.itemId == null) return;
+    _nativeAudioFallbackAttempted = true;
+    _showNotice(
+      tr('player.audioFallback'),
+      log: 'Media3 音频无解码器 → 视频原片 + 音频 AAC 合并播放',
+    );
+    try {
+      if (mounted) setState(() => _preparing = true);
+      final audioStream = await _ensureTranscode(
+        'original',
+        defaultTranscodeCodec(),
+        audioOnly: true,
+      );
+      if (!mounted) return;
+      final resumeAt = _playbackPosition;
+      setState(() {
+        _error = null;
+        _isTranscode = true;
+        _preset = 'original';
+        _codec = 'original';
+        _mergedAudioUrl = audioStream;
+        _preparing = false;
+      });
+      // 视频仍用原片直链（杜比配置完整），音频由 _mergedAudioUrl 提供
+      await _openUrl(
+        _directUrl,
+        seekTo: resumeAt > Duration.zero ? resumeAt : null,
+        retries: 3,
+      );
+    } catch (e) {
+      if (mounted) setState(() => _preparing = false);
+      ClientLogger.instance.warn('音频分离失败：$e', route: 'player.audio');
+    }
+  }
+
   @override
   void dispose() {
     _hideTimer?.cancel();
@@ -1138,6 +1270,8 @@ class _PlayerPageState extends State<PlayerPage> {
     _stallTicker?.cancel();
     _seekByTimer?.cancel();
     _tryOriginalTimer?.cancel();
+    // 离开播放页：根背景层恢复，原生视频层在下面同步摘掉
+    nativeVideoLayerActive.value = false;
     for (final sub in _logSubs) {
       sub.cancel();
     }
@@ -1173,8 +1307,23 @@ class _PlayerPageState extends State<PlayerPage> {
     final openGen = ++_openGen;
     _url = u;
     final useNativeTv = _shouldUseNativeTvPlayer;
+    // 排障用：一条日志看清这次到底走哪条链路、为什么 —— 「电视上这片被强制转码」
+    // 时，看 preset / codec / directBlocked / srcH 就知道是偏好档、旧记录还是
+    // 颜色判定把它拦下来的，不用再猜。
+    ClientLogger.instance.info(
+      '策略 media3=$useNativeTv tv=$_tvMode preset=$_preset codec=$_codec '
+      'hdr=${_srcHdr.reason} srcH=$_srcHeight directBlocked=$_directBlocked '
+      'tunneled=${_tvMode && !_tunnelOffRetried} '
+      'toneMapPref=${PlayPreferences.toneMap} displayHdr=${_display.maxHdr.reason}',
+      route: 'player.strategy',
+    );
     if (useNativeTv != _nativeTvActive) {
-      setState(() => _nativeTvActive = useNativeTv);
+      setState(() {
+        _nativeTvActive = useNativeTv;
+        _nativeSurfaceReady = false;
+      });
+      // 切走原生链路时根背景立刻恢复；切到原生则等原生视图真正挂上再让路
+      if (!useNativeTv) nativeVideoLayerActive.value = false;
       if (useNativeTv) {
         await _player.stop();
       } else {
@@ -1216,7 +1365,9 @@ class _PlayerPageState extends State<PlayerPage> {
       // `play: want` 显式给意图：media_kit 的默认值是 true，换档时如果用户
       // 本来是暂停状态（在挑画质），默认值会莫名其妙自己播起来。
       if (useNativeTv) {
-        final formatHint = _isTranscode
+        // 音视频分离时 `u` 仍是原片直链（只有音频走 HLS），不能按 HLS 声明，
+        // 否则 Media3 会把 MKV/MP4 当 m3u8 解析直接失败。
+        final formatHint = (_isTranscode && _mergedAudioUrl == null)
             ? 'hls'
             : (widget.compat?['container'] as String? ??
                   Uri.tryParse(u)?.path.split('.').last ??
@@ -1226,10 +1377,14 @@ class _PlayerPageState extends State<PlayerPage> {
           positionMs: seekTo?.inMilliseconds ?? 0,
           play: want,
           formatHint: formatHint,
-          // 隧道模式只在电视上开：手机 / 平板打开会黑屏（见 TvMedia3Playback.kt）
-          tunneled: _tvMode,
+          // 隧道模式只在电视上开：手机 / 平板打开会黑屏（见 TvMedia3Playback.kt）。
+          // 这台电视的隧道模式被判定不受支持后（[_tunnelOffRetried]），
+          // 后续重开一律走非隧道，别再撞同一堵墙。
+          tunneled: _tvMode && !_tunnelOffRetried,
           // 音频轨手机解不了时，视频仍走原片、音频单独取服务端 AAC
           audioUrl: _mergedAudioUrl,
+          // 通知栏 / 状态栏媒体卡的标题
+          title: widget.title,
         );
       } else {
         await _player.open(Media(u), play: want);
@@ -1704,10 +1859,7 @@ class _PlayerPageState extends State<PlayerPage> {
         return;
       } catch (e) {
         if (mounted) setState(() => _preparing = false);
-        ClientLogger.instance.warn(
-          '原片封装也起不来：$e',
-          route: 'player.directGuard',
-        );
+        ClientLogger.instance.warn('原片封装也起不来：$e', route: 'player.directGuard');
       }
     }
     if (!_tvMode || !confirmedDecodeFailure) {
@@ -1724,7 +1876,14 @@ class _PlayerPageState extends State<PlayerPage> {
     final fallback = _transcodeFallback(codec: fallbackCodec);
     // 只有「数据在手、无视频帧 / 解码不动」才记成设备解码失败，下次免试；
     // 网慢导致的卡顿不记（换个网络它就能直连）。
-    if (confirmedDecodeFailure) unawaited(_markDirectBlocked(true));
+    //
+    // 原生 Media3 不记：杜比视界的解码器初始化本来就慢（4K DV 实测 1s 起），
+    // 用这套「7 秒没画面就判死」的启发式去否定系统解码器，代价是整个
+    // `hevc@1608` 特征以后永远转码。Media3 自己有明确错误回调（见
+    // [_handleTvMedia3Error]），只在它真报错时才降档。
+    if (confirmedDecodeFailure && !_shouldUseNativeTvPlayer) {
+      unawaited(_markDirectBlocked(true));
+    }
     // persist: false —— 这是自动兜底，不能写进用户偏好。存下来的结果就是
     // 「下次一进播放页直接从 4K 7M 起步」，用户再也调不回来。
     // notify: false —— 提示由本方法统一发一条「原画直连没有画面，已切到 X」，
@@ -1760,6 +1919,7 @@ class _PlayerPageState extends State<PlayerPage> {
     String preset,
     String codec, {
     int startMs = 0,
+    bool audioOnly = false,
   }) async {
     final id = widget.itemId!;
     if (codec == 'original' || !codecPlayable(codec)) {
@@ -1774,7 +1934,16 @@ class _PlayerPageState extends State<PlayerPage> {
         codec: outCodec,
         audioIndex: _audioIndex,
         // toneMap 是客户端显式策略；服务端只对 HDR/DV/HLG 片源执行映射。
-        toneMap: PlayPreferences.toneMap,
+        //
+        // 杜比视界是个例外：只要走到转码，就说明这条链路显示不了 DV
+        // （手机 libmpv 不解析 RPU，纹理通道又丢元数据），那转出来必须真的
+        // 映射成 SDR —— 否则等于白转一遍，颜色还是错的。
+        //
+        // `audioOnly` 例外：这条会话只取音频（视频仍播原片直链），
+        // 让服务端去 tonemap 等于白白重压一遍 4K DV，一点用都没有。
+        toneMap: audioOnly
+            ? false
+            : (PlayPreferences.toneMap || _srcHdr == HdrLevel.dolbyVision),
         audioNormalize: PlayPreferences.audioNormalizeOverride,
         audioDownmix: PlayPreferences.audioDownmix ? true : null,
         // 服务端一律按段转（默认 3 分钟），播放位置靠近末尾才续下一段。
@@ -2027,6 +2196,14 @@ class _PlayerPageState extends State<PlayerPage> {
   /// `preset=original session=null`，直连一开播就死在音频滤镜初始化上）。
   static const String _normalizeFilter = 'dynaudnorm=f=250:g=15';
 
+  /// 这台设备的 libmpv 有没有 lavfi 音频滤镜。
+  ///
+  /// 安卓的 libmpv 构建不带 lavfi：挂 `af=dynaudnorm...` 会直接报
+  /// 「Option af: dynaudnorm doesn't exist.」，开播瞬间闪一屏错误（2026-11-22
+  /// 真机日志）。响度归一只在桌面 / iOS 生效；安卓端跳过，降混不受影响。
+  static bool get _lavfiAudioFilters =>
+      !kIsWeb && defaultTargetPlatform != TargetPlatform.android;
+
   /// 直连时音频处理在播放器本地做（libmpv 自带滤镜链）；
   /// 转码流的音频已由服务端处理好，必须清掉滤镜，避免双重处理。
   void _applyDirectAudio() {
@@ -2036,6 +2213,7 @@ class _PlayerPageState extends State<PlayerPage> {
     final local = !_isTranscode;
     final normalize =
         local &&
+        _lavfiAudioFilters &&
         !_audioFilterDowngraded &&
         PlayPreferences.audioNormalizeEnabled(
           widget.compat?['audioNormalize'] == true,
@@ -2079,6 +2257,8 @@ class _PlayerPageState extends State<PlayerPage> {
   static bool _isAudioFilterError(String message) {
     final m = message.toLowerCase();
     return m.contains('audio filter') ||
+        // 「Option af: dynaudnorm doesn't exist.」这类缺滤镜的报错
+        m.contains('option af') ||
         (m.contains('filter') && m.contains('initializ'));
   }
 
@@ -2109,8 +2289,12 @@ class _PlayerPageState extends State<PlayerPage> {
   /// 一个音频开关把整部片拖去转封装 —— 那正是「手机上选原片却播不了」的成因：
   /// 会话里视频是 copy、音频转 AAC，落进 original 的 EVENT 列表，
   /// 首片要等、列表还要边播边长。
-  bool get _audioProcessingNeedsRemote =>
-      _audioProcessingRequested && kIsWeb;
+  bool get _audioProcessingNeedsRemote => _audioProcessingRequested && kIsWeb;
+
+  /// 原生 Media3 上的「混为立体声」只能由服务端做：这条链路没有 lavfi 滤镜，
+  /// `audio-channels=stereo` 是 libmpv 的私有属性，Media3 不认。
+  bool get _nativeDownmixNeedsRemote =>
+      _shouldUseNativeTvPlayer && PlayPreferences.audioDownmix;
 
   bool get _isVideoCopySession => _isTranscode && _preset == 'original';
 
@@ -2137,7 +2321,6 @@ class _PlayerPageState extends State<PlayerPage> {
     );
     if (!kIsWeb &&
         defaultTargetPlatform == TargetPlatform.android &&
-        _tvMode &&
         _srcHdr == HdrLevel.dolbyVision) {
       final supportsDolbyVision =
           await TvMedia3PlayerController.supportsDolbyVision();
@@ -2174,10 +2357,10 @@ class _PlayerPageState extends State<PlayerPage> {
     final tv = _tvMode || (kIsWeb && AppSettings.instance.tvMode.value);
     // 用户在播放设置里关掉电视原片直连时，按兼容播放链路处理。
     if (tv && !PlayPreferences.tvDirectOriginal) return true;
-    // Android 全端（手机 / 平板 / TV）在「HDR + 未开色调映射」时都走
-    // Media3 + SurfaceView 直通，DV RPU 由系统解码器处理 —— 这条链路能真输出杜比。
+    // 电视在「HDR + 未开色调映射」时走 Media3 + SurfaceView 直通，
+    // DV RPU 由系统解码器处理 —— 这条链路能真输出杜比。
     if (_androidNativeHdrEligible) return false;
-    // 剩下的都是 libmpv 链路（桌面 / Web / 开了色调映射的 Android）：
+    // 剩下的都是 libmpv 链路（手机 / 平板 / 桌面 / Web / 开了色调映射的 Android）：
     // 它不解析 DV RPU，Profile 5 的 IPTPQc2 会被当普通 YUV 解 —— 必紫。
     // 注意别拿 `DisplayCaps` 放行：它读的是 Android `HdrCapabilities`，
     // 说的是「屏幕能显示什么」，不代表这条播放链路能输出。
@@ -2253,7 +2436,12 @@ class _PlayerPageState extends State<PlayerPage> {
       final colorBlocked = _colorBlocksDirect || toneMapRequested;
       // 上一次同样特征的片源（编码 + 高度）直连就是「有尺寸、画面不走」：
       // 别再黑一遍再说同样的话，直接进转码档。
-      final directBlocked = _directBlocked;
+      //
+      // ⛔ 只对 libmpv 链路生效：这条记忆是 libmpv 的「有尺寸没画面」启发式判出来
+      // 的，原生 Media3 走的是系统解码器、失败会明确回调，拿旧记录拦它等于
+      // 「这片以前直连黑过一次，以后永远转码」—— HDR / 杜比视界片就是这么被
+      // 永久锁进转码档的（日志里那句「直连历史失败（hevc@1608）」）。
+      final directBlocked = _shouldUseNativeTvPlayer ? false : _directBlocked;
       final canKeepSourceVideo =
           wantOriginal &&
           !colorBlocked &&
@@ -2262,6 +2450,25 @@ class _PlayerPageState extends State<PlayerPage> {
           (!kIsWeb || !_needTranscode);
       copyAudio = canKeepSourceVideo && _audioProcessingNeedsRemote;
       toDirect = canKeepSourceVideo && !copyAudio;
+      // 原生 Media3 没有本地滤镜链（libmpv 的 `audio-channels=stereo` 在这里无效）：
+      // 勾了「混为立体声」就让服务端只把音频轨降混成 AAC 立体声，视频继续走原片
+      // 直链 —— 既保住杜比视界 / HDR 的原片直出，又真的把 5.1 压成两声道。
+      //
+      // 每次重新决策都先清掉外挂音频：不降混的这次不该沿用上一次的降混流。
+      _mergedAudioUrl = null;
+      if (canKeepSourceVideo && _nativeDownmixNeedsRemote && !copyAudio) {
+        try {
+          _mergedAudioUrl = await _ensureTranscode(
+            'original',
+            transcodeCodec,
+            audioOnly: true,
+          );
+          if (!mounted) return;
+        } catch (e) {
+          _mergedAudioUrl = null;
+          ClientLogger.instance.warn('降混音频会话创建失败：$e', route: 'player.audio');
+        }
+      }
       // 档位按片源高度收敛：偏好 1080P 但片源只有 720P 时，按 720P 转，
       // 不做放大转码（放大只会更大更糊，还多占 GPU）。菜单同样只列 ≤720P 的档。
       // 「原码但必须转码」时退到「保分辨率」的兜底档。
@@ -2442,10 +2649,7 @@ class _PlayerPageState extends State<PlayerPage> {
     final wanted = targetCodec == 'original'
         ? 'original'
         : (preset == 'original' || (fromDirect && codec != null)
-              ? _transcodeFallback(
-                  codec: targetCodec,
-                  colorOnly: colorBlocked,
-                )
+              ? _transcodeFallback(codec: targetCodec, colorOnly: colorBlocked)
               : preset);
 
     // 直链要求：调用方给的是真直链（compat 存在）且片源本身能直链。
@@ -3000,16 +3204,27 @@ class _PlayerPageState extends State<PlayerPage> {
 
   // ------------------------------------------------------------ 进度手势
   //
-  // 手势：横向拖动 = 快进快退（松手才真跳），
-  // 双击左 / 右两侧 = ±10s，中间双击仍然是播放/暂停。
+  // 手势：横向拖动 = 快进快退（松手才真跳）；
+  // 单击 = 操作栏显隐；双击在手机上是播放 / 暂停，桌面 / Web 仍是全屏。
   // 以前只有底部那条细滑块能拖，手机上一根手指很难抓准；画面区域
   // 那么大一块却只认「单击唤出控件」和「长按 2 倍速」，等于浪费。
 
   Future<void> _onDoubleTap() async {
     if (_locked) return;
-    // 双击 = 进 / 出全屏。以前这里绑的是「左退 10s / 右进 10s / 中间暂停」，
-    // 而用户对播放器的默认预期是双击全屏（全屏按钮坏了以后更是唯一的出路）。
+    // 桌面 / Web：双击 = 进 / 出全屏。
     await _toggleImmersive();
+    _poke();
+  }
+
+  /// 手机端手势：单击唤出 / 收起操作栏，双击播放 / 暂停（不再双击全屏）。
+  bool get _phoneGestures =>
+      !_tvMode &&
+      (defaultTargetPlatform == TargetPlatform.android ||
+          defaultTargetPlatform == TargetPlatform.iOS);
+
+  void _onPhoneDoubleTap() {
+    if (_locked) return;
+    _togglePlay();
     _poke();
   }
 
@@ -4203,6 +4418,38 @@ class _PlayerPageState extends State<PlayerPage> {
     return tags.isEmpty ? base : '$base · ${tags.join(' · ')}';
   }
 
+  /// P0.5 临时探针：用原生 Activity 直接播当前片源，验证真实 DV 输出。
+  ///
+  /// 只在非 release 包里有入口（播放信息面板标题长按），正式版不可达；
+  /// 方案 A 定稿或否掉后，与 `DvProbeActivity.kt`、`AndroidManifest.xml` 条目一起删除。
+  Future<void> _launchDvProbe() async {
+    final url = _directUrl.isNotEmpty ? _directUrl : _url;
+    if (url.isEmpty) return;
+    // 探针会自己起一个播放器：先暂停本页，避免两路音频同时响。
+    await _playbackPause();
+    try {
+      await const MethodChannel('com.colanas.os/dv_probe')
+          .invokeMethod<void>('launch', <String, Object?>{
+            'url': url,
+            'audioUrl': _mergedAudioUrl,
+            'formatHint': _probeFormatHint(),
+          });
+    } on PlatformException catch (e) {
+      ClientLogger.instance.warn(
+        'DV 探针启动失败：${e.message}',
+        route: 'player.probe',
+      );
+    }
+  }
+
+  String _probeFormatHint() {
+    final container = widget.compat?['container'] as String?;
+    if (container != null && container.isNotEmpty) return container;
+    final path = Uri.tryParse(_directUrl)?.path ?? '';
+    final dot = path.lastIndexOf('.');
+    return dot >= 0 ? path.substring(dot + 1) : '';
+  }
+
   Future<void> _showInfo() async {
     final c = widget.compat ?? const <String, dynamic>{};
     String? v(dynamic x) => x == null || '$x'.isEmpty ? '—' : '$x';
@@ -4222,15 +4469,25 @@ class _PlayerPageState extends State<PlayerPage> {
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: const Color(0xFF1B1B1B),
-      builder: (_) => Padding(
+      // 信息行会随片源变多（HDR 直通 / DV / 设备能力…），小屏上不再固定
+      // 9/16 高度，改成可滚动 + 最多占 80% 屏高，避免 RenderFlex overflow。
+      isScrollControlled: true,
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.sizeOf(context).height * 0.8,
+      ),
+      builder: (_) => SingleChildScrollView(
         padding: const EdgeInsets.all(NasTokens.spaceLg),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              tr('player.mediaInfo'),
-              style: const TextStyle(color: Colors.white, fontSize: 17),
+            GestureDetector(
+              // P0.5 临时探针入口：仅非 release 包，长按标题拉起原生 DV 播放页。
+              onLongPress: kReleaseMode ? null : _launchDvProbe,
+              child: Text(
+                tr('player.mediaInfo'),
+                style: const TextStyle(color: Colors.white, fontSize: 17),
+              ),
             ),
             const SizedBox(height: NasTokens.spaceMd),
             _infoRow(
@@ -4289,11 +4546,10 @@ class _PlayerPageState extends State<PlayerPage> {
                   ? tr('player.on')
                   : tr('player.off'),
             ),
+            _infoRow(tr('player.hdrDirect'), _directStatusText),
             _infoRow(
               tr('player.dvDirect'),
-              _dolbyVisionDirectActive || _caps.dolbyVisionDirect
-                  ? tr('player.on')
-                  : tr('player.off'),
+              _srcHdr == HdrLevel.dolbyVision ? _directStatusText : '—',
             ),
             if (_display.known)
               _infoRow(
@@ -5089,7 +5345,12 @@ class _PlayerPageState extends State<PlayerPage> {
   /// 在零尺寸盒子里拿不到 slot，表现是黑屏但声音正常。
   Widget _videoSurface() {
     if (_nativeTvActive) {
-      return TvMedia3PlayerSurface(controller: _tvMedia3Player);
+      // 原生视频层（裸 SurfaceView）由 Activity 垫在 Flutter 下面，这里只占位。
+      // 不加 key：换档 / 重开同一页时不要重新挂摘原生视图，否则会黑一下。
+      return TvMedia3PlayerSurface(
+        controller: _tvMedia3Player,
+        onAttached: _onNativeSurfaceAttached,
+      );
     }
     return Video(
       controller: _controller,
@@ -5097,6 +5358,14 @@ class _PlayerPageState extends State<PlayerPage> {
       fit: _fit,
       fill: Colors.black,
     );
+  }
+
+  /// 原生 SurfaceView 挂上窗口后，才把整页 / 根背景改成透明。
+  void _onNativeSurfaceAttached() {
+    if (!mounted || _nativeSurfaceReady) return;
+    setState(() => _nativeSurfaceReady = true);
+    // 根背景层在 Navigator 下面，必须收起，否则会盖住视频
+    nativeVideoLayerActive.value = true;
   }
 
   /// 错误页上的恢复入口：重新打开当前地址。
@@ -5687,11 +5956,10 @@ class _PlayerPageState extends State<PlayerPage> {
         tr('player.toneMap'),
         _srcHdr.isHdr ? tr('player.on') : tr('player.off'),
       ),
+      row(tr('player.hdrDirect'), _directStatusText),
       row(
         tr('player.dvDirect'),
-        _dolbyVisionDirectActive || _caps.dolbyVisionDirect
-            ? tr('player.on')
-            : tr('player.off'),
+        _srcHdr == HdrLevel.dolbyVision ? _directStatusText : '—',
       ),
     ];
     return [
@@ -5956,7 +6224,12 @@ class _PlayerPageState extends State<PlayerPage> {
           return result;
         },
         child: Scaffold(
-          backgroundColor: Colors.black,
+          // 原生 SurfaceView 真正挂上之前保持黑底：窗口此时还是半透明的，
+          // 过早露出会闪到手机桌面。挂上后整页透明，视频从下面露出来；
+          // 黑边由原生 PlayerView 的黑底提供。
+          backgroundColor: _nativeTvActive && _nativeSurfaceReady
+              ? Colors.transparent
+              : Colors.black,
           body: Stack(
             // 必须 expand：字幕层 / 状态层在没内容时返回 SizedBox.shrink()，
             // 它们是「非定位子节点」，默认的 StackFit.loose 会据此把整个 Stack
@@ -5973,8 +6246,10 @@ class _PlayerPageState extends State<PlayerPage> {
                     behavior: HitTestBehavior.opaque,
                     // 单击 = 切换控件显隐（也是进 / 出沉浸的唯一手势）
                     onTap: _toggleControls,
-                    // 双击 = 全屏（见 _onDoubleTap）
-                    onDoubleTap: _onDoubleTap,
+                    // 手机：双击 = 播放 / 暂停；桌面 / Web：双击 = 全屏
+                    onDoubleTap: _phoneGestures
+                        ? _onPhoneDoubleTap
+                        : _onDoubleTap,
                     // 横向拖动整块画面 = 快进快退（松手才真跳，见 _onSeekDragEnd）
                     onHorizontalDragStart: _onSeekDragStart,
                     onHorizontalDragUpdate: _onSeekDragUpdate,

@@ -687,6 +687,13 @@ class _TvSearchSectionState extends State<TvSearchSection> {
       return KeyEventResult.handled;
     }
     if (key == LogicalKeyboardKey.arrowUp) {
+      final keys = _visibleKeys;
+      // 已经在第一个栏目（最近添加 / 电影那一行）还按上：**交还给外壳**。
+      // 以前这里静默吞掉，用户在结果区一直按上就是「卡住」——只有按返回才出得去，
+      // 而外壳那条「内容区最顶上按上 → 顶部 tab」的通路永远收不到这个键。
+      if (keys.isNotEmpty && keys.first == sectionKey) {
+        return KeyEventResult.ignored;
+      }
       _moveSection(sectionKey, index, -1);
       return KeyEventResult.handled;
     }
@@ -740,8 +747,11 @@ class _TvSearchSectionState extends State<TvSearchSection> {
       if (row > 0) {
         final target = rows[row - 1];
         target[col.clamp(0, target.length - 1)].requestFocus();
+        return KeyEventResult.handled;
       }
-      return KeyEventResult.handled;
+      // 键盘第一行再往上：交还给外壳 → 顶部 tab。以前这里吞掉，
+      // 用户只能按返回键，和「结果区按上也出不去」是同一个坑。
+      return KeyEventResult.ignored;
     }
     if (key == LogicalKeyboardKey.arrowDown) {
       if (row == rows.length - 1) {
