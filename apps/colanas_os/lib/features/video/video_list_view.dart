@@ -1242,6 +1242,12 @@ class _VideoListViewState extends State<VideoListView> {
               title: Text(tr('video.action.locateFile')),
               onTap: () => Navigator.pop(ctx, 'detail'),
             ),
+            if (widget.jp && item.actors.isNotEmpty)
+              ListTile(
+                leading: const Icon(Icons.portrait_outlined, size: 22),
+                title: Text(tr('video.action.setActorCover')),
+                onTap: () => Navigator.pop(ctx, 'actorCover'),
+              ),
             const Divider(),
             ListTile(
               leading: const Icon(Icons.auto_awesome_outlined, size: 22),
@@ -1304,6 +1310,13 @@ class _VideoListViewState extends State<VideoListView> {
       icon: Icons.open_in_new,
       onSelected: () => _videoAction('detail', item),
     ),
+    // 日本库专有：把这部片设为她的封面（演员列表网格用），普通库没有演员概念
+    if (widget.jp && item.actors.isNotEmpty)
+      NasMenuEntry(
+        label: tr('video.action.setActorCover'),
+        icon: Icons.portrait_outlined,
+        onSelected: () => _videoAction('actorCover', item),
+      ),
     if (offlineSupported)
       NasMenuEntry(
         // 「下载到本机」：公共下载弹窗（分辨率 / 编码 / 字幕可选）。
@@ -1351,6 +1364,8 @@ class _VideoListViewState extends State<VideoListView> {
       case 'detail':
         if (!mounted) return;
         openVideoDetail(context, item);
+      case 'actorCover':
+        await _setActorCover(item);
       case 'scrape':
         await _scrapeOne(item);
       case 'match':
@@ -1384,6 +1399,42 @@ class _VideoListViewState extends State<VideoListView> {
         if (toTrash == null || !mounted) return;
         await deleteVideoItemsNow(context, [item.id], toTrash: toTrash);
         await _load();
+    }
+  }
+
+  /// 把当前影片设为「她的封面」：演员列表网格优先用它，落空自动回落默认选片。
+  ///
+  /// 一部片常有多个演员（合演 / 合集），多于一位时让用户选，不替她猜。
+  Future<void> _setActorCover(VideoItem item) async {
+    final actors = item.actors.where((e) => e.trim().isNotEmpty).toList();
+    if (actors.isEmpty) return;
+    var name = actors.first.trim();
+    if (actors.length > 1) {
+      final picked = await showDialog<String>(
+        context: context,
+        builder: (ctx) => SimpleDialog(
+          title: Text(tr('video.jp.coverPick')),
+          children: [
+            for (final a in actors)
+              SimpleDialogOption(
+                onPressed: () => Navigator.pop(ctx, a.trim()),
+                child: Text(a.trim()),
+              ),
+          ],
+        ),
+      );
+      if (picked == null || !mounted) return;
+      name = picked;
+    }
+    try {
+      await ApiSession.instance.client.videoJpActorCover(
+        body: {'name': name, 'itemId': item.id},
+      );
+      if (!mounted) return;
+      NasSnack.show(context, tr('video.jp.coverDone', {'name': name}));
+    } catch (e) {
+      if (!mounted) return;
+      NasSnack.show(context, '$e');
     }
   }
 

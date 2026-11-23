@@ -2813,6 +2813,12 @@ class ApiClient {
     return _asMap(_decode(res));
   }
 
+  /// 设置 / 清除演员封面（itemId 为 null 恢复自动选片）
+  Future<Map<String, dynamic>> videoJpActorCover({required Map<String, dynamic> body}) async {
+    final res = await transport.send('POST', _uri('/api/v1/video/jp_actor/cover'), headers: await _headers(jsonBody: true), body: utf8.encode(jsonEncode(body)));
+    return _asMap(_decode(res));
+  }
+
   /// 我的演员收藏
   Future<Map<String, dynamic>> videoJpActorFavorites() async {
     final res = await transport.send('GET', _uri('/api/v1/video/jp_actor/favorites'), headers: await _headers());

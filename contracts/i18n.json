@@ -3247,6 +3247,7 @@
     "ui.video.he63140": {},
     "video.action.copyTitle": {},
     "video.action.copyPath": {},
+    "video.action.setActorCover": {},
     "video.action.deleteSeason": {
       "count": {}
     },
@@ -3511,6 +3512,10 @@
     "video.home.scrapeAll": {},
     "video.home.sources": {},
     "video.jp.actor": {},
+    "video.jp.coverDone": {
+      "name": {}
+    },
+    "video.jp.coverPick": {},
     "video.jp.actorTitle": {},
     "video.jp.back": {},
     "video.jp.birthday": {},
@@ -3523,7 +3528,10 @@
     },
     "video.jp.deleteWorks": {},
     "video.jp.deleteWorksBody": {
-    "video.jp.deleteWorksBodyAll": { "name": {}, "count": {} },
+      "count": {}
+    },
+    "video.jp.deleteWorksBodyAll": {
+      "name": {},
       "count": {}
     },
     "video.jp.deleteWorksDone": {

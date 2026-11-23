@@ -401,13 +401,14 @@ export async function registerJpRoutes(app: any, k: KernelApi): Promise<void> {
           name: string;
           thumb_path: string | null;
           profile: string | null;
+          cover_item_id: string | null;
           item_id: string;
           created_at: number | null;
           jp_hot_votes: number | null;
           jp_hot_score: number | null;
           watched: number | null;
         }>`
-          select a.id as actor_id, a.name, a.thumb_path, a.profile,
+          select a.id as actor_id, a.name, a.thumb_path, a.profile, a.cover_item_id,
                  i.id as item_id, i.created_at,
                  coalesce(i.jp_hot_votes, 0) as jp_hot_votes,
                  coalesce(i.jp_hot_score, 0) as jp_hot_score,
@@ -456,6 +457,8 @@ export async function registerJpRoutes(app: any, k: KernelApi): Promise<void> {
         coverId: string | null;
         coverHot: number;
         coverAt: number;
+        /** 用户在右键里手选的封面片（命中当前结果集才用，被筛掉就当没有） */
+        handCover: string | null;
       }
       const map = new Map<string, Agg>();
       for (const r of rows) {
@@ -478,6 +481,7 @@ export async function registerJpRoutes(app: any, k: KernelApi): Promise<void> {
             coverId: null,
             coverHot: -1,
             coverAt: -1,
+            handCover: null,
           };
           map.set(r.actor_id, g);
         }
@@ -493,6 +497,11 @@ export async function registerJpRoutes(app: any, k: KernelApi): Promise<void> {
           g.rated += 1;
         }
         if (at > g.latest) g.latest = at;
+        // 手选封面优先：只认「这一行正是她手选的那部片」——
+        // 被筛选 / 离线挡掉时这一行根本不出现，自动回落到下面的默认规则。
+        if (r.cover_item_id && String(r.cover_item_id) === r.item_id) {
+          g.handCover = r.item_id;
+        }
         // 封面只在「未看」里挑：全看过的人退化成全部（此时没有更好的选择）
         const eligible = !Number(r.watched);
         if (eligible || g.unwatched === 0) {
@@ -502,6 +511,11 @@ export async function registerJpRoutes(app: any, k: KernelApi): Promise<void> {
             g.coverAt = at;
           }
         }
+      }
+
+      // 手选封面压过默认的「最热未看片」；手选片不在当前结果集里就保持默认
+      for (const g of map.values()) {
+        if (g.handCover) g.coverId = g.handCover;
       }
 
       // ② 封面片补全：网格要的是「影片列表同构的一行」，前端才能直接按
@@ -646,6 +660,57 @@ export async function registerJpRoutes(app: any, k: KernelApi): Promise<void> {
           delete from video_actor_block where uid = ${uidOf(req)} and actor_key = ${key}
         `.execute(k.db);
       }
+      return { ok: true };
+    },
+  );
+
+  app.post(
+    '/api/v1/video/jp_actor/cover',
+    secured('video:write', {
+      schema: {
+        operationId: 'videoJpActorCover',
+        tags: TAG,
+        summary: '设置 / 清除演员封面（itemId 为 null 恢复自动选片）',
+        body: Type.Object({
+          name: Type.String({ minLength: 1, maxLength: 64 }),
+          itemId: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+        }),
+        response: { 200: OkResponse },
+      },
+    }),
+    async (req: FastifyRequest, reply: FastifyReply) => {
+      const body = (req.body || {}) as { name?: string; itemId?: string | null };
+      const name = String(body.name || '').trim();
+      if (!name) {
+        return reply.code(400).send({ error: Err.badRequest, message: 'name required' });
+      }
+      const key = actorKey(name);
+      const itemId = body.itemId ?? null;
+      if (itemId) {
+        // 只能拿她自己的片当封面：关联表优先，老库（关联表还没重建）退回 nfo_actors 模糊匹配
+        const hit = await sql`
+          select v.id from video_items v
+           where v.id = ${itemId}
+             and (exists(select 1 from jp_actor_items ai
+                          where ai.item_id = v.id and ai.actor_id = ${key})
+                  or v.nfo_actors like ${'%' + name + '%'})
+           limit 1
+        `.execute(k.db);
+        if (!hit.rows.length) {
+          return reply
+            .code(400)
+            .send({ error: Err.badRequest, message: 'item not in actor works' });
+        }
+      }
+      // 演员行可能还没建（没抓过档案）：on conflict 只动封面，不覆盖已有 thumb / profile。
+      // 存的是 naked item id —— 片被删 / 换演员后自然落空，聚合时静默回落到默认规则。
+      await sql`
+        insert into jp_actors (id, name, thumb_path, profile, cover_item_id, updated_at)
+        values (${key}, ${name}, null, null, ${itemId}, ${now()})
+        on conflict(id) do update set
+          cover_item_id = excluded.cover_item_id,
+          updated_at = excluded.updated_at
+      `.execute(k.db);
       return { ok: true };
     },
   );

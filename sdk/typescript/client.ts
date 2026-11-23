@@ -2082,6 +2082,11 @@ export class ColanasClient {
     return this.request('POST', '/api/v1/video/jp_actor/block', params, 'body');
   }
 
+  /** 设置 / 清除演员封面（itemId 为 null 恢复自动选片） */
+  async videoJpActorCover(params: Record<string, any> = {}): Promise<any> {
+    return this.request('POST', '/api/v1/video/jp_actor/cover', params, 'body');
+  }
+
   /** 收藏 / 取消收藏演员 */
   async videoJpActorFavorite(params: Record<string, any> = {}): Promise<any> {
     return this.request('POST', '/api/v1/video/jp_actor/favorite', params, 'body');

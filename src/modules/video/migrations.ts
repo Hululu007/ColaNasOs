@@ -937,4 +937,23 @@ export const VIDEO_MIGRATIONS: Migration[] = [
         `.execute(db);
       },
     },
+    {
+      /**
+       * 演员封面手选片。
+       *
+       * 列表默认按「最热未看片」取封面，但用户会希望某位演员固定用某一张图 ——
+       * 比如她最好看的那部的海报。这里只存一个 item id（属于该演员的作品），
+       * 列表聚合时优先用它，落空（片被删 / 换了演员）就静默回落到默认规则，
+       * 不需要额外清理：无外键、不做级联，脏 id 自己失效。
+       */
+      id: '190_video_actor_cover',
+      async up(db) {
+        const cols = (
+          (await sql`pragma table_info(jp_actors)`.execute(db)).rows as Array<{ name: string }>
+        ).map((r) => r.name);
+        if (!cols.includes('cover_item_id')) {
+          await sql.raw('alter table jp_actors add column cover_item_id text').execute(db);
+        }
+      },
+    },
 ];

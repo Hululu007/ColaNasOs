@@ -39875,6 +39875,66 @@
         }
       }
     },
+    "/api/v1/video/jp_actor/cover": {
+      "post": {
+        "operationId": "videoJpActorCover",
+        "summary": "设置 / 清除演员封面（itemId 为 null 恢复自动选片）",
+        "tags": [
+          "video"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "name",
+                  "itemId"
+                ],
+                "properties": {
+                  "name": {
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "type": "string"
+                  },
+                  "itemId": {
+                    "minLength": 1,
+                    "type": "string",
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/video/jp_actor/favorites": {
       "get": {
         "operationId": "videoJpActorFavorites",

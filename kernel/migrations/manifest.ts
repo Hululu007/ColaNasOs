@@ -237,6 +237,8 @@ export const MIGRATION_ORDER: readonly string[] = Object.freeze([
   '188_transfer_scope',
   // 演员屏蔽名单（按用户）：只影响演员列表的默认视图，不动演员与关联数据
   '189_video_actor_block',
+  // 演员封面手选片：右键把某部片设为她的封面，落空自动回落默认规则
+  '190_video_actor_cover',
 ]);
 
 export interface OrderCheck {

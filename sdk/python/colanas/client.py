@@ -1675,6 +1675,10 @@ class ColanasClient:
         """屏蔽 / 取消屏蔽演员（只影响演员列表的默认视图）"""
         return self._request("POST", "/api/v1/video/jp_actor/block", params, "body")
 
+    def video_jp_actor_cover(self, **params):
+        """设置 / 清除演员封面（itemId 为 null 恢复自动选片）"""
+        return self._request("POST", "/api/v1/video/jp_actor/cover", params, "body")
+
     def video_jp_actor_favorite(self, **params):
         """收藏 / 取消收藏演员"""
         return self._request("POST", "/api/v1/video/jp_actor/favorite", params, "body")

@@ -2505,6 +2505,7 @@ class I18nKeys {
   // ---- video ----
   static const videoActionCopyTitle = 'video.action.copyTitle';
   static const videoActionCopyPath = 'video.action.copyPath';
+  static const videoActionSetActorCover = 'video.action.setActorCover';
   static const videoActionDeleteSeason = 'video.action.deleteSeason';
   static const videoActionDeleteSeries = 'video.action.deleteSeries';
   static const videoActionExcludeScrape = 'video.action.excludeScrape';
@@ -2699,6 +2700,8 @@ class I18nKeys {
   static const videoHomeScrapeAll = 'video.home.scrapeAll';
   static const videoHomeSources = 'video.home.sources';
   static const videoJpActor = 'video.jp.actor';
+  static const videoJpCoverDone = 'video.jp.coverDone';
+  static const videoJpCoverPick = 'video.jp.coverPick';
   static const videoJpActorTitle = 'video.jp.actorTitle';
   static const videoJpBack = 'video.jp.back';
   static const videoJpBirthday = 'video.jp.birthday';
@@ -2709,6 +2712,7 @@ class I18nKeys {
   static const videoJpDeleteTooMany = 'video.jp.deleteTooMany';
   static const videoJpDeleteWorks = 'video.jp.deleteWorks';
   static const videoJpDeleteWorksBody = 'video.jp.deleteWorksBody';
+  static const videoJpDeleteWorksBodyAll = 'video.jp.deleteWorksBodyAll';
   static const videoJpDeleteWorksDone = 'video.jp.deleteWorksDone';
   static const videoJpDeleteWorksCount = 'video.jp.deleteWorksCount';
   static const videoJpDeleteAllWorksCount = 'video.jp.deleteAllWorksCount';
@@ -3186,4 +3190,4 @@ class I18nKeys {
 }
 
 /// 契约键总数（生成时确定），供完整性自检使用。
-const int i18nKeyCount = 3134;
+const int i18nKeyCount = 3138;

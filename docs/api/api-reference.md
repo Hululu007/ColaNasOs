@@ -1,7 +1,7 @@
 # API 参考
 
 > 由 `tool/gen-api-doc.js` 从 `contracts/openapi.json` 生成，**请勿手改**；改契约后执行 `npm run api:doc`。
-> 当前：**436 个路径 / 465 个操作 / 19 个域**。鉴权统一为 `Authorization: Bearer <jwt>`，媒体直链另支持 `?token=`（5 分钟）。
+> 当前：**437 个路径 / 466 个操作 / 19 个域**。鉴权统一为 `Authorization: Bearer <jwt>`，媒体直链另支持 `?token=`（5 分钟）。
 
 ## 域索引
 
@@ -23,7 +23,7 @@
 - **系统监控**（`system`）· 29 个操作 · [跳转](#system)
 - **tasks**（`tasks`）· 5 个操作 · [跳转](#tasks)
 - **transfer**（`transfer`）· 8 个操作 · [跳转](#transfer)
-- **影视**（`video`）· 75 个操作 · [跳转](#video)
+- **影视**（`video`）· 76 个操作 · [跳转](#video)
 
 ## accounts
 
@@ -2882,6 +2882,13 @@ HTTPS 证书状态（用户上传证书方案） · `systemTlsInfo`
 屏蔽 / 取消屏蔽演员（只影响演员列表的默认视图） · `videoJpActorBlock`
 
 - 请求体：`name` string · **必填**<br>`blocked` boolean · **必填**
+- 响应：200 object
+
+#### `POST /api/v1/video/jp_actor/cover`
+
+设置 / 清除演员封面（itemId 为 null 恢复自动选片） · `videoJpActorCover`
+
+- 请求体：`name` string · **必填**<br>`itemId` string · **必填**
 - 响应：200 object
 
 #### `POST /api/v1/video/jp_actor/favorite`
