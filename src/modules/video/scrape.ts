@@ -572,10 +572,23 @@ async function copyArtBeside(
     const target = path.join(dir, `${itemId.replace(/[^\w-]/g, '_')}-${kind}.jpg`);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 12_000);
+    // javbus / javdb 的封面是防盗链：不带同源 Referer 直接 403（实测无 referer 403、
+    // 带 referer 200）。番号源封面全部按图片域名补上 referer，否则刮到的图永远是老图。
+    let origin = '';
+    try {
+      const u = new URL(text);
+      origin = `${u.protocol}//${u.host}/`;
+    } catch {
+      /* url 已通过 http(s) 校验，这里只是防御 */
+    }
     try {
       const res = await proxyFetch(text, {
         signal: controller.signal,
-        headers: { 'user-agent': 'Mozilla/5.0 (compatible; ColaNasOs/1.0)' },
+        headers: {
+          'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
+            '(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+          ...(origin ? { referer: origin } : {}),
+        },
       });
       if (!res.ok) return null;
       const buf = Buffer.from(await res.arrayBuffer());
