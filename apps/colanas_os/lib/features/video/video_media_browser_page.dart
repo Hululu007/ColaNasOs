@@ -303,7 +303,7 @@ class _VideoMediaBrowserPageState extends State<VideoMediaBrowserPage> {
     );
   }
 
-  /// 右键菜单：目录只给「打开 / 复制路径」；影片和图片多一条语义化入口，
+  /// 右键菜单：目录只给「打开 / 复制路径 / 删除」；影片和图片多一条语义化入口，
   /// 其余动作（刮削、改匹配）在详情页里做。
   List<NasMenuEntry> _browseMenuEntries(VideoBrowseItem item) {
     final full = _joinPath(_rootPath, item.path);
@@ -324,6 +324,17 @@ class _VideoMediaBrowserPageState extends State<VideoMediaBrowserPage> {
         icon: Icons.copy_all_outlined,
         onSelected: full.isEmpty ? null : () => _copyPath(full),
       ),
+      const NasMenuEntry.divider(),
+      NasMenuEntry(
+        label: tr('common.delete'),
+        icon: Icons.delete_outline,
+        danger: true,
+        onSelected: () => _confirmDelete(
+          path: item.path,
+          name: item.dir ? item.name : _stripExt(item.name),
+          isFolder: item.dir,
+        ),
+      ),
     ];
   }
 
@@ -337,6 +348,68 @@ class _VideoMediaBrowserPageState extends State<VideoMediaBrowserPage> {
     final messenger = ScaffoldMessenger.of(context);
     await Clipboard.setData(ClipboardData(text: path));
     NasSnack.showOn(messenger, tr('common.copied'));
+  }
+
+  /// 删除一个文件 / 整个文件夹（进回收站，索引一起清）
+  Future<void> _confirmDelete({
+    required String path,
+    required String name,
+    required bool isFolder,
+  }) async {
+    final libId = _libraryId;
+    if (libId == null || path.isEmpty) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(tr('common.delete')),
+        content: Text(
+          isFolder
+              ? tr('video.browse.deleteFolderBody', {'name': name})
+              : tr('files.deleteConfirm', {'name': name}),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(tr('common.cancel'))),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(ctx).colorScheme.error,
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(tr('common.delete')),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    try {
+      final res = await ApiSession.instance.client.videoBrowseDelete(
+        body: VideoBrowseDeleteBody(
+          libraryId: libId,
+          sourceId: _sourceId,
+          path: path,
+        ),
+      );
+      if (!mounted) return;
+      if (res.failed > 0) {
+        NasSnack.show(
+          context,
+          tr('video.dup.deletePartial', {
+            'done': '${res.removed}',
+            'failed': '${res.failed}',
+          }),
+        );
+      } else {
+        NasSnack.show(context, tr('files.deletedToTrash'));
+      }
+      // 删掉的是当前目录里的东西 → 刷新列表；删的是当前所在的文件夹 → 退一级
+      if (isFolder && _path == path) {
+        _up();
+      } else {
+        await _load();
+      }
+    } catch (e) {
+      if (!mounted) return;
+      NasSnack.show(context, tr('common.deleteFailed', {'error': '$e'}));
+    }
   }
 
   // ------------------------------------------------------------------ 构建
@@ -388,13 +461,6 @@ class _VideoMediaBrowserPageState extends State<VideoMediaBrowserPage> {
   Widget _toolbar() {
     final lib = _library;
     final canUp = _level > 0;
-    final trail = <String>[
-      if (lib != null) lib.name,
-      if (lib != null && _sourceId != null)
-        _sourceName.isNotEmpty ? _sourceName : _sourceLabel(_source),
-      if (_path.isNotEmpty) _path,
-      ?_seriesKey,
-    ];
     return Padding(
       padding: const EdgeInsets.fromLTRB(
         NasTokens.spaceSm,
@@ -412,14 +478,9 @@ class _VideoMediaBrowserPageState extends State<VideoMediaBrowserPage> {
           Expanded(
             child: SingleChildScrollView(
               scrollDirection: Axis.horizontal,
-              child: Text(
-                trail.isEmpty
-                    ? '# ${tr('video.browse.title')}'
-                    : '# ${trail.join(' / ')}',
-                style: TextStyle(
-                  fontSize: NasTokens.fontCaption,
-                  color: context.nasTextSecondary,
-                ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: _crumbs(lib),
               ),
             ),
           ),
@@ -443,6 +504,92 @@ class _VideoMediaBrowserPageState extends State<VideoMediaBrowserPage> {
         ],
       ),
     );
+  }
+
+  /// 面包屑：每一段都能点，点哪段回到哪一层（库 → 来源 → 一级级目录）
+  List<Widget> _crumbs(VideoLibraryItem? lib) {
+    final crumbs = <({String label, VoidCallback onTap})>[];
+    if (lib != null) {
+      crumbs.add((label: lib.name, onTap: _goLibraries));
+    }
+    if (lib != null && _sourceId != null) {
+      final label = _sourceName.isNotEmpty ? _sourceName : _sourceLabel(_source);
+      if (label.isNotEmpty) crumbs.add((label: label, onTap: _goSourceRoot));
+    }
+    final segs = _path.split('/').where((s) => s.isNotEmpty).toList();
+    for (var i = 0; i < segs.length; i += 1) {
+      final prefix = segs.take(i + 1).join('/');
+      crumbs.add((label: segs[i], onTap: () => _goPath(prefix)));
+    }
+    final key = _seriesKey;
+    if (key != null) {
+      crumbs.add((label: key, onTap: () => setState(() => _seriesKey = null)));
+    }
+
+    final style = TextStyle(fontSize: NasTokens.fontCaption, color: context.nasTextSecondary);
+    final linkStyle = TextStyle(
+      fontSize: NasTokens.fontCaption,
+      color: Theme.of(context).colorScheme.primary,
+    );
+    if (crumbs.isEmpty) {
+      return [
+        Text('# ${tr('video.browse.title')}', style: style),
+      ];
+    }
+    final out = <Widget>[
+      Padding(
+        padding: const EdgeInsets.only(right: 4),
+        child: Text('#', style: style),
+      ),
+    ];
+    for (var i = 0; i < crumbs.length; i += 1) {
+      if (i > 0) out.add(Text(' / ', style: style));
+      final last = i == crumbs.length - 1;
+      final c = crumbs[i];
+      out.add(
+        InkWell(
+          borderRadius: BorderRadius.circular(4),
+          onTap: c.onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
+            child: Text(c.label, style: last ? style : linkStyle),
+          ),
+        ),
+      );
+    }
+    return out;
+  }
+
+  /// 回到库列表
+  void _goLibraries() {
+    setState(() {
+      _libraryId = null;
+      _sourceId = null;
+      _path = '';
+      _seriesKey = null;
+      _items = const [];
+      _error = null;
+    });
+  }
+
+  /// 回到当前来源根
+  void _goSourceRoot() {
+    if (_path.isEmpty && _seriesKey == null) return;
+    setState(() {
+      _path = '';
+      _seriesKey = null;
+    });
+    _load();
+  }
+
+  /// 跳到某一级目录
+  void _goPath(String path) {
+    if (_path == path && _seriesKey == null) return;
+    setState(() {
+      _path = path;
+      _seriesKey = null;
+    });
+    _load();
   }
 
   Widget _viewBtn({
@@ -771,7 +918,7 @@ class _VideoMediaBrowserPageState extends State<VideoMediaBrowserPage> {
         child: VideoPosterCard(
           item: item,
           width: width,
-          useStill: _thumb,
+          showThumb: _thumb,
           onTap: () => _play(item),
         ),
       );
@@ -786,13 +933,13 @@ class _VideoMediaBrowserPageState extends State<VideoMediaBrowserPage> {
       child: VideoPosterCard(
         item: item,
         width: width,
-        useStill: _thumb,
+        showThumb: _thumb,
         onTap: () => openVideoDetail(context, item),
       ),
     );
   }
 
-  /// 单影片文件夹的右键菜单：播放 / 复制影片路径 / 打开所在文件夹
+  /// 单影片文件夹的右键菜单：播放 / 复制影片路径 / 打开所在文件夹 / 删除文件夹
   List<NasMenuEntry> _singleVideoMenuEntries(_BrowseEntry entry) {
     final item = entry.video!;
     final folder = entry.folder!;
@@ -811,6 +958,18 @@ class _VideoMediaBrowserPageState extends State<VideoMediaBrowserPage> {
         label: tr('video.browse.openFolder'),
         icon: Icons.folder_open_outlined,
         onSelected: () => _enter(folder),
+      ),
+      const NasMenuEntry.divider(),
+      NasMenuEntry(
+        label: tr('common.delete'),
+        icon: Icons.delete_outline,
+        danger: true,
+        // 这张卡代表整个文件夹（一片一目录），删就删文件夹，别留个只剩 nfo 的空壳
+        onSelected: () => _confirmDelete(
+          path: folder.path,
+          name: folder.name,
+          isFolder: true,
+        ),
       ),
     ];
   }
@@ -971,10 +1130,15 @@ class _VideoMediaBrowserPageState extends State<VideoMediaBrowserPage> {
       }
     }
     final width2 = (width * 2).round();
-    final still = cover == null ? null : episodeStillFallbackUrl(cover.id);
+    // 缩略图 = 刮削到的 `<thumb>`（没有就退 fanart / poster），都是现成的图；
+    // 缺图时退回竖版海报，绝不拿首帧截图凑
+    final still = cover == null || !cover.hasArt ? null : episodeStillFallbackUrl(cover.id);
+    final posterArt = cover == null || !cover.hasArt ? null : videoArtUrl(cover, size: width2);
     final url = cover == null
         ? null
-        : (_thumb ? still : videoPosterUrl(cover, size: width2));
+        : (_thumb
+              ? videoPosterUrl(cover, kind: 'thumb', size: width2)
+              : videoPosterUrl(cover, size: width2));
     return InkWell(
       borderRadius: BorderRadius.circular(NasTokens.radiusSm),
       onTap: () => _openSeries(entry.seriesKey!),
@@ -998,7 +1162,7 @@ class _VideoMediaBrowserPageState extends State<VideoMediaBrowserPage> {
                   else
                     NasCoverImage(
                       url: url,
-                      fallbackUrl: _thumb ? null : still,
+                      fallbackUrl: _thumb ? posterArt : still,
                       headers: videoArtHeaders,
                       fallbackText: entry.seriesKey!,
                       icon: Icons.video_library_outlined,

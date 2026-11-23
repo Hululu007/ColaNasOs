@@ -898,6 +898,15 @@ function makeVideo(out, size, seconds, fps = 25) {
   r = await app.inject({ method: 'GET', url: '/api/v1/video/art?id=' + encodeURIComponent(alphaScraped.id), headers: bearer });
   check('art_404_without_meta', r.statusCode === 404, 'status=' + r.statusCode);
 
+  // `kind=thumb`（横版缩略图）必须被接受：前端「缩略图」开关用它，
+  // 没图时是 404，不能是 400（参数校验挡住会让整排卡裂图）。
+  r = await app.inject({
+    method: 'GET',
+    url: '/api/v1/video/art?id=' + encodeURIComponent(alphaScraped.id) + '&kind=thumb',
+    headers: bearer,
+  });
+  check('art_thumb_kind_ok', r.statusCode === 404, 'status=' + r.statusCode);
+
   // 22. 库级开关（此前这些列只有读没有写）
   r = await app.inject({
     method: 'POST',
@@ -1146,6 +1155,55 @@ function makeVideo(out, size, seconds, fps = 25) {
       soloFolder.singleVideo.id,
     JSON.stringify(soloFolder && soloFolder.singleVideo && soloFolder.singleVideo.path),
   );
+
+  // 来源根本身不许删：一次误点会带走整块盘
+  r = await app.inject({
+    method: 'POST',
+    url: '/api/v1/video/browse/delete',
+    headers: bearer,
+    payload: { libraryId: soloLib.id, path: '' },
+  });
+  check('browse_delete_root_400', r.statusCode === 400, 'status=' + r.statusCode);
+
+  // 删整个文件夹：索引一起清、文件进回收站（可还原）
+  r = await app.inject({
+    method: 'POST',
+    url: '/api/v1/video/browse/delete',
+    headers: bearer,
+    payload: { libraryId: soloLib.id, path: 'Solo Movie' },
+  });
+  const soloDel = r.json();
+  const soloAfter = (
+    await app.inject({
+      method: 'GET',
+      url: '/api/v1/video/browse?libraryId=' + encodeURIComponent(soloLib.id),
+      headers: bearer,
+    })
+  ).json();
+  const soloStats = (
+    await app.inject({
+      method: 'GET',
+      url: '/api/v1/video/stats?libraryId=' + soloLib.id,
+      headers: bearer,
+    })
+  ).json();
+  check(
+    'browse_delete_folder',
+    r.statusCode === 200 &&
+      soloDel.folder === true &&
+      soloDel.removed === 1 &&
+      soloDel.failed === 0 &&
+      Boolean(soloDel.trashedTo) &&
+      !fs.existsSync(soloDir) &&
+      (soloAfter.items || []).length === 0 &&
+      soloStats.items === 0,
+    JSON.stringify({
+      del: soloDel,
+      left: (soloAfter.items || []).length,
+      items: soloStats.items,
+    }),
+  );
+
   await app.inject({
     method: 'POST',
     url: '/api/v1/video/libraries/remove',

@@ -1997,6 +1997,11 @@ export class ColanasClient {
     return this.request('GET', '/api/v1/video/browse', params, 'query');
   }
 
+  /** 删除浏览目录里的文件 / 文件夹（默认进回收站，索引一起清） */
+  async videoBrowseDelete(params: Record<string, any> = {}): Promise<any> {
+    return this.request('POST', '/api/v1/video/browse/delete', params, 'body');
+  }
+
   /** 删除合集（只删合集与其条目关系，不删影片） */
   async videoCollectionDelete(params: Record<string, any> = {}): Promise<any> {
     return this.request('POST', '/api/v1/video/collections/delete', params, 'body');

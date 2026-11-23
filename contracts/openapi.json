@@ -12596,6 +12596,61 @@
           }
         }
       },
+      "VideoBrowseDeleteBody": {
+        "type": "object",
+        "required": [
+          "libraryId",
+          "path"
+        ],
+        "properties": {
+          "libraryId": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "sourceId": {
+            "maxLength": 128,
+            "type": "string"
+          },
+          "path": {
+            "minLength": 1,
+            "maxLength": 1024,
+            "description": "来源内的相对路径",
+            "type": "string"
+          },
+          "permanent": {
+            "description": "true = 直接永久删除；缺省移入回收站（可还原）",
+            "type": "boolean"
+          }
+        }
+      },
+      "VideoBrowseDeleteResponse": {
+        "type": "object",
+        "required": [
+          "removed",
+          "folder",
+          "trashedTo",
+          "failed"
+        ],
+        "properties": {
+          "removed": {
+            "description": "清掉的索引条目数（视频 + 图片）",
+            "type": "integer"
+          },
+          "folder": {
+            "description": "删的是不是文件夹",
+            "type": "boolean"
+          },
+          "trashedTo": {
+            "description": "回收站落点；永久删除时为 null",
+            "type": "string",
+            "nullable": true
+          },
+          "failed": {
+            "description": "删除失败的条目数",
+            "type": "integer"
+          }
+        }
+      },
       "VideoDuplicatesQuery": {
         "type": "object",
         "properties": {
@@ -14572,6 +14627,12 @@
                 "type": "string",
                 "enum": [
                   "fanart"
+                ]
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "thumb"
                 ]
               }
             ]
@@ -43283,6 +43344,72 @@
         }
       }
     },
+    "/api/v1/video/browse/delete": {
+      "post": {
+        "operationId": "videoBrowseDelete",
+        "summary": "删除浏览目录里的文件 / 文件夹（默认进回收站，索引一起清）",
+        "tags": [
+          "video"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VideoBrowseDeleteBody"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VideoBrowseDeleteResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VideoErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VideoErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VideoErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/video/duplicates": {
       "get": {
         "operationId": "videoDuplicates",
@@ -44032,6 +44159,12 @@
                   "type": "string",
                   "enum": [
                     "fanart"
+                  ]
+                },
+                {
+                  "type": "string",
+                  "enum": [
+                    "thumb"
                   ]
                 }
               ]

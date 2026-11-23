@@ -919,6 +919,31 @@ export const BrowseResponse = Type.Object(
   { $id: 'VideoBrowseResponse' },
 );
 
+/** 媒体浏览里删一个文件 / 整个文件夹（文件进回收站，索引一起清） */
+export const BrowseDeleteBody = Type.Object(
+  {
+    libraryId: Type.String({ minLength: 1 }),
+    sourceId: Type.Optional(Type.String({ maxLength: 128 })),
+    path: Type.String({ minLength: 1, maxLength: 1024, description: '来源内的相对路径' }),
+    permanent: Type.Optional(
+      Type.Boolean({ description: 'true = 直接永久删除；缺省移入回收站（可还原）' }),
+    ),
+  },
+  { $id: 'VideoBrowseDeleteBody' },
+);
+
+export const BrowseDeleteResponse = Type.Object(
+  {
+    removed: Type.Integer({ description: '清掉的索引条目数（视频 + 图片）' }),
+    folder: Type.Boolean({ description: '删的是不是文件夹' }),
+    trashedTo: Type.Union([Type.String(), Type.Null()], {
+      description: '回收站落点；永久删除时为 null',
+    }),
+    failed: Type.Integer({ description: '删除失败的条目数' }),
+  },
+  { $id: 'VideoBrowseDeleteResponse' },
+);
+
 // ---------------------------------------------------------------- 刮削
 
 export const ScrapeBody = Type.Object(
@@ -1076,7 +1101,10 @@ export const ArtQuery = Type.Object(
   {
     id: Type.String({ minLength: 1 }),
     kind: Type.Optional(
-      Type.Union([Type.Literal('poster'), Type.Literal('fanart')], { default: 'poster' }),
+      Type.Union(
+        [Type.Literal('poster'), Type.Literal('fanart'), Type.Literal('thumb')],
+        { default: 'poster' },
+      ),
     ),
     size: Type.Optional(
       Type.Integer({
@@ -1326,6 +1354,8 @@ export const VIDEO_SCHEMAS = [
   BrowseQuery,
   BrowseItem,
   BrowseResponse,
+  BrowseDeleteBody,
+  BrowseDeleteResponse,
   DuplicatesQuery,
   DuplicateItem,
   DuplicateGroup,

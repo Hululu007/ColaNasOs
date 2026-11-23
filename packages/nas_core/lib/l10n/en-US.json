@@ -2480,6 +2480,7 @@
     "video.badge.subtitle": "SUB",
     "video.badge.uncensored": "Uncensored",
     "video.browse.cover": "Poster",
+    "video.browse.deleteFolderBody": "Move the folder \"{name}\" and everything inside to the recycle bin? You can restore it later.",
     "video.browse.empty": "No media in this folder",
     "video.browse.episodeCount": "{n} episodes",
     "video.browse.noLibrary": "No video library yet; create and scan one in settings",

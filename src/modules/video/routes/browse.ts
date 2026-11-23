@@ -4,12 +4,14 @@ import { sql } from 'kysely';
 import { secured } from '../../../../kernel/route';
 import { Err } from '../../../../kernel/errors';
 import { filesRoot, resolveAnyPath } from '../../files/fs-root';
+import { TRASH_DIR, movePath } from '../../files/ops';
 import { pathVisible, visibilityOf } from '../../files/visibility';
 import { effectiveSources, type VideoSourceRow } from '../sources';
 import { isVideoFile } from '../ffmpeg';
 import { isImageFile } from '../../photo/exif';
 import { uncPathOf, ONLINE_NO } from '../smb';
 import { TAG, toItem, type MediaRow } from '../util';
+import { deleteVideoItems } from './duplicates';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { KernelApi } from '../../../../kernel/types';
 import type { VideoHelpers } from '../helpers';
@@ -33,8 +35,7 @@ function normalizeBrowsePath(input: string | undefined): string {
  * 来源在浏览界面里的展示名：本地取末两级目录（`D:/down/mt/move` → `mt/move`），
  * SMB 取 `host/share`（带子路径）。取末两级是因为一级目录常常只叫 `movies` /
  * `media`，几个来源看起来全一样。
- */
-function sourceLabelOf(src: VideoSourceRow): string {
+ */function sourceLabelOf(src: VideoSourceRow): string {
   if (String(src.conn_type) === 'smb') {
     const host = String(src.host || '').trim();
     const share = String(src.share || '').trim();
@@ -50,11 +51,59 @@ function sourceLabelOf(src: VideoSourceRow): string {
   return segs.slice(-2).join('/') || String(src.root_path || '');
 }
 
+/** 路径是否存在（lstat：不跟随软链，删的是链接本身） */
+async function exists(abs: string): Promise<boolean> {
+  try {
+    await fsp.lstat(abs);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 把一条路径（文件或整个目录）移进回收站；`permanent` 时直接删。
+ *
+ * 回收站放**同一个卷**上（`<卷根>/.colanas-trash/<批次>/<名字>`），同卷 rename
+ * 瞬时完成、不占额外空间；卷根不可写时退回 files 根下的回收站，`movePath`
+ * 会自己退化成「复制 + 删源」。这套口径与 `deleteVideoItems` 保持一致。
+ */
+async function trashLocal(abs: string, permanent: boolean): Promise<string | null> {
+  if (permanent) {
+    await fsp.rm(abs, { recursive: true, force: true });
+    return null;
+  }
+  const root = filesRoot();
+  const underRoot = abs === root || abs.startsWith(root + path.sep);
+  const vol = underRoot ? root : path.parse(abs).root || root;
+  const batch = new Date()
+    .toISOString()
+    .replace(/[-:]/g, '')
+    .replace(/\..+$/, '')
+    .replace('T', '-');
+  let dir = path.join(vol, TRASH_DIR, batch);
+  try {
+    await fsp.mkdir(dir, { recursive: true });
+  } catch {
+    dir = path.join(root, TRASH_DIR, batch);
+    await fsp.mkdir(dir, { recursive: true });
+  }
+  const base = path.basename(abs);
+  let dest = path.join(dir, base);
+  let n = 1;
+  while (await exists(dest)) {
+    const ext = path.extname(base);
+    dest = path.join(dir, `${path.basename(base, ext)}-${n}${ext}`);
+    n += 1;
+  }
+  await movePath(abs, dest);
+  return dest;
+}
+
 /**
  * 媒体浏览：
  * 按「库 → 来源 → 目录」逐级浏览，文件夹 + 图片 + 视频混合返回；
  * 视频带条目 id，可直接开详情 / 海报。
- *
  * 只列一层（不做递归），避免大库一次扫全盘；SMB 来源离线时直接 503，
  * 不让 readdir 在不可达共享上卡住整个请求。
  *
@@ -244,6 +293,135 @@ export async function registerVideoBrowse(
         sourceName: sourceLabelOf(src),
         items,
       };
+    },
+  );
+
+  // ---------------------------------------------------------------- 删除
+  //
+  // 浏览页的右键删除：文件、文件夹都能删。语义三条：
+  //   1. 已索引的条目走 `deleteVideoItems`：文件移入回收站，索引 / 观看进度 /
+  //      收藏一起清，库条目数重算（与查重页的删除是同一套账）；
+  //   2. 文件夹里剩下的（没索引的文件、只有侧车的目录）整条移入回收站，
+  //      不留一个空壳让人以为「没删掉」；
+  //   3. 来源根本身不许删 —— 一次误点会带走整块盘。
+  app.post(
+    '/api/v1/video/browse/delete',
+    secured('video:write', {
+      schema: {
+        operationId: 'videoBrowseDelete',
+        tags: TAG,
+        summary: '删除浏览目录里的文件 / 文件夹（默认进回收站，索引一起清）',
+        body: h.ref('VideoBrowseDeleteBody'),
+        response: {
+          200: h.ref('VideoBrowseDeleteResponse'),
+          400: h.ref('VideoErrorResponse'),
+          404: h.ref('VideoErrorResponse'),
+          503: h.ref('VideoErrorResponse'),
+        },
+      },
+    }),
+    async (req: FastifyRequest, reply) => {
+      const body = (req.body || {}) as {
+        libraryId?: string;
+        sourceId?: string;
+        path?: string;
+        permanent?: boolean;
+      };
+      const lib = body.libraryId ? await h.loadLibrary(String(body.libraryId)) : null;
+      if (!lib) return reply.code(404).send({ error: Err.notFound, message: 'library not found' });
+
+      const sources = await effectiveSources(k.db, lib);
+      const src = body.sourceId
+        ? sources.find((s) => s.id === String(body.sourceId))
+        : sources[0];
+      if (!src) return reply.code(404).send({ error: Err.notFound, message: 'source not found' });
+
+      const vis = visibilityOf(k.config, req.user);
+      if (!vis.unrestricted && !pathVisible(vis, src.root_path)) {
+        return reply.code(404).send({ error: Err.notFound, message: 'source not found' });
+      }
+
+      let rel: string;
+      try {
+        rel = normalizeBrowsePath(body.path);
+      } catch {
+        return reply.code(400).send({ error: Err.badRequest, message: 'invalid path' });
+      }
+      if (!rel) {
+        return reply
+          .code(400)
+          .send({ error: Err.badRequest, message: 'refuse to delete source root' });
+      }
+
+      const unc = uncPathOf(src);
+      if (unc && Number(src.online_state) === ONLINE_NO) {
+        return reply
+          .code(503)
+          .send({ error: Err.unavailable, message: 'smb source offline' });
+      }
+
+      let abs: string;
+      try {
+        abs = unc
+          ? path.join(unc, ...rel.split('/'))
+          : resolveAnyPath(filesRoot(), `${src.root_path}/${rel}`);
+      } catch {
+        return reply.code(400).send({ error: Err.badRequest, message: 'path escapes library' });
+      }
+      if (!vis.unrestricted && !pathVisible(vis, abs)) {
+        return reply.code(404).send({ error: Err.notFound, message: 'path not found' });
+      }
+
+      let isDir: boolean;
+      try {
+        isDir = (await fsp.lstat(abs)).isDirectory();
+      } catch {
+        return reply.code(404).send({ error: Err.notFound, message: 'path not found' });
+      }
+
+      const permanent = body.permanent === true;
+      const relPrefix = `${src.root_path}/${rel}`.replace(/\/+$/, '');
+      let ids: string[] = [];
+      try {
+        const [vids, iids] = await Promise.all([
+          sql<{ id: string }>`
+            select id from video_items
+             where library_id = ${lib.id}
+               and (rel_path = ${relPrefix} or rel_path like ${`${relPrefix}/%`})
+          `.execute(k.db),
+          sql<{ id: string }>`
+            select id from image_items
+             where library_id = ${lib.id}
+               and (rel_path = ${relPrefix} or rel_path like ${`${relPrefix}/%`})
+          `.execute(k.db),
+        ]);
+        ids = [...vids.rows.map((r) => r.id), ...iids.rows.map((r) => r.id)];
+      } catch {
+        // 索引查询失败也照样删文件：剩下的幽灵条目下一次扫描会清掉
+      }
+
+      let removed = 0;
+      let failed = 0;
+      let trashedTo: string | null = null;
+      if (ids.length > 0) {
+        const res = await deleteVideoItems(k, ids, { permanent });
+        removed = res.done.length;
+        failed += res.failed.length;
+        trashedTo = res.trashedTo || null;
+      }
+
+      // 文件夹 / 没索引的文件：整条进回收站
+      if (await exists(abs)) {
+        try {
+          const dest = await trashLocal(abs, permanent);
+          trashedTo = trashedTo ?? dest;
+        } catch (err) {
+          failed += 1;
+          k.log.warn({ path: abs, err: String(err) }, 'video.browse.delete: trash failed');
+        }
+      }
+
+      return { removed, folder: isDir, trashedTo, failed };
     },
   );
 }

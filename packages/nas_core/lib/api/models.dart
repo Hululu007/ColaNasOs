@@ -11246,6 +11246,62 @@ class VideoBrowseResponse {
       };
 }
 
+class VideoBrowseDeleteBody {
+  final String libraryId;
+  final String? sourceId;
+  final String path;
+  final bool? permanent;
+
+  const VideoBrowseDeleteBody({
+    required this.libraryId,
+    this.sourceId,
+    required this.path,
+    this.permanent,
+  });
+
+  factory VideoBrowseDeleteBody.fromJson(Map<String, dynamic> json) => VideoBrowseDeleteBody(
+        libraryId: json['libraryId'] as String,
+        sourceId: json['sourceId'] == null ? null : json['sourceId'] as String,
+        path: json['path'] as String,
+        permanent: json['permanent'] == null ? null : json['permanent'] as bool,
+      );
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+        'libraryId': libraryId,
+        if (sourceId != null) 'sourceId': sourceId!,
+        'path': path,
+        if (permanent != null) 'permanent': permanent!,
+      };
+}
+
+class VideoBrowseDeleteResponse {
+  final int removed;
+  final bool folder;
+  final String? trashedTo;
+  final int failed;
+
+  const VideoBrowseDeleteResponse({
+    required this.removed,
+    required this.folder,
+    required this.trashedTo,
+    required this.failed,
+  });
+
+  factory VideoBrowseDeleteResponse.fromJson(Map<String, dynamic> json) => VideoBrowseDeleteResponse(
+        removed: json['removed'] as int,
+        folder: json['folder'] as bool,
+        trashedTo: json['trashedTo'] as String?,
+        failed: json['failed'] as int,
+      );
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+        'removed': removed,
+        'folder': folder,
+        'trashedTo': trashedTo,
+        'failed': failed,
+      };
+}
+
 class VideoDuplicateItem {
   final String id;
   final String title;

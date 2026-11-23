@@ -3307,6 +3307,20 @@ export type VideoBrowseResponse = {
   "items": VideoBrowseItem[];
 };
 
+export type VideoBrowseDeleteBody = {
+  "libraryId": string;
+  "sourceId"?: string;
+  "path": string;
+  "permanent"?: boolean;
+};
+
+export type VideoBrowseDeleteResponse = {
+  "removed": number;
+  "folder": boolean;
+  "trashedTo": string;
+  "failed": number;
+};
+
 export type VideoDuplicatesQuery = {
   "libraryId"?: string;
   "limit"?: number;
@@ -3786,7 +3800,7 @@ export type VideoTmdbSettingsBody = {
 
 export type VideoArtQuery = {
   "id": string;
-  "kind"?: "poster" | "fanart";
+  "kind"?: "poster" | "fanart" | "thumb";
   "size"?: number;
 };
 

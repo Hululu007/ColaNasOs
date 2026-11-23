@@ -2524,6 +2524,7 @@ class I18nKeys {
   static const videoBadgeSubtitle = 'video.badge.subtitle';
   static const videoBadgeUncensored = 'video.badge.uncensored';
   static const videoBrowseCover = 'video.browse.cover';
+  static const videoBrowseDeleteFolderBody = 'video.browse.deleteFolderBody';
   static const videoBrowseEmpty = 'video.browse.empty';
   static const videoBrowseEpisodeCount = 'video.browse.episodeCount';
   static const videoBrowseNoLibrary = 'video.browse.noLibrary';
@@ -3197,4 +3198,4 @@ class I18nKeys {
 }
 
 /// 契约键总数（生成时确定），供完整性自检使用。
-const int i18nKeyCount = 3145;
+const int i18nKeyCount = 3146;

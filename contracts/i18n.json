@@ -3270,6 +3270,9 @@
     "video.badge.subtitle": {},
     "video.badge.uncensored": {},
     "video.browse.cover": {},
+    "video.browse.deleteFolderBody": {
+      "name": {}
+    },
     "video.browse.empty": {},
     "video.browse.episodeCount": {
       "n": {}

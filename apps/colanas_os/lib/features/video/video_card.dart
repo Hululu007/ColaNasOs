@@ -50,6 +50,14 @@ String videoPosterUrl(VideoItem item, {String kind = 'poster', int size = 0}) {
   return '$base/api/v1/video/poster?id=$id';
 }
 
+/// 刮削图的直链（poster / fanart / thumb），不看有没有图 ——
+/// 给「横版位缺剧照时退回竖版海报」这类降级用。
+String videoArtUrl(VideoItem item, {String kind = 'poster', int size = 0}) {
+  final base = ApiSession.instance.baseUrl;
+  final sizeQ = size > 0 ? '&size=$size' : '';
+  return '$base/api/v1/video/art?id=${Uri.encodeComponent(item.id)}&kind=$kind$sizeQ';
+}
+
 Map<String, String> get videoArtHeaders {
   final token = ApiSession.instance.token;
   return token == null ? const {} : {'authorization': 'Bearer $token'};
@@ -228,7 +236,7 @@ class VideoPosterCard extends StatelessWidget {
     required this.width,
     required this.onTap,
     this.showFanart = false,
-    this.useStill = false,
+    this.showThumb = false,
     this.progress,
     this.onMore,
     this.selected = false,
@@ -240,11 +248,10 @@ class VideoPosterCard extends StatelessWidget {
   final VoidCallback onTap;
   final bool showFanart;
 
-  /// 强制用「视频截图」当封面（横版 3:2），不看刮削封面。
-  ///
-  /// 媒体浏览页的「封面图 / 缩略图」开关用它：缩略图 = 这一条在片子里的画面，
-  /// 不是海报。其余页面一律走封面（`false`）。
-  final bool useStill;
+  /// 横版「缩略图」位：用刮削到的 `<thumb>`（没有就退 fanart / poster），
+  /// 与 `showFanart`（横版背景图）的区别只是取图优先级。
+  /// 媒体浏览页的「缩略图」开关用它 —— 要的是现有的图，不是视频抽帧。
+  final bool showThumb;
 
   final double? progress;
   final VoidCallback? onMore;
@@ -256,19 +263,27 @@ class VideoPosterCard extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     // 按显示宽度 ×2 要缩略图：列表一屏几十张，原图直传在 SMB 库上会卡住整个页面
     final wantSize = (width * 2).round();
-    final url = useStill
-        ? (episodeStillFallbackUrl(item.id) ?? videoPosterUrl(item, size: wantSize))
+    final wide = showFanart || showThumb;
+    final url = showThumb
+        ? videoPosterUrl(item, kind: 'thumb', size: wantSize)
         : showFanart
         ? videoPosterUrl(item, kind: 'fanart', size: wantSize)
         : videoPosterUrl(item, size: wantSize);
     // 首图 404 / 503 时退到服务端抽帧：只有剧照没有正式海报的条目（短剧、
     // 健身视频、刚入库还没刮削的集）以前整排空白，用户以为「封面全没了」。
     final still = episodeStillFallbackUrl(item.id);
-    final coverFallback = (still != null && still != url) ? still : null;
+    final isImage = item.mediaType == 'image';
+    // 横版位（剧照 / 缩略图）缺图时先退回竖版海报，别拿首帧截图去凑横版位
+    final coverFallback = isImage
+        ? null
+        : wide && item.hasArt
+        ? videoArtUrl(item, size: wantSize)
+        : (still != null && still != url)
+        ? still
+        : null;
     final radius = NasTokens.radiusSm;
     final flags = videoFlagsOf(item);
-    final isImage = item.mediaType == 'image';
-    final ratio = isImage ? 4 / 3 : (showFanart || useStill ? 3 / 2 : 2 / 3);
+    final ratio = isImage ? 4 / 3 : (wide ? 3 / 2 : 2 / 3);
     final p = progress?.clamp(0.0, 1.0);
 
     return SizedBox(

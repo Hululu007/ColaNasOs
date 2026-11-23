@@ -1,7 +1,7 @@
 # API 参考
 
 > 由 `tool/gen-api-doc.js` 从 `contracts/openapi.json` 生成，**请勿手改**；改契约后执行 `npm run api:doc`。
-> 当前：**437 个路径 / 466 个操作 / 19 个域**。鉴权统一为 `Authorization: Bearer <jwt>`，媒体直链另支持 `?token=`（5 分钟）。
+> 当前：**438 个路径 / 467 个操作 / 19 个域**。鉴权统一为 `Authorization: Bearer <jwt>`，媒体直链另支持 `?token=`（5 分钟）。
 
 ## 域索引
 
@@ -23,7 +23,7 @@
 - **系统监控**（`system`）· 29 个操作 · [跳转](#system)
 - **tasks**（`tasks`）· 5 个操作 · [跳转](#tasks)
 - **transfer**（`transfer`）· 8 个操作 · [跳转](#transfer)
-- **影视**（`video`）· 76 个操作 · [跳转](#video)
+- **影视**（`video`）· 77 个操作 · [跳转](#video)
 
 ## accounts
 
@@ -2749,7 +2749,7 @@ HTTPS 证书状态（用户上传证书方案） · `systemTlsInfo`
 
 刮削海报 / 剧照（本地文件读流，远端 URL 302 跳转） · `videoArt`
 
-- 参数：`id` · 查询 · string · **必填**<br>`kind` · 查询 · enum(poster, fanart) · 可选<br>`size` · 查询 · integer · 可选
+- 参数：`id` · 查询 · string · **必填**<br>`kind` · 查询 · enum(poster, fanart, thumb) · 可选<br>`size` · 查询 · integer · 可选
 - 响应：200 -
 
 #### `GET /api/v1/video/audio-tracks`
@@ -2765,6 +2765,13 @@ HTTPS 证书状态（用户上传证书方案） · `systemTlsInfo`
 
 - 参数：`libraryId` · 查询 · string · **必填**<br>`sourceId` · 查询 · string · 可选<br>`path` · 查询 · string · 可选
 - 响应：200 `VideoBrowseResponse` · 错误 400 / 404 / 503
+
+#### `POST /api/v1/video/browse/delete`
+
+删除浏览目录里的文件 / 文件夹（默认进回收站，索引一起清） · `videoBrowseDelete`
+
+- 请求体：（空对象）
+- 响应：200 `VideoBrowseDeleteResponse` · 错误 400 / 404 / 503
 
 #### `GET /api/v1/video/collections`
 

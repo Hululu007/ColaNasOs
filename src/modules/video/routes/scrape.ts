@@ -379,20 +379,26 @@ export async function registerVideoScrape(
       }
 
       const kind = String(q.kind || 'poster');
-      // 封面只认 poster / thumb；fanart 是横版背景图（backdrop/剧照），
-      // 绝不能拿来顶封面 —— 否则「没有正式海报」的条目会把拍摄现场照当封面。
+      // 三种图各有用途：
+      //   poster —— 竖版封面（只认 poster / thumb，fanart 绝不能顶封面）；
+      //   thumb  —— 横版「缩略图」（刮削到的那张 `<thumb>` / `-thumb.jpg`）；
+      //   fanart —— 横版背景图（backdrop / 剧照大卡）。
+      // thumb 优先取 nfo_thumb，退 fanart 再退 poster：三个都是**已有的图**，
+      // 拿视频抽帧去凑「缩略图」是另一回事，交给 /video/poster 自己管。
       const raw =
-        kind === 'fanart'
+        kind === 'thumb'
+          ? row.nfo_thumb || row.nfo_fanart || row.nfo_poster
+          : kind === 'fanart'
           ? row.nfo_fanart || row.nfo_poster || row.nfo_thumb
           : row.nfo_poster || row.nfo_thumb;
       let target = String(raw ?? '').trim();
 
       // `-thumb.jpg` 是横版剧照 / 缩略图：第三方 NFO 常把它标成 aspect="poster"，
       // 于是 nfo_poster 里也存成它，竖版剧封面整排变成剧照（2026-11-11 用户反馈）。
-      // 竖版封面一律不用它；fanart（横版大卡）本来就是横图，不受影响。
+      // 竖版封面一律不用它；fanart / thumb（横版大卡）本来就是横图，不受影响。
       const isStill = (p: string) =>
         /(?:^|[\\/])[^\\/]*-thumb\.(?:jpe?g|png|webp)$/i.test(p);
-      if (kind !== 'fanart' && isStill(target)) target = '';
+      if (kind === 'poster' && isStill(target)) target = '';
 
       // 兜底：库里没登记图（老库没重扫 / 用户刚补了图还没扫）时，现场按文件名再找一次。
       // 只认 `-poster/-post/-cover/-folder` 与 `-fanart/-backdrop/-landscape` 这些约定名，
@@ -403,7 +409,7 @@ export async function registerVideoScrape(
           const abs = resolveAnyPath(filesRoot(), row.rel_path);
           const hit =
             kind === 'fanart' ? await findLocalFanart(abs) : await findLocalPoster(abs);
-          if (hit && (kind === 'fanart' || !isStill(hit))) target = hit;
+          if (hit && (kind !== 'poster' || !isStill(hit))) target = hit;
         } catch {
           /* 路径越界 / 离线：维持 404 */
         }

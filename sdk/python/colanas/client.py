@@ -1607,6 +1607,10 @@ class ColanasClient:
         """按库来源目录浏览（文件夹 / 图片 / 视频）"""
         return self._request("GET", "/api/v1/video/browse", params, "query")
 
+    def video_browse_delete(self, **params):
+        """删除浏览目录里的文件 / 文件夹（默认进回收站，索引一起清）"""
+        return self._request("POST", "/api/v1/video/browse/delete", params, "body")
+
     def video_collection_delete(self, **params):
         """删除合集（只删合集与其条目关系，不删影片）"""
         return self._request("POST", "/api/v1/video/collections/delete", params, "body")

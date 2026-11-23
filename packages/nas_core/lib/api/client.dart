@@ -3247,6 +3247,12 @@ class ApiClient {
     return VideoBrowseResponse.fromJson(_asMap(_decode(res)));
   }
 
+  /// 删除浏览目录里的文件 / 文件夹（默认进回收站，索引一起清）
+  Future<VideoBrowseDeleteResponse> videoBrowseDelete({required VideoBrowseDeleteBody body}) async {
+    final res = await transport.send('POST', _uri('/api/v1/video/browse/delete'), headers: await _headers(jsonBody: true), body: utf8.encode(jsonEncode(body.toJson())));
+    return VideoBrowseDeleteResponse.fromJson(_asMap(_decode(res)));
+  }
+
   /// 重复视频（豆瓣 / IMDB / 番号 / 标题+年份 四把钥匙，并查集分组）
   Future<VideoDuplicatesResponse> videoDuplicates({String? libraryId, int? limit, String? excludeActors}) async {
     final query = <String, String>{
