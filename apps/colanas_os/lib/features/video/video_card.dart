@@ -228,6 +228,7 @@ class VideoPosterCard extends StatelessWidget {
     required this.width,
     required this.onTap,
     this.showFanart = false,
+    this.useStill = false,
     this.progress,
     this.onMore,
     this.selected = false,
@@ -238,6 +239,13 @@ class VideoPosterCard extends StatelessWidget {
   final double width;
   final VoidCallback onTap;
   final bool showFanart;
+
+  /// 强制用「视频截图」当封面（横版 3:2），不看刮削封面。
+  ///
+  /// 媒体浏览页的「封面图 / 缩略图」开关用它：缩略图 = 这一条在片子里的画面，
+  /// 不是海报。其余页面一律走封面（`false`）。
+  final bool useStill;
+
   final double? progress;
   final VoidCallback? onMore;
   final bool selected;
@@ -248,7 +256,9 @@ class VideoPosterCard extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     // 按显示宽度 ×2 要缩略图：列表一屏几十张，原图直传在 SMB 库上会卡住整个页面
     final wantSize = (width * 2).round();
-    final url = showFanart
+    final url = useStill
+        ? (episodeStillFallbackUrl(item.id) ?? videoPosterUrl(item, size: wantSize))
+        : showFanart
         ? videoPosterUrl(item, kind: 'fanart', size: wantSize)
         : videoPosterUrl(item, size: wantSize);
     // 首图 404 / 503 时退到服务端抽帧：只有剧照没有正式海报的条目（短剧、
@@ -258,7 +268,7 @@ class VideoPosterCard extends StatelessWidget {
     final radius = NasTokens.radiusSm;
     final flags = videoFlagsOf(item);
     final isImage = item.mediaType == 'image';
-    final ratio = isImage ? 4 / 3 : (showFanart ? 3 / 2 : 2 / 3);
+    final ratio = isImage ? 4 / 3 : (showFanart || useStill ? 3 / 2 : 2 / 3);
     final p = progress?.clamp(0.0, 1.0);
 
     return SizedBox(

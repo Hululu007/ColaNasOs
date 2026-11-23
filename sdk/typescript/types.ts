@@ -3294,6 +3294,7 @@ export type VideoBrowseItem = {
   "id": string;
   "size": number;
   "mtime": number;
+  "item"?: VideoItem | null;
 };
 
 export type VideoBrowseResponse = {

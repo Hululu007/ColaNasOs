@@ -889,6 +889,13 @@ export const BrowseItem = Type.Object(
     }),
     size: Type.Union([Type.Integer(), Type.Null()]),
     mtime: Type.Union([Type.Integer(), Type.Null()]),
+    item: Type.Optional(
+      Type.Union([Type.Ref(Item), Type.Null()], {
+        description:
+          '已索引条目的完整信息（刮削名 / 年份 / 评分 / 是否已有封面）；未索引为 null。' +
+          '浏览页据此渲染与影视列表同一张封面卡，不再自己拼字段。',
+      }),
+    ),
   },
   { $id: 'VideoBrowseItem' },
 );

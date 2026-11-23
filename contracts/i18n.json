@@ -3269,6 +3269,7 @@
     "video.badge.chinese": {},
     "video.badge.subtitle": {},
     "video.badge.uncensored": {},
+    "video.browse.cover": {},
     "video.browse.empty": {},
     "video.browse.episodeCount": {
       "n": {}
@@ -3279,6 +3280,7 @@
     "video.browse.selectLibrary": {},
     "video.browse.smbPreviewUnsupported": {},
     "video.browse.sources": {},
+    "video.browse.thumb": {},
     "video.browse.title": {},
     "video.browse.unindexed": {},
     "video.browse.up": {},

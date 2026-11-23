@@ -2,11 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:nas_core/nas_core.dart';
 import 'package:nas_ui/nas_ui.dart';
+import '../../core/settings_store.dart';
 import '../../shell/app_widgets.dart';
 import '../../shell/shell_back.dart';
 
 import '../../core/session.dart';
+import 'video_card.dart';
 import 'video_page.dart';
+import 'video_series_widgets.dart' show episodeStillFallbackUrl;
 
 /// 媒体浏览：库 → 来源 → 目录 三层。
 ///
@@ -14,9 +17,13 @@ import 'video_page.dart';
 ///   * 一个库可以挂多个来源（几个盘 / 几台 SMB），只认库根的话第二个来源永远进不去；
 ///   * 库里除了影片还有海报、`*.nfo`、字幕这些副产物，铺出来满屏垃圾。
 ///
-/// 所以这一页从「库」开始逐层下钻：库（卡片）→ 该库的来源（卡片）→ 目录（文件夹 +
-/// 影片）。视频类库（电影 / 电视剧 / 短剧 / 日本电影）只显示影片和文件夹，
-/// 图片与其它文件一律不显示；图片库 / 混合库按影视列表的口径，图片与视频都显示。
+/// 卡片与网格尺寸**照对应库的影视列表来**：
+///   * 电影 / 电视剧 / 短剧 / 日本电影库 → `VideoPosterCard`（2:3 竖版封面、
+///     刮削名、年份 / 分辨率 / 片长），网格算法与 `video_list_view` 一致；
+///   * 图片库 / 混合库 → 4:3 缩略图格（与图片库列表一致），图片也显示。
+///
+/// 右上角「封面图 / 缩略图」切换：封面图 = 刮削海报（默认，用户要的是封面不是截图），
+/// 缩略图 = 视频截图（横版 3:2，与列表的「横版剧照」格子同高）。
 ///
 /// 电视剧库按「一部剧一张卡」聚合：逐集铺卡对剧库完全不可用（40 集 = 40 张同样的
 /// 海报），点剧卡才展开这一部剧的集。
@@ -31,6 +38,8 @@ class VideoMediaBrowserPage extends StatefulWidget {
 }
 
 class _VideoMediaBrowserPageState extends State<VideoMediaBrowserPage> {
+  static const String _keyThumb = 'video.browse.thumb';
+
   bool _libLoading = true;
   bool _loading = false;
   String? _error;
@@ -48,9 +57,13 @@ class _VideoMediaBrowserPageState extends State<VideoMediaBrowserPage> {
   /// 剧集库里点开的「一部剧」（按剧名聚合后的 key）；非空时只看这一部剧的集
   String? _seriesKey;
 
+  /// false = 封面图（刮削海报），true = 缩略图（视频截图）
+  bool _thumb = false;
+
   @override
   void initState() {
     super.initState();
+    _thumb = SettingsStore.instance.getBool(_keyThumb) ?? false;
     _loadLibraries();
   }
 
@@ -69,7 +82,6 @@ class _VideoMediaBrowserPageState extends State<VideoMediaBrowserPage> {
         _libraryId = pick;
         _libLoading = false;
       });
-      // 从库入口进来：直接看这个库的来源列表，不自动进来源
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -127,7 +139,7 @@ class _VideoMediaBrowserPageState extends State<VideoMediaBrowserPage> {
 
   String get _libType => _library?.libType ?? 'movie';
 
-  /// 图片库 / 混合库：图片也显示；其余库只显示影片
+  /// 图片库 / 混合库：图片也显示（与图片库列表同口径）；其余库只显示影片
   bool get _showsImages => _libType == 'image' || _libType == 'mixed';
 
   /// 剧集类库：按剧名聚合成一张卡
@@ -167,6 +179,12 @@ class _VideoMediaBrowserPageState extends State<VideoMediaBrowserPage> {
 
   void _openSeries(String key) => setState(() => _seriesKey = key);
 
+  void _setThumb(bool thumb) {
+    if (_thumb == thumb) return;
+    setState(() => _thumb = thumb);
+    SettingsStore.instance.setBool(_keyThumb, thumb);
+  }
+
   /// 返回：集列表 → 目录 → 来源 → 库
   void _up() {
     if (_seriesKey != null) {
@@ -205,19 +223,24 @@ class _VideoMediaBrowserPageState extends State<VideoMediaBrowserPage> {
 
   // ------------------------------------------------------------------ 动作
 
-  Future<void> _openVideo(VideoBrowseItem item) async {
-    if (item.id == null) {
+  /// 浏览条目里带的完整条目（已索引才有）
+  VideoItem? _videoItemOf(VideoBrowseItem it) {
+    final raw = it.item;
+    if (raw is! Map) return null;
+    try {
+      return VideoItem.fromJson(Map<String, dynamic>.from(raw));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  void _openVideo(VideoBrowseItem it) {
+    final item = _videoItemOf(it);
+    if (item == null) {
       NasSnack.show(context, tr('video.browse.unindexed'));
       return;
     }
-    try {
-      final detail = await ApiSession.instance.client.videoItem(id: item.id!);
-      if (!mounted) return;
-      openVideoDetail(context, detail);
-    } catch (e) {
-      if (!mounted) return;
-      NasSnack.show(context, '$e');
-    }
+    openVideoDetail(context, item);
   }
 
   void _openImage(VideoBrowseItem item) {
@@ -340,9 +363,9 @@ class _VideoMediaBrowserPageState extends State<VideoMediaBrowserPage> {
     ];
     return Padding(
       padding: const EdgeInsets.fromLTRB(
-        NasTokens.spaceMd,
         NasTokens.spaceSm,
-        NasTokens.spaceSm,
+        NasTokens.spaceXs,
+        NasTokens.spaceXs,
         NasTokens.spaceXs,
       ),
       child: Row(
@@ -366,20 +389,44 @@ class _VideoMediaBrowserPageState extends State<VideoMediaBrowserPage> {
               ),
             ),
           ),
-          if (_level == 2 && !_showsImages)
-            Padding(
-              padding: const EdgeInsets.only(right: NasTokens.spaceXs),
-              child: Text(
-                tr('video.browse.videosOnly'),
-                style: TextStyle(
-                  fontSize: NasTokens.fontMicro,
-                  color: context.nasTextSecondary,
-                ),
-              ),
+          // 封面图 / 缩略图：只在影片库有意义（图片库里「封面」就是图片本身）
+          if (_level == 2 && !_showsImages) ...[
+            _viewBtn(
+              icon: Icons.crop_portrait,
+              tooltip: tr('video.browse.cover'),
+              active: !_thumb,
+              onTap: () => _setThumb(false),
             ),
+            _viewBtn(
+              icon: Icons.crop_16_9,
+              tooltip: tr('video.browse.thumb'),
+              active: _thumb,
+              onTap: () => _setThumb(true),
+            ),
+            const SizedBox(width: NasTokens.spaceXs),
+          ],
           if (_level == 2) NasRefreshButton(onPressed: _load),
         ],
       ),
+    );
+  }
+
+  Widget _viewBtn({
+    required IconData icon,
+    required String tooltip,
+    required bool active,
+    required VoidCallback onTap,
+  }) {
+    final scheme = Theme.of(context).colorScheme;
+    return IconButton(
+      tooltip: tooltip,
+      onPressed: onTap,
+      iconSize: 19,
+      visualDensity: VisualDensity.compact,
+      style: active
+          ? IconButton.styleFrom(backgroundColor: scheme.primary.withValues(alpha: 0.14))
+          : null,
+      icon: Icon(icon, color: active ? scheme.primary : null),
     );
   }
 
@@ -530,20 +577,56 @@ class _VideoMediaBrowserPageState extends State<VideoMediaBrowserPage> {
       );
     }
     return LayoutBuilder(
-      builder: (context, c) {
-        final columns = gridColumns(c.maxWidth);
-        return GridView.builder(
-          padding: const EdgeInsets.all(NasTokens.spaceSm),
-          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: columns,
-            crossAxisSpacing: NasTokens.spaceSm,
-            mainAxisSpacing: NasTokens.spaceSm,
-            childAspectRatio: 0.82,
-          ),
-          itemCount: entries.length,
-          itemBuilder: (context, i) => _entry(entries[i]),
-        );
-      },
+      builder: (context, c) => _showsImages
+          ? _imageGrid(c.maxWidth, entries)
+          : _posterGrid(c.maxWidth, entries),
+    );
+  }
+
+  /// 影片库网格：参数与 `video_list_view#_grid` 逐项对齐（间距 / 文字区 /
+  /// 基础宽度 / 列数夹取）；缩略图模式按「同样的格子高度、更宽的格子」算列数。
+  Widget _posterGrid(double maxW, List<_BrowseEntry> entries) {
+    final spacing = maxW < 480 ? 8.0 : 12.0;
+    const textBlock = 42.0;
+    final baseWidth = maxW < 480 ? 108.0 : 132.0;
+    final posterTileHeight = baseWidth * 1.5 + textBlock;
+    final targetWidth = _thumb ? (posterTileHeight - textBlock) * (3 / 2) : baseWidth;
+    final columns = (maxW / targetWidth).floor().clamp(2, 9);
+    final itemWidth =
+        ((maxW - spacing * (columns - 1) - spacing) / columns).floorToDouble();
+    final imageHeight = _thumb ? itemWidth / (3 / 2) : itemWidth * 1.5;
+    final tileHeight = imageHeight + textBlock;
+    return GridView.builder(
+      padding: EdgeInsets.all(spacing),
+      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: columns,
+        mainAxisSpacing: spacing,
+        crossAxisSpacing: spacing,
+        childAspectRatio: itemWidth / tileHeight,
+      ),
+      itemCount: entries.length,
+      itemBuilder: (context, i) => _tile(entries[i], itemWidth, imageHeight),
+    );
+  }
+
+  /// 图片库 / 混合库网格：与图片库列表同款（4:3 图区 + 标题），图片和视频都出。
+  Widget _imageGrid(double maxW, List<_BrowseEntry> entries) {
+    const spacing = 12.0;
+    final target = maxW < 520 ? 120.0 : 176.0;
+    final columns = (maxW / (target + spacing)).floor().clamp(2, 12);
+    final itemWidth = (maxW - spacing * (columns - 1)) / columns;
+    final imageHeight = itemWidth * 3 / 4;
+    final tileHeight = imageHeight + 22;
+    return GridView.builder(
+      padding: const EdgeInsets.all(spacing),
+      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: columns,
+        mainAxisSpacing: spacing,
+        crossAxisSpacing: spacing,
+        mainAxisExtent: tileHeight,
+      ),
+      itemCount: entries.length,
+      itemBuilder: (context, i) => _tile(entries[i], itemWidth, imageHeight),
     );
   }
 
@@ -614,66 +697,293 @@ class _VideoMediaBrowserPageState extends State<VideoMediaBrowserPage> {
     if (dot <= 0) return name;
     final ext = name.substring(dot + 1).toLowerCase();
     const media = {
-      'mp4', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'webm', 'ts', 'm2ts', 'rmvb', 'mpg', 'mpeg', 'iso',
+      'mp4', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'webm', 'ts', 'm2ts',
+      'rmvb', 'mpg', 'mpeg', 'iso',
     };
     return media.contains(ext) ? name.substring(0, dot) : name;
   }
 
-  Widget _entry(_BrowseEntry entry) {
-    switch (entry.kind) {
-      case _BrowseEntryKind.item:
-        final item = entry.item!;
-        return NasContextMenuRegion(
-          entries: _browseMenuEntries(item),
-          child: InkWell(
-            onTap: item.dir
-                ? () => _enter(item)
-                : item.mediaType == 'video'
-                    ? () => _openVideo(item)
-                    : item.mediaType == 'image'
-                        ? () => _openImage(item)
-                        : null,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(child: _thumb(item)),
-                const SizedBox(height: NasTokens.spaceXs),
-                Text(
-                  _stripExt(item.name),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: NasTokens.fontCaption),
+  // ------------------------------------------------------------ 单张卡
+
+  Widget _tile(_BrowseEntry entry, double width, double imageH) {
+    if (entry.kind == _BrowseEntryKind.series) {
+      return _seriesCard(entry, width, imageH);
+    }
+    final it = entry.item!;
+    if (it.dir) return _folderCard(it, width, imageH);
+    if (_showsImages) return _imageCell(it, width, imageH);
+    final item = _videoItemOf(it);
+    if (item == null) return _missingCard(it, width, imageH);
+    return NasContextMenuRegion(
+      entries: _browseMenuEntries(it),
+      child: VideoPosterCard(
+        item: item,
+        width: width,
+        useStill: _thumb,
+        onTap: () => openVideoDetail(context, item),
+      ),
+    );
+  }
+
+  /// 图片库 / 混合库的格子：固定 4:3 图区 + 一行名字（与图片库列表一致）
+  Widget _imageCell(VideoBrowseItem it, double width, double imageH) {
+    final base = ApiSession.instance.baseUrl;
+    final token = ApiSession.instance.token;
+    final headers =
+        token == null ? const <String, String>{} : {'Authorization': 'Bearer $token'};
+    final item = _videoItemOf(it);
+    final url = item != null && item.mediaType == 'video'
+        ? videoPosterUrl(item, size: (width * 2).round())
+        : '$base/api/v1/files/thumb?path=${Uri.encodeComponent(_joinPath(_rootPath, it.path))}&size=${(width * 2).round()}';
+    return NasContextMenuRegion(
+      entries: _browseMenuEntries(it),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: () => it.mediaType == 'video' ? _openVideo(it) : _openImage(it),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SizedBox(
+              height: imageH,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: NasCoverImage(
+                  url: url,
+                  headers: headers,
+                  fit: BoxFit.cover,
+                  fallbackText: _stripExt(it.name),
+                  icon: it.mediaType == 'video'
+                      ? Icons.movie_outlined
+                      : Icons.image_outlined,
+                  cacheWidth: (width * 2).round(),
                 ),
-              ],
+              ),
+            ),
+            const SizedBox(height: 2),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 2),
+              child: Text(
+                _stripExt(it.name),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: NasTokens.fontMicro),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 文件夹卡：与影片卡同宽同高的图区，里面放文件夹图标
+  Widget _folderCard(VideoBrowseItem it, double width, double imageH) {
+    return NasContextMenuRegion(
+      entries: _browseMenuEntries(it),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(NasTokens.radiusSm),
+        onTap: () => _enter(it),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SizedBox(
+              height: imageH,
+              child: Container(
+                decoration: BoxDecoration(
+                  color: context.nasStyle.panelColor,
+                  borderRadius: BorderRadius.circular(NasTokens.radiusSm),
+                  border: Border.all(color: context.nasStyle.panelBorderColor),
+                ),
+                child: const Center(child: Icon(Icons.folder_outlined, size: 40)),
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              it.name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: NasTokens.fontCaption,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 还没索引的影片：没有封面也没有详情，只给图标 + 文件名 + 大小
+  Widget _missingCard(VideoBrowseItem it, double width, double imageH) {
+    final size = it.size ?? 0;
+    return NasContextMenuRegion(
+      entries: _browseMenuEntries(it),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(NasTokens.radiusSm),
+        onTap: () => _openVideo(it),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SizedBox(
+              height: imageH,
+              child: Container(
+                decoration: BoxDecoration(
+                  color: context.nasStyle.panelColor,
+                  borderRadius: BorderRadius.circular(NasTokens.radiusSm),
+                  border: Border.all(color: context.nasStyle.panelBorderColor),
+                ),
+                child: Center(
+                  child: Icon(
+                    Icons.movie_outlined,
+                    size: 36,
+                    color: context.nasTextSecondary,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              _stripExt(it.name),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: NasTokens.fontCaption,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            Text(
+              size > 0 ? formatBytes(size) : tr('video.browse.unindexed'),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: NasTokens.fontMicro,
+                color: context.nasTextSecondary,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 剧集卡：封面位 + 剧名 + 集数，右上角集数角标（与剧集列表同款配色）
+  Widget _seriesCard(_BrowseEntry entry, double width, double imageH) {
+    final items = entry.items!;
+    VideoItem? cover;
+    for (final it in items) {
+      final v = _videoItemOf(it);
+      if (v != null) {
+        cover = v;
+        break;
+      }
+    }
+    final width2 = (width * 2).round();
+    final still = cover == null ? null : episodeStillFallbackUrl(cover.id);
+    final url = cover == null
+        ? null
+        : (_thumb ? still : videoPosterUrl(cover, size: width2));
+    return InkWell(
+      borderRadius: BorderRadius.circular(NasTokens.radiusSm),
+      onTap: () => _openSeries(entry.seriesKey!),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          SizedBox(
+            height: imageH,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(NasTokens.radiusSm),
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  if (url == null)
+                    ColoredBox(
+                      color: context.nasStyle.panelColor,
+                      child: const Center(
+                        child: Icon(Icons.video_library_outlined, size: 36),
+                      ),
+                    )
+                  else
+                    NasCoverImage(
+                      url: url,
+                      fallbackUrl: _thumb ? null : still,
+                      headers: videoArtHeaders,
+                      fallbackText: entry.seriesKey!,
+                      icon: Icons.video_library_outlined,
+                      cacheWidth: width2,
+                    ),
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(NasTokens.radiusSm),
+                          gradient: LinearGradient(
+                            begin: Alignment.bottomCenter,
+                            end: Alignment.topCenter,
+                            colors: [
+                              Colors.black.withValues(alpha: 0.6),
+                              Colors.transparent,
+                            ],
+                            stops: const [0, 0.4],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  // 右上角：总集数（半透明圆形角标，与剧集列表一致）
+                  Positioned(
+                    top: 6,
+                    right: 6,
+                    child: Container(
+                      constraints: const BoxConstraints(minWidth: 26),
+                      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF2AA7B8).withValues(alpha: 0.92),
+                        borderRadius: BorderRadius.circular(99),
+                        border: Border.all(color: Colors.white.withValues(alpha: 0.22)),
+                      ),
+                      child: Text(
+                        '${items.length}',
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 11,
+                          height: 1.2,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
-        );
-      default:
-        final items = entry.items!;
-        return InkWell(
-          onTap: () => _openSeries(entry.seriesKey!),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(child: _seriesThumb(items)),
-              const SizedBox(height: NasTokens.spaceXs),
-              Text(
-                entry.seriesKey!,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: NasTokens.fontCaption),
-              ),
-              Text(
-                tr('video.browse.episodeCount', {'n': '${items.length}'}),
-                style: TextStyle(
-                  fontSize: NasTokens.fontMicro,
-                  color: context.nasTextSecondary,
-                ),
-              ),
-            ],
+          const SizedBox(height: 4),
+          Text(
+            entry.seriesKey!,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              fontSize: NasTokens.fontCaption,
+              fontWeight: FontWeight.w600,
+            ),
           ),
-        );
-    }
+          Text(
+            tr('video.browse.episodeCount', {'n': '${items.length}'}),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: NasTokens.fontMicro,
+              color: context.nasTextSecondary,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _entryCard({
@@ -722,90 +1032,6 @@ class _VideoMediaBrowserPageState extends State<VideoMediaBrowserPage> {
             ],
           ),
         ),
-      ),
-    );
-  }
-
-  Widget _thumb(VideoBrowseItem item) {
-    if (item.dir) {
-      return Container(
-        decoration: BoxDecoration(
-          color: context.nasStyle.panelColor,
-          borderRadius: BorderRadius.circular(NasTokens.radiusSm),
-          border: Border.all(color: context.nasStyle.panelBorderColor),
-        ),
-        child: const Center(child: Icon(Icons.folder_outlined, size: 40)),
-      );
-    }
-    final base = ApiSession.instance.baseUrl;
-    final token = ApiSession.instance.token;
-    final headers =
-        token == null ? const <String, String>{} : {'Authorization': 'Bearer $token'};
-    if (item.mediaType == 'video' && item.id != null) {
-      return ClipRRect(
-        borderRadius: BorderRadius.circular(NasTokens.radiusSm),
-        child: NasCoverImage(
-          url: '$base/api/v1/video/poster?id=${Uri.encodeComponent(item.id!)}',
-          headers: headers,
-          cacheWidth: 480,
-          icon: Icons.movie_outlined,
-        ),
-      );
-    }
-    if (item.mediaType == 'image') {
-      final fullPath = _joinPath(_rootPath, item.path);
-      return ClipRRect(
-        borderRadius: BorderRadius.circular(NasTokens.radiusSm),
-        child: NasCoverImage(
-          url: '$base/api/v1/files/thumb?path=${Uri.encodeComponent(fullPath)}&size=480',
-          headers: headers,
-          cacheWidth: 480,
-          icon: Icons.image_outlined,
-        ),
-      );
-    }
-    return Container(
-      decoration: BoxDecoration(
-        color: context.nasStyle.panelColor,
-        borderRadius: BorderRadius.circular(NasTokens.radiusSm),
-        border: Border.all(color: context.nasStyle.panelBorderColor),
-      ),
-      child: Center(
-        child: Icon(Icons.movie_outlined, size: 36, color: context.nasTextSecondary),
-      ),
-    );
-  }
-
-  /// 剧卡封面用第一集的海报：剧库的集海报就是这部剧的图
-  Widget _seriesThumb(List<VideoBrowseItem> items) {
-    VideoBrowseItem? withPoster;
-    for (final it in items) {
-      if (it.id != null) {
-        withPoster = it;
-        break;
-      }
-    }
-    if (withPoster == null) {
-      return Container(
-        decoration: BoxDecoration(
-          color: context.nasStyle.panelColor,
-          borderRadius: BorderRadius.circular(NasTokens.radiusSm),
-          border: Border.all(color: context.nasStyle.panelBorderColor),
-        ),
-        child: const Center(child: Icon(Icons.video_library_outlined, size: 36)),
-      );
-    }
-    final base = ApiSession.instance.baseUrl;
-    final token = ApiSession.instance.token;
-    final headers =
-        token == null ? const <String, String>{} : {'Authorization': 'Bearer $token'};
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(NasTokens.radiusSm),
-      child: NasCoverImage(
-        url: '$base/api/v1/video/poster?id=${Uri.encodeComponent(withPoster.id!)}',
-        headers: headers,
-        cacheWidth: 480,
-        icon: Icons.video_library_outlined,
       ),
     );
   }

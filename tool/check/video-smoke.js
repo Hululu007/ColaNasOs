@@ -492,6 +492,19 @@ function makeVideo(out, size, seconds, fps = 25) {
     JSON.stringify(browse).slice(0, 160),
   );
 
+  // 浏览页要按影视列表那张封面卡渲染：已索引条目必须带完整条目（标题 / 是否有封面），
+  // 未索引的普通文件不能带（否则前端会拿半条数据去画卡）。
+  check(
+    'browse_item_payload',
+    betaBrowse?.item &&
+      betaBrowse.item.id === betaItem.id &&
+      typeof betaBrowse.item.title === 'string' &&
+      betaBrowse.item.title.length > 0 &&
+      typeof betaBrowse.item.hasArt === 'boolean' &&
+      txtBrowse?.item === null,
+    JSON.stringify(betaBrowse?.item || null).slice(0, 160),
+  );
+
   r = await app.inject({
     method: 'GET',
     url: '/api/v1/video/browse?libraryId=' + encodeURIComponent(lib.id) + '&path=' + encodeURIComponent('../'),

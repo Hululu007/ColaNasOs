@@ -11170,6 +11170,7 @@ class VideoBrowseItem {
   final String? id;
   final int? size;
   final int? mtime;
+  final dynamic item;
 
   const VideoBrowseItem({
     required this.name,
@@ -11179,6 +11180,7 @@ class VideoBrowseItem {
     required this.id,
     required this.size,
     required this.mtime,
+    this.item,
   });
 
   factory VideoBrowseItem.fromJson(Map<String, dynamic> json) => VideoBrowseItem(
@@ -11189,6 +11191,7 @@ class VideoBrowseItem {
         id: json['id'] as String?,
         size: json['size'] as int?,
         mtime: json['mtime'] as int?,
+        item: json['item'] == null ? null : (json['item'] as dynamic),
       );
 
   Map<String, dynamic> toJson() => <String, dynamic>{
@@ -11199,6 +11202,7 @@ class VideoBrowseItem {
         'id': id,
         'size': size,
         'mtime': mtime,
+        if (item != null) 'item': item!,
       };
 }
 

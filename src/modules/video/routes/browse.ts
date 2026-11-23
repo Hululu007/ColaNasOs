@@ -9,7 +9,7 @@ import { effectiveSources, type VideoSourceRow } from '../sources';
 import { isVideoFile } from '../ffmpeg';
 import { isImageFile } from '../../photo/exif';
 import { uncPathOf, ONLINE_NO } from '../smb';
-import { TAG } from '../util';
+import { TAG, toItem, type MediaRow } from '../util';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { KernelApi } from '../../../../kernel/types';
 import type { VideoHelpers } from '../helpers';
@@ -146,20 +146,26 @@ export async function registerVideoBrowse(
         return reply.code(503).send({ error: Err.unavailable, message: 'read failed' });
       }
 
-      // 视频 id 映射：只查当前目录前缀下的条目（避免整库回表）
+      // 已索引条目的完整信息：浏览页直接用影视列表那张封面卡渲染，
+      // 所以这里一次把当前目录的条目取全（含刮削名 / 封面标记 / 已看状态），
+      // 不再让前端拿着 id 一条条回表。
       const prefix = `${src.root_path}/${rel}`.replace(/\/+$/, '');
-      const ids = new Map<string, string>();
+      const byPath = new Map<string, ReturnType<typeof toItem>>();
       try {
+        const uid = String(req.user?.sub || '');
         const rows = (
-          await sql<{ id: string; rel_path: string }>`
-            select id, rel_path from video_items
-             where library_id = ${lib.id} and rel_path like ${`${prefix}/%`}
+          await sql<MediaRow & { watched: number; taken_at: number | null }>`
+            select v.*, cast(v.mtime / 1000 as integer) as taken_at,
+                   exists(select 1 from video_watch w
+                           where w.item_id = v.id and w.owner_id = ${uid}) as watched
+              from video_items v
+             where v.library_id = ${lib.id} and v.rel_path like ${`${prefix}/%`}
              limit 5000
           `.execute(k.db)
         ).rows;
-        for (const r of rows) ids.set(r.rel_path, r.id);
+        for (const r of rows) byPath.set(r.rel_path, toItem(r));
       } catch {
-        // 映射失败只影响视频 id，不影响浏览
+        // 映射失败只影响封面卡，不影响浏览
       }
 
       const items = [];
@@ -175,12 +181,14 @@ export async function registerVideoBrowse(
             id: null,
             size: null,
             mtime: null,
+            item: null,
           });
           continue;
         }
         if (!e.isFile()) continue;
         const mediaType = isVideoFile(e.name) ? 'video' : isImageFile(e.name) ? 'image' : 'other';
         const fullRel = `${src.root_path}/${childRel}`.replace(/^\/+/, '');
+        const row = mediaType === 'other' ? undefined : byPath.get(fullRel);
         let size: number | null = null;
         let mtime: number | null = null;
         try {
@@ -195,9 +203,10 @@ export async function registerVideoBrowse(
           path: childRel,
           dir: false,
           mediaType,
-          id: mediaType === 'video' ? ids.get(fullRel) ?? null : null,
+          id: mediaType === 'video' ? row?.id ?? null : null,
           size,
           mtime,
+          item: row ?? null,
         });
       }
 
