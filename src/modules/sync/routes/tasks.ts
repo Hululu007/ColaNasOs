@@ -21,6 +21,14 @@ import type { SyncHelpers } from '../helpers';
 
 /** 多端同步（三向比对） */
 export async function registerSyncTasks(app: FastifyInstance, k: KernelApi, h: SyncHelpers): Promise<void> {
+    /**
+     * 同步的 `plan` / `report` 请求体里是**整个目录的文件清单**（path / size / mtime），
+     * 几千个文件就上 MB 级 —— Fastify 全局默认 1 MiB，超了直接 413 并断开连接，
+     * 客户端只能看到 `SocketException ... errno = 10053`（2026-11-23 用户反馈
+     * 「同步报错」的真因）。这两个路由单独放到 64 MiB，与 PT Web UI 上传同一口径。
+     */
+    const SYNC_BODY_LIMIT = 64 * 1024 * 1024;
+
     // 按同步模式推导路径 ACL 动作：只读模式只需 read，其余需要 write
     const needOfMode = (mode: string): 'read' | 'write' =>
       mode === 'download_only' ? 'read' : 'write';
@@ -180,6 +188,7 @@ export async function registerSyncTasks(app: FastifyInstance, k: KernelApi, h: S
     app.post(
       '/api/v1/sync/plan',
       secured('sync:write', {
+        bodyLimit: SYNC_BODY_LIMIT,
         schema: {
           operationId: 'syncPlan',
           tags: TAG,
@@ -250,6 +259,7 @@ export async function registerSyncTasks(app: FastifyInstance, k: KernelApi, h: S
     app.post(
       '/api/v1/sync/report',
       secured('sync:write', {
+        bodyLimit: SYNC_BODY_LIMIT,
         schema: {
           operationId: 'syncReport',
           tags: TAG,

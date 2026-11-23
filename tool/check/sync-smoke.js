@@ -209,6 +209,26 @@ process.chdir(root);
     JSON.stringify(r.json().stats),
   );
 
+  // 大清单：整个目录的清单（path/size/mtime）很容易超过 Fastify 全局 1 MiB 默认值，
+  // 以前直接 413 + 断连接，客户端只看到 `SocketException ... errno = 10053`
+  // （2026-11-23 用户反馈「同步报错」的真因）。plan/report 必须能收下这份大 body。
+  const bigLocal = Array.from({ length: 40000 }, (_, i) => ({
+    path: `big/${i}.bin`,
+    size: 1,
+    mtimeMs: aMtime,
+  }));
+  r = await app.inject({
+    method: 'POST',
+    url: '/api/v1/sync/plan',
+    headers: bearer,
+    payload: { taskId: task.id, local: bigLocal },
+  });
+  check(
+    'plan_big_body_not_413',
+    r.statusCode === 200 && r.json().stats.upload === 40000,
+    `status=${r.statusCode} body~${(JSON.stringify(bigLocal).length / 1048576).toFixed(1)}MB`,
+  );
+
   // 上报（远端此时仍只有 a.txt）⇒ 基线 1 条
   r = await report([{ path: 'a.txt', kind: 'skip', ok: true }]);
   check('report_baseline', r.statusCode === 200 && r.json().baseline === 1, JSON.stringify(r.json()));
