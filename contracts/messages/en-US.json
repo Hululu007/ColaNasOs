@@ -2605,6 +2605,7 @@
     "video.browse.episodeCount": "{n} episodes",
     "video.browse.noLibrary": "No video library yet; create and scan one in settings",
     "video.browse.noSource": "This library has no source folder yet; add one in library settings",
+    "video.browse.openFolder": "Open containing folder",
     "video.browse.root": "Source root",
     "video.browse.selectLibrary": "Library",
     "video.browse.smbPreviewUnsupported": "Image preview over SMB is not supported; download to view",

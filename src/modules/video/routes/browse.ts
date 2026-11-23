@@ -168,6 +168,25 @@ export async function registerVideoBrowse(
         // 映射失败只影响封面卡，不影响浏览
       }
 
+      // 子目录里的影片计数：某个文件夹（子树）里只放了一条影片时（一人一片那种
+      // 「番号目录」），浏览页直接显示这条影片本身 —— 让人为一部片多点两下没意义。
+      // 只数已索引的影片，不再逐个 readdir 子目录：SMB 上那是几十次网络往返。
+      const singleVideoOf = new Map<string, ReturnType<typeof toItem>>();
+      {
+        const counts = new Map<string, number>();
+        for (const [relPath, item] of byPath) {
+          if (String(item.mediaType) !== 'video') continue;
+          const rest = relPath.startsWith(`${prefix}/`) ? relPath.slice(prefix.length + 1) : '';
+          const seg = rest.split('/')[0];
+          // 直接躺在当前目录里的文件不算子目录
+          if (!seg || seg === rest) continue;
+          const n = (counts.get(seg) ?? 0) + 1;
+          counts.set(seg, n);
+          if (n === 1) singleVideoOf.set(seg, item);
+          else singleVideoOf.delete(seg);
+        }
+      }
+
       const items = [];
       for (const e of entries) {
         if (e.isSymbolicLink()) continue;
@@ -182,6 +201,7 @@ export async function registerVideoBrowse(
             size: null,
             mtime: null,
             item: null,
+            singleVideo: singleVideoOf.get(e.name) ?? null,
           });
           continue;
         }
@@ -207,6 +227,7 @@ export async function registerVideoBrowse(
           size,
           mtime,
           item: row ?? null,
+          singleVideo: null,
         });
       }
 

@@ -2484,6 +2484,7 @@
     "video.browse.episodeCount": "{n} 集",
     "video.browse.noLibrary": "还没有影视库，先去设置里创建并扫描",
     "video.browse.noSource": "这个库还没有来源目录，先去库设置里添加",
+    "video.browse.openFolder": "打开所在文件夹",
     "video.browse.root": "来源根",
     "video.browse.selectLibrary": "影视库",
     "video.browse.smbPreviewUnsupported": "SMB 来源暂不支持图片预览，请下载后查看",

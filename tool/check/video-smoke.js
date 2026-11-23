@@ -1113,6 +1113,46 @@ function makeVideo(out, size, seconds, fps = 25) {
     JSON.stringify(after),
   );
 
+  // 17b. 单影片文件夹：浏览时直接把这条影片带出来（前端据此铺影片卡、一点即播），
+  // 不用让人为一部片多点两层。
+  const soloDir = path.join(filesRoot, 'solo', 'Solo Movie');
+  fs.mkdirSync(soloDir, { recursive: true });
+  if (ffmpeg) makeVideo(path.join(soloDir, 'Solo Movie.mp4'), '320x240', 1);
+  if (!fs.existsSync(path.join(soloDir, 'Solo Movie.mp4'))) {
+    fs.writeFileSync(path.join(soloDir, 'Solo Movie.mp4'), Buffer.alloc(2048, 3));
+  }
+  r = await app.inject({
+    method: 'POST',
+    url: '/api/v1/video/libraries',
+    headers: bearer,
+    payload: { name: 'Solo', path: 'solo' },
+  });
+  const soloLib = r.json();
+  await app.inject({ method: 'POST', url: '/api/v1/video/scan', headers: bearer, payload: {} });
+  r = await app.inject({
+    method: 'GET',
+    url: '/api/v1/video/browse?libraryId=' + encodeURIComponent(soloLib.id),
+    headers: bearer,
+  });
+  const soloBrowse = r.json();
+  const soloFolder = (soloBrowse.items || []).find((x) => x.name === 'Solo Movie');
+  check(
+    'browse_single_video_folder',
+    r.statusCode === 200 &&
+      soloFolder &&
+      soloFolder.dir === true &&
+      soloFolder.singleVideo &&
+      String(soloFolder.singleVideo.path).endsWith('Solo Movie/Solo Movie.mp4') &&
+      soloFolder.singleVideo.id,
+    JSON.stringify(soloFolder && soloFolder.singleVideo && soloFolder.singleVideo.path),
+  );
+  await app.inject({
+    method: 'POST',
+    url: '/api/v1/video/libraries/remove',
+    headers: bearer,
+    payload: { id: soloLib.id },
+  });
+
   // ---- SMB 片源：创建不 stat、列表只读缓存、probe 才真探（800ms 超时不拖住接口）
   r = await app.inject({
     method: 'POST',

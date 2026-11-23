@@ -12543,6 +12543,21 @@
                 ]
               }
             ]
+          },
+          "singleVideo": {
+            "description": "目录项专用：这个文件夹（子树）里只有一条影片时给出这条影片，浏览页直接把文件夹显示成影片并一点即播；否则为 null。",
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VideoItem"
+              },
+              {
+                "type": "object",
+                "nullable": true,
+                "enum": [
+                  null
+                ]
+              }
+            ]
           }
         }
       },

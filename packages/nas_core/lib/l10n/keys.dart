@@ -2528,6 +2528,7 @@ class I18nKeys {
   static const videoBrowseEpisodeCount = 'video.browse.episodeCount';
   static const videoBrowseNoLibrary = 'video.browse.noLibrary';
   static const videoBrowseNoSource = 'video.browse.noSource';
+  static const videoBrowseOpenFolder = 'video.browse.openFolder';
   static const videoBrowseRoot = 'video.browse.root';
   static const videoBrowseSelectLibrary = 'video.browse.selectLibrary';
   static const videoBrowseSmbPreviewUnsupported = 'video.browse.smbPreviewUnsupported';
@@ -3196,4 +3197,4 @@ class I18nKeys {
 }
 
 /// 契约键总数（生成时确定），供完整性自检使用。
-const int i18nKeyCount = 3144;
+const int i18nKeyCount = 3145;

@@ -3276,6 +3276,7 @@
     },
     "video.browse.noLibrary": {},
     "video.browse.noSource": {},
+    "video.browse.openFolder": {},
     "video.browse.root": {},
     "video.browse.selectLibrary": {},
     "video.browse.smbPreviewUnsupported": {},

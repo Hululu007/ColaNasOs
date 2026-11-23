@@ -3295,6 +3295,7 @@ export type VideoBrowseItem = {
   "size": number;
   "mtime": number;
   "item"?: VideoItem | null;
+  "singleVideo"?: VideoItem | null;
 };
 
 export type VideoBrowseResponse = {

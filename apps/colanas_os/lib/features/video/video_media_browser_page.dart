@@ -8,6 +8,7 @@ import '../../shell/shell_back.dart';
 
 import '../../core/session.dart';
 import 'video_card.dart';
+import 'video_media_viewer_page.dart' show openVideoPlayer;
 import 'video_page.dart';
 import 'video_series_widgets.dart' show episodeStillFallbackUrl;
 
@@ -234,6 +235,17 @@ class _VideoMediaBrowserPageState extends State<VideoMediaBrowserPage> {
     }
   }
 
+  /// 文件夹里只有一条影片时，服务端会附带这条影片；有它就别再显示文件夹
+  VideoItem? _singleVideoOf(VideoBrowseItem dir) {
+    final raw = dir.singleVideo;
+    if (raw is! Map) return null;
+    try {
+      return VideoItem.fromJson(Map<String, dynamic>.from(raw));
+    } catch (_) {
+      return null;
+    }
+  }
+
   void _openVideo(VideoBrowseItem it) {
     final item = _videoItemOf(it);
     if (item == null) {
@@ -241,6 +253,28 @@ class _VideoMediaBrowserPageState extends State<VideoMediaBrowserPage> {
       return;
     }
     openVideoDetail(context, item);
+  }
+
+  /// 直接播放：播放器入口与影视列表里点开一条影片走的是同一个
+  /// （`openVideoPlayer` → `PlayerPage`，同样的转码 / 兼容 / 进度上报）。
+  /// 带上当前目录里能播的影片当播放列表，播放器里才能上下切集。
+  void _play(VideoItem item) {
+    final playlist = <VideoItem>[];
+    for (final e in _entries()) {
+      if (e.video != null) {
+        playlist.add(e.video!);
+      } else if (e.item != null &&
+          !e.item!.dir &&
+          e.item!.mediaType == 'video') {
+        final v = _videoItemOf(e.item!);
+        if (v != null) playlist.add(v);
+      }
+    }
+    openVideoPlayer(
+      context,
+      item,
+      playlist: playlist.length > 1 ? playlist : null,
+    );
   }
 
   void _openImage(VideoBrowseItem item) {
@@ -631,49 +665,69 @@ class _VideoMediaBrowserPageState extends State<VideoMediaBrowserPage> {
   }
 
   /// 目录项 → 展示条目。过滤规则在这里，别散到各渲染分支里：
-  ///   * 文件夹永远显示；
-  ///   * 影片永远显示；
+  ///   * 文件夹显示；但**只有一条影片的文件夹直接铺那条影片**（一点即播）；
+  ///   * 影片显示；
   ///   * 图片只在图片库 / 混合库显示；
   ///   * 其它（`.nfo` / 字幕 / 海报 / 说明文件）一律不显示。
   List<_BrowseEntry> _entries() {
-    final items = _items.where((it) {
+    final visible = _items.where((it) {
       if (it.dir) return true;
       if (it.mediaType == 'video') return true;
       if (it.mediaType == 'image') return _showsImages;
       return false;
-    }).toList();
+    });
 
-    // 已点进某部剧：只看这一部的集
+    // 已点进某部剧：只留这一部剧的集（文件夹层已经被服务端聚合掉了）
     final key = _seriesKey;
+    final out = <_BrowseEntry>[];
+    final videos = <VideoBrowseItem>[];
+
+    for (final it in visible) {
+      if (it.dir) {
+        // 图片库 / 混合库里文件夹还装着图片，不折叠
+        final single = _showsImages ? null : _singleVideoOf(it);
+        if (single == null) {
+          if (key == null) out.add(_BrowseEntry.item(it));
+          continue;
+        }
+        if (key == null) {
+          out.add(_BrowseEntry.video(single, it));
+        } else {
+          final name = single.path.split('/').last;
+          if (_seriesKeyOf(name) == key) out.add(_BrowseEntry.video(single, it));
+        }
+        continue;
+      }
+      if (it.mediaType == 'video') {
+        videos.add(it);
+        continue;
+      }
+      if (key == null) out.add(_BrowseEntry.item(it));
+    }
+
     if (key != null) {
       return [
-        for (final it in items)
-          if (!it.dir && it.mediaType == 'video' && _seriesKeyOf(it.name) == key)
-            _BrowseEntry.item(it),
+        ...out,
+        for (final it in videos)
+          if (_seriesKeyOf(it.name) == key) _BrowseEntry.item(it),
       ];
     }
 
     if (!_isSeriesLib) {
-      return [for (final it in items) _BrowseEntry.item(it)];
+      return [...out, for (final it in videos) _BrowseEntry.item(it)];
     }
 
-    // 剧集库：文件夹照常，视频按剧名聚合（一部剧一张卡），单集仍按影片卡显示
+    // 剧集库：视频按剧名聚合（一部剧一张卡），单集仍按影片卡显示
     final groups = <String, List<VideoBrowseItem>>{};
-    final out = <_BrowseEntry>[];
-    for (final it in items) {
-      if (it.dir) {
-        out.add(_BrowseEntry.item(it));
-        continue;
-      }
-      if (it.mediaType != 'video') continue;
+    for (final it in videos) {
       groups.putIfAbsent(_seriesKeyOf(it.name), () => []).add(it);
     }
     for (final entry in groups.entries) {
-      if (entry.value.length == 1) {
-        out.add(_BrowseEntry.item(entry.value.first));
-      } else {
-        out.add(_BrowseEntry.series(entry.key, entry.value));
-      }
+      out.add(
+        entry.value.length == 1
+            ? _BrowseEntry.item(entry.value.first)
+            : _BrowseEntry.series(entry.key, entry.value),
+      );
     }
     return out;
   }
@@ -709,6 +763,19 @@ class _VideoMediaBrowserPageState extends State<VideoMediaBrowserPage> {
     if (entry.kind == _BrowseEntryKind.series) {
       return _seriesCard(entry, width, imageH);
     }
+    if (entry.kind == _BrowseEntryKind.video) {
+      // 文件夹里只有这一条影片：直接当影片卡显示，一点就播
+      final item = entry.video!;
+      return NasContextMenuRegion(
+        entries: _singleVideoMenuEntries(entry),
+        child: VideoPosterCard(
+          item: item,
+          width: width,
+          useStill: _thumb,
+          onTap: () => _play(item),
+        ),
+      );
+    }
     final it = entry.item!;
     if (it.dir) return _folderCard(it, width, imageH);
     if (_showsImages) return _imageCell(it, width, imageH);
@@ -723,6 +790,29 @@ class _VideoMediaBrowserPageState extends State<VideoMediaBrowserPage> {
         onTap: () => openVideoDetail(context, item),
       ),
     );
+  }
+
+  /// 单影片文件夹的右键菜单：播放 / 复制影片路径 / 打开所在文件夹
+  List<NasMenuEntry> _singleVideoMenuEntries(_BrowseEntry entry) {
+    final item = entry.video!;
+    final folder = entry.folder!;
+    return [
+      NasMenuEntry(
+        label: tr('video.series.play'),
+        icon: Icons.play_arrow_outlined,
+        onSelected: () => _play(item),
+      ),
+      NasMenuEntry(
+        label: tr('video.action.copyPath'),
+        icon: Icons.copy_all_outlined,
+        onSelected: () => _copyPath(item.path),
+      ),
+      NasMenuEntry(
+        label: tr('video.browse.openFolder'),
+        icon: Icons.folder_open_outlined,
+        onSelected: () => _enter(folder),
+      ),
+    ];
   }
 
   /// 图片库 / 混合库的格子：固定 4:3 图区 + 一行名字（与图片库列表一致）
@@ -1037,21 +1127,36 @@ class _VideoMediaBrowserPageState extends State<VideoMediaBrowserPage> {
   }
 }
 
-enum _BrowseEntryKind { item, series }
+enum _BrowseEntryKind { item, series, video }
 
-/// 目录里的一个展示条目：文件夹 / 影片 / 图片，或剧集库聚合出来的一部剧
+/// 目录里的一个展示条目：文件夹 / 影片 / 图片，剧集库聚合出来的一部剧，
+/// 或「只有一个影片的文件夹」折叠出来的那条影片
 class _BrowseEntry {
   const _BrowseEntry.item(VideoBrowseItem this.item)
       : kind = _BrowseEntryKind.item,
         seriesKey = null,
-        items = null;
+        items = null,
+        video = null,
+        folder = null;
 
   const _BrowseEntry.series(String this.seriesKey, List<VideoBrowseItem> this.items)
       : kind = _BrowseEntryKind.series,
-        item = null;
+        item = null,
+        video = null,
+        folder = null;
+
+  const _BrowseEntry.video(VideoItem this.video, VideoBrowseItem this.folder)
+      : kind = _BrowseEntryKind.video,
+        item = null,
+        seriesKey = null,
+        items = null;
 
   final _BrowseEntryKind kind;
   final VideoBrowseItem? item;
   final String? seriesKey;
   final List<VideoBrowseItem>? items;
+  final VideoItem? video;
+
+  /// 折叠前的那个文件夹条目（右键「打开所在文件夹」用）
+  final VideoBrowseItem? folder;
 }

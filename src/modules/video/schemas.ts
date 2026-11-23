@@ -896,6 +896,13 @@ export const BrowseItem = Type.Object(
           '浏览页据此渲染与影视列表同一张封面卡，不再自己拼字段。',
       }),
     ),
+    singleVideo: Type.Optional(
+      Type.Union([Type.Ref(Item), Type.Null()], {
+        description:
+          '目录项专用：这个文件夹（子树）里只有一条影片时给出这条影片，' +
+          '浏览页直接把文件夹显示成影片并一点即播；否则为 null。',
+      }),
+    ),
   },
   { $id: 'VideoBrowseItem' },
 );
