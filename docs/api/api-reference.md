@@ -2749,7 +2749,7 @@ HTTPS 证书状态（用户上传证书方案） · `systemTlsInfo`
 
 刮削海报 / 剧照（本地文件读流，远端 URL 302 跳转） · `videoArt`
 
-- 参数：`id` · 查询 · string · **必填**<br>`kind` · 查询 · enum(poster, fanart, thumb) · 可选<br>`size` · 查询 · integer · 可选
+- 参数：`id` · 查询 · string · **必填**<br>`kind` · 查询 · enum(poster, fanart) · 可选<br>`size` · 查询 · integer · 可选
 - 响应：200 -
 
 #### `GET /api/v1/video/audio-tracks`

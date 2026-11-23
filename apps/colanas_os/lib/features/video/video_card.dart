@@ -236,7 +236,6 @@ class VideoPosterCard extends StatelessWidget {
     required this.width,
     required this.onTap,
     this.showFanart = false,
-    this.showThumb = false,
     this.progress,
     this.onMore,
     this.selected = false,
@@ -246,12 +245,10 @@ class VideoPosterCard extends StatelessWidget {
   final VideoItem item;
   final double width;
   final VoidCallback onTap;
-  final bool showFanart;
 
-  /// 横版「缩略图」位：用刮削到的 `<thumb>`（没有就退 fanart / poster），
-  /// 与 `showFanart`（横版背景图）的区别只是取图优先级。
-  /// 媒体浏览页的「缩略图」开关用它 —— 要的是现有的图，不是视频抽帧。
-  final bool showThumb;
+  /// 横版位（3:2）：`-backdrop.jpg` / `<fanart>` / `<thumb aspect="landscape">`
+  /// 这类横图 —— 媒体浏览页的「缩略图」开关就是它，不是视频抽帧。
+  final bool showFanart;
 
   final double? progress;
   final VoidCallback? onMore;
@@ -263,27 +260,24 @@ class VideoPosterCard extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     // 按显示宽度 ×2 要缩略图：列表一屏几十张，原图直传在 SMB 库上会卡住整个页面
     final wantSize = (width * 2).round();
-    final wide = showFanart || showThumb;
-    final url = showThumb
-        ? videoPosterUrl(item, kind: 'thumb', size: wantSize)
-        : showFanart
+    final url = showFanart
         ? videoPosterUrl(item, kind: 'fanart', size: wantSize)
         : videoPosterUrl(item, size: wantSize);
     // 首图 404 / 503 时退到服务端抽帧：只有剧照没有正式海报的条目（短剧、
     // 健身视频、刚入库还没刮削的集）以前整排空白，用户以为「封面全没了」。
     final still = episodeStillFallbackUrl(item.id);
     final isImage = item.mediaType == 'image';
-    // 横版位（剧照 / 缩略图）缺图时先退回竖版海报，别拿首帧截图去凑横版位
+    // 横版位（`-backdrop.jpg` 这类）缺图时先退回竖版海报，别拿首帧截图去凑横版位
     final coverFallback = isImage
         ? null
-        : wide && item.hasArt
+        : showFanart && item.hasArt
         ? videoArtUrl(item, size: wantSize)
         : (still != null && still != url)
         ? still
         : null;
     final radius = NasTokens.radiusSm;
     final flags = videoFlagsOf(item);
-    final ratio = isImage ? 4 / 3 : (wide ? 3 / 2 : 2 / 3);
+    final ratio = isImage ? 4 / 3 : (showFanart ? 3 / 2 : 2 / 3);
     final p = progress?.clamp(0.0, 1.0);
 
     return SizedBox(

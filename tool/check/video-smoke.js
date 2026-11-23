@@ -898,14 +898,15 @@ function makeVideo(out, size, seconds, fps = 25) {
   r = await app.inject({ method: 'GET', url: '/api/v1/video/art?id=' + encodeURIComponent(alphaScraped.id), headers: bearer });
   check('art_404_without_meta', r.statusCode === 404, 'status=' + r.statusCode);
 
-  // `kind=thumb`（横版缩略图）必须被接受：前端「缩略图」开关用它，
-  // 没图时是 404，不能是 400（参数校验挡住会让整排卡裂图）。
+  // `kind=fanart`（库里现成的横版图，`-backdrop.jpg` 就是它）必须被接受：
+  // 媒体浏览的「缩略图」开关走这个 kind，没图时是 404，不能是 400
+  // （参数校验挡住会让整排卡裂图）。
   r = await app.inject({
     method: 'GET',
-    url: '/api/v1/video/art?id=' + encodeURIComponent(alphaScraped.id) + '&kind=thumb',
+    url: '/api/v1/video/art?id=' + encodeURIComponent(alphaScraped.id) + '&kind=fanart',
     headers: bearer,
   });
-  check('art_thumb_kind_ok', r.statusCode === 404, 'status=' + r.statusCode);
+  check('art_fanart_kind_ok', r.statusCode === 404, 'status=' + r.statusCode);
 
   // 22. 库级开关（此前这些列只有读没有写）
   r = await app.inject({

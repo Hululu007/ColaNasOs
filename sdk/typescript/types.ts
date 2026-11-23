@@ -3800,7 +3800,7 @@ export type VideoTmdbSettingsBody = {
 
 export type VideoArtQuery = {
   "id": string;
-  "kind"?: "poster" | "fanart" | "thumb";
+  "kind"?: "poster" | "fanart";
   "size"?: number;
 };
 

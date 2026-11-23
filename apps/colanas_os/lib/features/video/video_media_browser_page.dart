@@ -918,7 +918,7 @@ class _VideoMediaBrowserPageState extends State<VideoMediaBrowserPage> {
         child: VideoPosterCard(
           item: item,
           width: width,
-          showThumb: _thumb,
+          showFanart: _thumb,
           onTap: () => _play(item),
         ),
       );
@@ -933,7 +933,7 @@ class _VideoMediaBrowserPageState extends State<VideoMediaBrowserPage> {
       child: VideoPosterCard(
         item: item,
         width: width,
-        showThumb: _thumb,
+        showFanart: _thumb,
         onTap: () => openVideoDetail(context, item),
       ),
     );
@@ -1130,14 +1130,14 @@ class _VideoMediaBrowserPageState extends State<VideoMediaBrowserPage> {
       }
     }
     final width2 = (width * 2).round();
-    // 缩略图 = 刮削到的 `<thumb>`（没有就退 fanart / poster），都是现成的图；
-    // 缺图时退回竖版海报，绝不拿首帧截图凑
+    // 缩略图 = 库里现成的横版图（`-backdrop.jpg` / fanart），缺图退回竖版海报，
+    // 绝不拿首帧截图凑
     final still = cover == null || !cover.hasArt ? null : episodeStillFallbackUrl(cover.id);
     final posterArt = cover == null || !cover.hasArt ? null : videoArtUrl(cover, size: width2);
     final url = cover == null
         ? null
         : (_thumb
-              ? videoPosterUrl(cover, kind: 'thumb', size: width2)
+              ? videoPosterUrl(cover, kind: 'fanart', size: width2)
               : videoPosterUrl(cover, size: width2));
     return InkWell(
       borderRadius: BorderRadius.circular(NasTokens.radiusSm),

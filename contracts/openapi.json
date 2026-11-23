@@ -14628,12 +14628,6 @@
                 "enum": [
                   "fanart"
                 ]
-              },
-              {
-                "type": "string",
-                "enum": [
-                  "thumb"
-                ]
               }
             ]
           },
@@ -44159,12 +44153,6 @@
                   "type": "string",
                   "enum": [
                     "fanart"
-                  ]
-                },
-                {
-                  "type": "string",
-                  "enum": [
-                    "thumb"
                   ]
                 }
               ]

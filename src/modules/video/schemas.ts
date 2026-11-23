@@ -1101,10 +1101,7 @@ export const ArtQuery = Type.Object(
   {
     id: Type.String({ minLength: 1 }),
     kind: Type.Optional(
-      Type.Union(
-        [Type.Literal('poster'), Type.Literal('fanart'), Type.Literal('thumb')],
-        { default: 'poster' },
-      ),
+      Type.Union([Type.Literal('poster'), Type.Literal('fanart')], { default: 'poster' }),
     ),
     size: Type.Optional(
       Type.Integer({

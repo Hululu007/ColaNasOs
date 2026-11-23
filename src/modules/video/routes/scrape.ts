@@ -379,26 +379,23 @@ export async function registerVideoScrape(
       }
 
       const kind = String(q.kind || 'poster');
-      // 三种图各有用途：
-      //   poster —— 竖版封面（只认 poster / thumb，fanart 绝不能顶封面）；
-      //   thumb  —— 横版「缩略图」（刮削到的那张 `<thumb>` / `-thumb.jpg`）；
-      //   fanart —— 横版背景图（backdrop / 剧照大卡）。
-      // thumb 优先取 nfo_thumb，退 fanart 再退 poster：三个都是**已有的图**，
-      // 拿视频抽帧去凑「缩略图」是另一回事，交给 /video/poster 自己管。
-      const raw =
-        kind === 'thumb'
-          ? row.nfo_thumb || row.nfo_fanart || row.nfo_poster
-          : kind === 'fanart'
-          ? row.nfo_fanart || row.nfo_poster || row.nfo_thumb
-          : row.nfo_poster || row.nfo_thumb;
-      let target = String(raw ?? '').trim();
+      // 封面只认 poster / thumb；fanart 是横版图（`-backdrop.jpg` / `<fanart>` /
+      // `<thumb aspect="landscape">`），绝不能拿来顶封面 —— 否则「没有正式海报」
+      // 的条目会把拍摄现场照当封面。
+      //
+      // 横版位（fanart）只认**登记的横版图**，不再顺手把 poster 当结果：
+      // 否则「库里有 `-backdrop.jpg` 但那一版扫描还没登记」时会直接回竖版海报，
+      // 现场找图的兜底根本走不到（用户看到的「缩略图」就成了封面）。
+      let target = String(
+        (kind === 'fanart' ? row.nfo_fanart : row.nfo_poster || row.nfo_thumb) ?? '',
+      ).trim();
 
       // `-thumb.jpg` 是横版剧照 / 缩略图：第三方 NFO 常把它标成 aspect="poster"，
       // 于是 nfo_poster 里也存成它，竖版剧封面整排变成剧照（2026-11-11 用户反馈）。
-      // 竖版封面一律不用它；fanart / thumb（横版大卡）本来就是横图，不受影响。
+      // 竖版封面一律不用它；fanart（横版大卡）本来就是横图，不受影响。
       const isStill = (p: string) =>
         /(?:^|[\\/])[^\\/]*-thumb\.(?:jpe?g|png|webp)$/i.test(p);
-      if (kind === 'poster' && isStill(target)) target = '';
+      if (kind !== 'fanart' && isStill(target)) target = '';
 
       // 兜底：库里没登记图（老库没重扫 / 用户刚补了图还没扫）时，现场按文件名再找一次。
       // 只认 `-poster/-post/-cover/-folder` 与 `-fanart/-backdrop/-landscape` 这些约定名，
@@ -409,10 +406,14 @@ export async function registerVideoScrape(
           const abs = resolveAnyPath(filesRoot(), row.rel_path);
           const hit =
             kind === 'fanart' ? await findLocalFanart(abs) : await findLocalPoster(abs);
-          if (hit && (kind !== 'poster' || !isStill(hit))) target = hit;
+          if (hit && (kind === 'fanart' || !isStill(hit))) target = hit;
         } catch {
           /* 路径越界 / 离线：维持 404 */
         }
+      }
+      // 横版图确实一张都没有：退回竖版海报也比裂图强（客户端会按 3:2 裁切）
+      if (!target && kind === 'fanart') {
+        target = String(row.nfo_poster || row.nfo_thumb || '').trim();
       }
       if (!target) return reply.code(404).send({ error: Err.notFound, message: 'no art' });
 
