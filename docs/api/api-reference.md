@@ -2761,9 +2761,9 @@ HTTPS 证书状态（用户上传证书方案） · `systemTlsInfo`
 
 #### `GET /api/v1/video/browse`
 
-按库目录浏览（文件夹 / 图片 / 视频） · `videoBrowse`
+按库来源目录浏览（文件夹 / 图片 / 视频） · `videoBrowse`
 
-- 参数：`libraryId` · 查询 · string · **必填**<br>`path` · 查询 · string · 可选
+- 参数：`libraryId` · 查询 · string · **必填**<br>`sourceId` · 查询 · string · 可选<br>`path` · 查询 · string · 可选
 - 响应：200 `VideoBrowseResponse` · 错误 400 / 404 / 503
 
 #### `GET /api/v1/video/collections`

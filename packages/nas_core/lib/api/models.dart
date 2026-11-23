@@ -11206,12 +11206,16 @@ class VideoBrowseResponse {
   final String libraryId;
   final String path;
   final String rootPath;
+  final String? sourceId;
+  final String? sourceName;
   final List<VideoBrowseItem> items;
 
   const VideoBrowseResponse({
     required this.libraryId,
     required this.path,
     required this.rootPath,
+    this.sourceId,
+    this.sourceName,
     required this.items,
   });
 
@@ -11219,6 +11223,8 @@ class VideoBrowseResponse {
         libraryId: json['libraryId'] as String,
         path: json['path'] as String,
         rootPath: json['rootPath'] as String,
+        sourceId: json['sourceId'] == null ? null : json['sourceId'] as String,
+        sourceName: json['sourceName'] == null ? null : json['sourceName'] as String,
         items: (json['items'] as List<dynamic>).map((e) => VideoBrowseItem.fromJson(e as Map<String, dynamic>)).toList(),
       );
 
@@ -11226,6 +11232,8 @@ class VideoBrowseResponse {
         'libraryId': libraryId,
         'path': path,
         'rootPath': rootPath,
+        if (sourceId != null) 'sourceId': sourceId!,
+        if (sourceName != null) 'sourceName': sourceName!,
         'items': items.map((e) => e.toJson()).toList(),
       };
 }

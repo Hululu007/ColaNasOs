@@ -5,7 +5,7 @@ import { secured } from '../../../../kernel/route';
 import { Err } from '../../../../kernel/errors';
 import { filesRoot, resolveAnyPath } from '../../files/fs-root';
 import { pathVisible, visibilityOf } from '../../files/visibility';
-import { effectiveSources } from '../sources';
+import { effectiveSources, type VideoSourceRow } from '../sources';
 import { isVideoFile } from '../ffmpeg';
 import { isImageFile } from '../../photo/exif';
 import { uncPathOf, ONLINE_NO } from '../smb';
@@ -30,11 +30,36 @@ function normalizeBrowsePath(input: string | undefined): string {
 }
 
 /**
+ * 来源在浏览界面里的展示名：本地取末两级目录（`D:/down/mt/move` → `mt/move`），
+ * SMB 取 `host/share`（带子路径）。取末两级是因为一级目录常常只叫 `movies` /
+ * `media`，几个来源看起来全一样。
+ */
+function sourceLabelOf(src: VideoSourceRow): string {
+  if (String(src.conn_type) === 'smb') {
+    const host = String(src.host || '').trim();
+    const share = String(src.share || '').trim();
+    const sub = String(src.sub_path || '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+    const base = [host, share].filter(Boolean).join('/');
+    return sub ? `${base}/${sub}` : base || String(src.root_path || '');
+  }
+  const segs = String(src.root_path || '')
+    .replace(/\\/g, '/')
+    .replace(/\/+$/, '')
+    .split('/')
+    .filter(Boolean);
+  return segs.slice(-2).join('/') || String(src.root_path || '');
+}
+
+/**
  * 媒体浏览：
- * 按影视库目录逐级浏览，文件夹 + 图片 + 视频混合返回；视频带条目 id，可直接开详情 / 海报。
+ * 按「库 → 来源 → 目录」逐级浏览，文件夹 + 图片 + 视频混合返回；
+ * 视频带条目 id，可直接开详情 / 海报。
  *
- * 只列一层（不做递归），避免大库一次扫全盘；SMB 源离线时直接 503，
+ * 只列一层（不做递归），避免大库一次扫全盘；SMB 来源离线时直接 503，
  * 不让 readdir 在不可达共享上卡住整个请求。
+ *
+ * 多来源库必须按 `sourceId` 落到具体来源根：一个库的片源分散在几个盘 /
+ * 几台 NAS 上，只认 `library.root_path` 会让第二、第三个来源永远打不开。
  */
 export async function registerVideoBrowse(
   app: FastifyInstance,
@@ -47,7 +72,7 @@ export async function registerVideoBrowse(
       schema: {
         operationId: 'videoBrowse',
         tags: TAG,
-        summary: '按库目录浏览（文件夹 / 图片 / 视频）',
+        summary: '按库来源目录浏览（文件夹 / 图片 / 视频）',
         querystring: h.ref('VideoBrowseQuery'),
         response: {
           200: h.ref('VideoBrowseResponse'),
@@ -58,19 +83,24 @@ export async function registerVideoBrowse(
       },
     }),
     async (req: FastifyRequest, reply) => {
-      const q = (req.query || {}) as { libraryId?: string; path?: string };
+      const q = (req.query || {}) as { libraryId?: string; sourceId?: string; path?: string };
       const lib = q.libraryId ? await h.loadLibrary(String(q.libraryId)) : null;
       if (!lib) return reply.code(404).send({ error: Err.notFound, message: 'library not found' });
 
-      // 库列表已经按授权过滤，按 id 直接浏览同样要拦：否则小号拿着库 id
+      const sources = await effectiveSources(k.db, lib);
+      const src = q.sourceId
+        ? sources.find((s) => s.id === String(q.sourceId))
+        : sources[0];
+      if (!src) {
+        return reply.code(404).send({ error: Err.notFound, message: 'source not found' });
+      }
+
+      // 库列表已经按授权过滤，按 id / 来源直接浏览同样要拦：否则小号拿着库 id
       // 就能翻到没授权的库（用户 2026-11-14 反馈「只给了一个影视文件夹」）。
+      // 多来源库里可能只授权了其中一个来源，判定要落在**来源根**上。
       const vis = visibilityOf(k.config, req.user);
-      if (!vis.unrestricted) {
-        const sources = await effectiveSources(k.db, lib);
-        const baseVisible = sources.some((s) => pathVisible(vis, s.root_path));
-        if (!baseVisible) {
-          return reply.code(404).send({ error: Err.notFound, message: 'library not found' });
-        }
+      if (!vis.unrestricted && !pathVisible(vis, src.root_path)) {
+        return reply.code(404).send({ error: Err.notFound, message: 'source not found' });
       }
 
       let rel: string;
@@ -80,8 +110,8 @@ export async function registerVideoBrowse(
         return reply.code(400).send({ error: Err.badRequest, message: 'invalid path' });
       }
 
-      const unc = uncPathOf(lib);
-      if (unc && Number(lib.online_state) === ONLINE_NO) {
+      const unc = uncPathOf(src);
+      if (unc && Number(src.online_state) === ONLINE_NO) {
         return reply
           .code(503)
           .send({ error: Err.unavailable, message: 'smb source offline' });
@@ -91,7 +121,7 @@ export async function registerVideoBrowse(
       try {
         absDir = unc
           ? path.join(unc, ...(rel ? rel.split('/') : []))
-          : resolveAnyPath(filesRoot(), rel ? `${lib.root_path}/${rel}` : lib.root_path);
+          : resolveAnyPath(filesRoot(), rel ? `${src.root_path}/${rel}` : src.root_path);
       } catch {
         return reply.code(400).send({ error: Err.badRequest, message: 'path escapes library' });
       }
@@ -117,7 +147,7 @@ export async function registerVideoBrowse(
       }
 
       // 视频 id 映射：只查当前目录前缀下的条目（避免整库回表）
-      const prefix = `${lib.root_path}/${rel}`.replace(/\/+$/, '');
+      const prefix = `${src.root_path}/${rel}`.replace(/\/+$/, '');
       const ids = new Map<string, string>();
       try {
         const rows = (
@@ -150,7 +180,7 @@ export async function registerVideoBrowse(
         }
         if (!e.isFile()) continue;
         const mediaType = isVideoFile(e.name) ? 'video' : isImageFile(e.name) ? 'image' : 'other';
-        const fullRel = `${lib.root_path}/${childRel}`.replace(/^\/+/, '');
+        const fullRel = `${src.root_path}/${childRel}`.replace(/^\/+/, '');
         let size: number | null = null;
         let mtime: number | null = null;
         try {
@@ -179,7 +209,9 @@ export async function registerVideoBrowse(
       return {
         libraryId: lib.id,
         path: rel,
-        rootPath: lib.root_path,
+        rootPath: src.root_path,
+        sourceId: src.id,
+        sourceName: sourceLabelOf(src),
         items,
       };
     },

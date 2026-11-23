@@ -3282,6 +3282,7 @@ export type VideoCollectionItemsResponse = {
 
 export type VideoBrowseQuery = {
   "libraryId": string;
+  "sourceId"?: string;
   "path"?: string;
 };
 
@@ -3299,6 +3300,8 @@ export type VideoBrowseResponse = {
   "libraryId": string;
   "path": string;
   "rootPath": string;
+  "sourceId"?: string;
+  "sourceName"?: string;
   "items": VideoBrowseItem[];
 };
 

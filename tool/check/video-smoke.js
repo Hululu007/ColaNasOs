@@ -499,6 +499,37 @@ function makeVideo(out, size, seconds, fps = 25) {
   });
   check('browse_path_escape_400', r.statusCode === 400, 'status=' + r.statusCode);
 
+  // 12d2. 来源级浏览：多来源库要能按 sourceId 落到具体来源根，
+  // 否则第二个来源永远打不开（只认 library.root_path）。
+  const firstSourceId = browse.sourceId;
+  r = await app.inject({
+    method: 'GET',
+    url:
+      '/api/v1/video/browse?libraryId=' +
+      encodeURIComponent(lib.id) +
+      '&sourceId=' +
+      encodeURIComponent(firstSourceId || ''),
+    headers: bearer,
+  });
+  check(
+    'browse_by_source',
+    Boolean(firstSourceId) &&
+      r.statusCode === 200 &&
+      r.json().sourceId === firstSourceId &&
+      (r.json().items || []).length === 3,
+    'sourceId=' + firstSourceId + ' status=' + r.statusCode,
+  );
+
+  r = await app.inject({
+    method: 'GET',
+    url:
+      '/api/v1/video/browse?libraryId=' +
+      encodeURIComponent(lib.id) +
+      '&sourceId=src_nope',
+    headers: bearer,
+  });
+  check('browse_unknown_source_404', r.statusCode === 404, 'status=' + r.statusCode);
+
   r = await app.inject({
     method: 'GET',
     url: '/api/v1/video/browse?libraryId=nope',

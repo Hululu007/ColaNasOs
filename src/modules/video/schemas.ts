@@ -864,11 +864,16 @@ export const CollectionItemsResponse = Type.Object(
   { $id: 'VideoCollectionItemsResponse' },
 );
 
-/** 媒体浏览：按库目录逐级浏览（文件夹 + 图片 + 视频） */
+/** 媒体浏览：按「库 → 来源 → 目录」逐级浏览（文件夹 + 图片 + 视频） */
 export const BrowseQuery = Type.Object(
   {
     libraryId: Type.String({ minLength: 1 }),
-    path: Type.Optional(Type.String({ maxLength: 1024, description: '库内相对目录，缺省为库根' })),
+    sourceId: Type.Optional(
+      Type.String({ maxLength: 128, description: '库内来源 id，缺省用第一个来源' }),
+    ),
+    path: Type.Optional(
+      Type.String({ maxLength: 1024, description: '来源内相对目录，缺省为来源根' }),
+    ),
   },
   { $id: 'VideoBrowseQuery' },
 );
@@ -892,7 +897,9 @@ export const BrowseResponse = Type.Object(
   {
     libraryId: Type.String(),
     path: Type.String(),
-    rootPath: Type.String({ description: '库根（本地相对 files 根 / SMB 为 UNC）' }),
+    rootPath: Type.String({ description: '当前来源根（本地相对 files 根 / SMB 为 UNC）' }),
+    sourceId: Type.Optional(Type.String({ description: '当前来源 id' })),
+    sourceName: Type.Optional(Type.String({ description: '当前来源的展示名' })),
     items: Type.Array(Type.Ref(BrowseItem)),
   },
   { $id: 'VideoBrowseResponse' },

@@ -3270,13 +3270,19 @@
     "video.badge.subtitle": {},
     "video.badge.uncensored": {},
     "video.browse.empty": {},
+    "video.browse.episodeCount": {
+      "n": {}
+    },
     "video.browse.noLibrary": {},
+    "video.browse.noSource": {},
     "video.browse.root": {},
     "video.browse.selectLibrary": {},
     "video.browse.smbPreviewUnsupported": {},
+    "video.browse.sources": {},
     "video.browse.title": {},
     "video.browse.unindexed": {},
     "video.browse.up": {},
+    "video.browse.videosOnly": {},
     "video.card.more": {},
     "video.card.rankBadge": {
       "rank": {}

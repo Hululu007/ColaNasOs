@@ -3236,10 +3236,11 @@ class ApiClient {
     return VideoCollectionItemsResponse.fromJson(_asMap(_decode(res)));
   }
 
-  /// 按库目录浏览（文件夹 / 图片 / 视频）
-  Future<VideoBrowseResponse> videoBrowse({required String libraryId, String? path}) async {
+  /// 按库来源目录浏览（文件夹 / 图片 / 视频）
+  Future<VideoBrowseResponse> videoBrowse({required String libraryId, String? sourceId, String? path}) async {
     final query = <String, String>{
       'libraryId': libraryId,
+      if (sourceId != null) 'sourceId': sourceId,
       if (path != null) 'path': path,
     };
     final res = await transport.send('GET', _uri('/api/v1/video/browse', query), headers: await _headers());

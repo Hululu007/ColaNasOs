@@ -1604,7 +1604,7 @@ class ColanasClient:
         return self._request("POST", "/api/v1/video/library/auto_subtitle", params, "body")
 
     def video_browse(self, **params):
-        """按库目录浏览（文件夹 / 图片 / 视频）"""
+        """按库来源目录浏览（文件夹 / 图片 / 视频）"""
         return self._request("GET", "/api/v1/video/browse", params, "query")
 
     def video_collection_delete(self, **params):

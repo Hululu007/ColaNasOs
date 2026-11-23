@@ -2524,13 +2524,17 @@ class I18nKeys {
   static const videoBadgeSubtitle = 'video.badge.subtitle';
   static const videoBadgeUncensored = 'video.badge.uncensored';
   static const videoBrowseEmpty = 'video.browse.empty';
+  static const videoBrowseEpisodeCount = 'video.browse.episodeCount';
   static const videoBrowseNoLibrary = 'video.browse.noLibrary';
+  static const videoBrowseNoSource = 'video.browse.noSource';
   static const videoBrowseRoot = 'video.browse.root';
   static const videoBrowseSelectLibrary = 'video.browse.selectLibrary';
   static const videoBrowseSmbPreviewUnsupported = 'video.browse.smbPreviewUnsupported';
+  static const videoBrowseSources = 'video.browse.sources';
   static const videoBrowseTitle = 'video.browse.title';
   static const videoBrowseUnindexed = 'video.browse.unindexed';
   static const videoBrowseUp = 'video.browse.up';
+  static const videoBrowseVideosOnly = 'video.browse.videosOnly';
   static const videoCardMore = 'video.card.more';
   static const videoCardRankBadge = 'video.card.rankBadge';
   static const videoCardRankDetail = 'video.card.rankDetail';
@@ -3190,4 +3194,4 @@ class I18nKeys {
 }
 
 /// 契约键总数（生成时确定），供完整性自检使用。
-const int i18nKeyCount = 3138;
+const int i18nKeyCount = 3142;

@@ -1992,7 +1992,7 @@ export class ColanasClient {
     return this.request('POST', '/api/v1/video/library/auto_subtitle', params, 'body');
   }
 
-  /** 按库目录浏览（文件夹 / 图片 / 视频） */
+  /** 按库来源目录浏览（文件夹 / 图片 / 视频） */
   async videoBrowse(params: Record<string, any> = {}): Promise<any> {
     return this.request('GET', '/api/v1/video/browse', params, 'query');
   }

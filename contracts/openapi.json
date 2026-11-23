@@ -12478,9 +12478,14 @@
             "minLength": 1,
             "type": "string"
           },
+          "sourceId": {
+            "maxLength": 128,
+            "description": "库内来源 id，缺省用第一个来源",
+            "type": "string"
+          },
           "path": {
             "maxLength": 1024,
-            "description": "库内相对目录，缺省为库根",
+            "description": "来源内相对目录，缺省为来源根",
             "type": "string"
           }
         }
@@ -12542,7 +12547,15 @@
             "type": "string"
           },
           "rootPath": {
-            "description": "库根（本地相对 files 根 / SMB 为 UNC）",
+            "description": "当前来源根（本地相对 files 根 / SMB 为 UNC）",
+            "type": "string"
+          },
+          "sourceId": {
+            "description": "当前来源 id",
+            "type": "string"
+          },
+          "sourceName": {
+            "description": "当前来源的展示名",
             "type": "string"
           },
           "items": {
@@ -43156,7 +43169,7 @@
     "/api/v1/video/browse": {
       "get": {
         "operationId": "videoBrowse",
-        "summary": "按库目录浏览（文件夹 / 图片 / 视频）",
+        "summary": "按库来源目录浏览（文件夹 / 图片 / 视频）",
         "tags": [
           "video"
         ],
@@ -43172,13 +43185,23 @@
           },
           {
             "schema": {
+              "maxLength": 128,
+              "type": "string"
+            },
+            "in": "query",
+            "name": "sourceId",
+            "required": false,
+            "description": "库内来源 id，缺省用第一个来源"
+          },
+          {
+            "schema": {
               "maxLength": 1024,
               "type": "string"
             },
             "in": "query",
             "name": "path",
             "required": false,
-            "description": "库内相对目录，缺省为库根"
+            "description": "来源内相对目录，缺省为来源根"
           }
         ],
         "security": [
