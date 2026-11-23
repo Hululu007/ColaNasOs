@@ -36,10 +36,10 @@
   "operatingSystem": "Windows 10, Windows 11 (x64)",
   "inLanguage": "zh-CN",
   "description": "ColaNasOs 是一款 WindowsNas 系统：面向单台 Windows 主机的开源自托管 NAS，包含 AI 相册、影视库、音乐、文件与下载、多端同步与本地 AI，一套服务端六端共用。",
-  "softwareVersion": "1.3.19",
+  "softwareVersion": "1.4.0",
   "license": "https://www.gnu.org/licenses/gpl-3.0.html",
   "url": "https://cola.gexuan.net/",
-  "downloadUrl": "https://gitcode.com/cocacola23/ColaNasOs/releases/tag/v1.3.19",
+  "downloadUrl": "https://gitcode.com/cocacola23/ColaNasOs/releases/tag/v1.4.0",
   "image": "https://cola.gexuan.net/assets/shots/home.webp",
   "screenshot": "https://cola.gexuan.net/assets/shots/home.webp",
   "featureList": [
@@ -107,7 +107,7 @@
 
 <section class="hero">
   <div class="wrap">
-    <span class="hero__eyebrow"><b></b>v1.3.19 已发布 · Windows x64 · 开源 · GPL-3.0</span>
+    <span class="hero__eyebrow"><b></b>v1.4.0 已发布 · Windows x64 · 开源 · GPL-3.0</span>
     <h1>把一台 Windows 电脑<br>变成你的 NAS</h1>
     <p class="hero__lead">
       ColaNasOs 是一款 <strong>WindowsNas 系统</strong>——在 Windows 主机上自托管，把
@@ -115,16 +115,16 @@
       照片、影片和文件只留在你自己的盘上。
     </p>
     <div class="hero__actions">
-      <a class="btn btn--primary" href="#download">下载 v1.3.19</a>
+      <a class="btn btn--primary" href="#download">下载 v1.4.0</a>
       <a class="btn btn--ghost" href="#capabilities">看看能做什么</a>
       <a class="btn btn--ghost" href="https://github.com/colaKot/ColaNasOs" target="_blank" rel="noopener noreferrer">GitHub 仓库</a>
       <a class="btn btn--ghost" href="https://gitcode.com/cocacola23/ColaNasOs" target="_blank" rel="noopener noreferrer">GitCode 国内</a>
     </div>
     <ul class="hero__facts">
       <li><b>13</b><span>个已开放应用</span></li>
-      <li><b>426</b><span>条 API 路径</span></li>
+      <li><b>436</b><span>条 API 路径</span></li>
       <li><b>6 端</b><span>同一套界面与契约</span></li>
-      <li><b>15</b><span>个服务端域</span></li>
+      <li><b>16</b><span>个服务端域</span></li>
     </ul>
 
     <div class="hero-shot">
@@ -243,7 +243,8 @@
             <li><b>建库</b>四类库、多来源目录，本地盘与 SMB（UNC）都能进；远程根用轮询同步变化。</li>
             <li><b>刮削</b>TMDB / 豆瓣取元数据与评分，NFO 双向读写，手改字段优先，海报本地缓存。</li>
             <li><b>找片</b>发现页榜单、PT 搜索择种、RSS 订阅自动下载；日本榜单与日本演员单独入口。</li>
-            <li><b>播放</b>HLS fMP4 切片、断点续转，编码不兼容自动回退 H.264 续播，安卓端另有 FFmpeg 软解兜底。</li>
+            <li><b>播放</b>HLS fMP4 切片、断点续转，编码不兼容自动回退 H.264 续播，安卓端另有 FFmpeg 软解兜底；原画档只换容器不重编码，DV / HDR 元数据原样保留。</li>
+            <li><b>离线</b>详情页一键下载到手机 / 平板，断点续传 + 校验 + 息屏保活，断网后本地续播；下载管理页可限速、仅 WiFi、暂停继续。</li>
             <li><b>整理</b>季集识别、演员作品、媒体浏览、自定义合集与重复视频查重。</li>
           </ul>
         </div>
@@ -430,7 +431,7 @@
             <div class="spec-row"><span>视觉模型</span><b>人脸 · 场景 · CLIP · OCR · 活动</b></div>
             <div class="spec-row"><span>翻译 / TTS 权重</span><b>约 1.4 GB，按需下载</b></div>
             <div class="spec-row"><span>数据去向</span><b>只在本机，不上传</b></div>
-            <div class="spec-row"><span>当前版本</span><b>v1.3.19</b></div>
+            <div class="spec-row"><span>当前版本</span><b>v1.4.0</b></div>
           </div>
         </div>
       </div>
@@ -454,19 +455,19 @@
           <tbody>
             <tr>
               <td data-label="端">Windows 服务端</td>
-              <td data-label="形态 / 产物"><code>ColaNasOs-Server-1.3.19-Setup.exe</code></td>
+              <td data-label="形态 / 产物"><code>ColaNasOs-Server-1.4.0-Setup.exe</code></td>
               <td data-label="状态"><span class="status status--ok">已发布</span></td>
               <td data-label="说明">Windows 10 / 11 x64，托盘常驻；内置内核、FFmpeg 与视觉模型。</td>
             </tr>
             <tr>
               <td data-label="端">Windows 桌面端</td>
-              <td data-label="形态 / 产物"><code>ColaNasOs-Client-1.3.19-Setup.exe</code><br><code>ColaNasOs-Client-1.3.19-windows-x64.zip</code></td>
+              <td data-label="形态 / 产物"><code>ColaNasOs-Client-1.4.0-Setup.exe</code><br><code>ColaNasOs-Client-1.4.0-windows-x64.zip</code></td>
               <td data-label="状态"><span class="status status--ok">已发布</span></td>
               <td data-label="说明">安装版或解压即用。功能最全，也是目录同步的执行端。</td>
             </tr>
             <tr>
               <td data-label="端">Android 手机 / 平板</td>
-              <td data-label="形态 / 产物"><code>ColaNasOs-Client-1.3.19-android-arm64.apk</code></td>
+              <td data-label="形态 / 产物"><code>ColaNasOs-Client-1.4.0-android-arm64.apk</code></td>
               <td data-label="状态"><span class="status status--ok">已发布</span></td>
               <td data-label="说明">手机与平板共用一个包，平板走大屏布局；相册滚动与播放器手势单独调过。</td>
             </tr>
@@ -478,7 +479,7 @@
             </tr>
             <tr>
               <td data-label="端">Android TV</td>
-              <td data-label="形态 / 产物"><code>ColaNasOs-Client-1.3.19-android-arm64-tv.apk</code></td>
+              <td data-label="形态 / 产物"><code>ColaNasOs-Client-1.4.0-android-arm64-tv.apk</code></td>
               <td data-label="状态"><span class="status status--ok">已发布</span></td>
               <td data-label="说明">独立安装包（走 <code>main_tv.dart</code> 入口）：遥控器焦点、大屏布局与播放页单独适配。</td>
             </tr>
@@ -518,7 +519,7 @@
       <div class="steps">
         <div class="step">
           <h3>装服务端</h3>
-          <p>运行 <code>ColaNasOs-Server-1.3.19-Setup.exe</code>（550.8 MB），装完只在右下角留一个托盘图标。建议右键托盘勾选「开机自动启动」。</p>
+          <p>运行 <code>ColaNasOs-Server-1.4.0-Setup.exe</code>（550.8 MB），装完只在右下角留一个托盘图标。建议右键托盘勾选「开机自动启动」。</p>
         </div>
         <div class="step">
           <h3>创建管理员</h3>
@@ -576,7 +577,7 @@
       </div>
 
       <div class="note">
-        <b style="color:var(--ink-2)">v1.3.19 已知限制</b>：安装包未做代码签名，Windows SmartScreen 可能提示「未知发布者」；
+        <b style="color:var(--ink-2)">v1.4.0 已知限制</b>：安装包未做代码签名，Windows SmartScreen 可能提示「未知发布者」；
         本机构建缺少便携 Python 运行时，装机版的 AI 语音合成不可用，其余功能不受影响；
         翻译与语音合成两个模型（约 1.4 GB）不随安装包分发，在应用内按需下载。
       </div>
@@ -588,11 +589,11 @@
     <div class="wrap">
       <div class="section__head">
         <span class="section__eyebrow">下载</span>
-        <h2>ColaNasOs v1.3.19</h2>
+        <h2>ColaNasOs v1.4.0</h2>
         <p>五个产物对应四种用法：<b>服务端</b>装在那台常开的电脑上、<b>桌面客户端</b>装在你自己电脑上（安装版或便携包二选一）、<b>安卓客户端</b>装手机平板、<b>Android TV 客户端</b>装电视盒子（和手机包是两个不同的 APK）。Web 端随服务端内置，不需要单独下载。</p>
       </div>
 
-      <!-- 更新说明：与 GitHub / GitCode Release v1.3.19 的正文一致，改版时同步这一块 -->
+      <!-- 更新说明：与 GitHub / GitCode Release v1.4.0 的正文一致，改版时同步这一块 -->
       <details class="changelog">
         <summary>
           <span class="changelog__icon" aria-hidden="true">
@@ -602,45 +603,62 @@
               <path d="M9.5 13h5M9.5 17h3" />
             </svg>
           </span>
-          <span class="changelog__title">v1.3.19 更新说明</span>
-          <span class="changelog__hint">v1.3.14 → v1.3.19 累计变化 · 点一下展开</span>
+          <span class="changelog__title">v1.4.0 更新说明</span>
+          <span class="changelog__hint">1.3.0 → 1.4.0 累计变化 · 点一下展开</span>
         </summary>
         <div class="changelog__body">
-          <p class="changelog__lead"><strong>这一份按「v1.3.14 → v1.3.19 的累计更新」来写</strong>：中间的 1.3.15 – 1.3.18 在 GitCode 上迭代，核心是让服务端「装完能起来、升级不掉线」，并把播放器与自动更新链路一起修稳。</p>
-          <p class="changelog__note">1.3.17 / 1.3.18 上如果装完服务端起不来（内核报 <code>Cannot find module 'fastify'</code>），<strong>必须下载 v1.3.19 全量包覆盖安装</strong>：这条修复编在外壳里，增量包换不掉。</p>
-          <h4>v1.3.19 · 修复服务端装完起不来</h4>
+          <p class="changelog__lead"><strong>1.4 正式版把 1.3.0 到 1.3.39 的全部迭代合并成一份</strong>：服务端更新、播放器、离线下载、搜索与六端界面一起到位，不再分「先发哪个包」。原先分散在 v1.3.3 / v1.3.14 / v1.3.19 等 Release 的安装包已下线，旧版内容全部收进这一份。</p>
+          <p class="changelog__note">从任何 1.3.x 升级都请用上面的<strong>全量包</strong>：清单已把 <code>minShell</code> 提到 1.4.0，旧外壳会被强制走全量升级；设置、媒体库与观看进度都保留。</p>
+
+          <h4>离线下载与本地视频（新增）</h4>
           <ul>
-          <li>拆壳后内核从 <code>versions/D&lt;NNN&gt;/</code> 启动，依赖压在 <code>app.asar</code> 单文件里，Electron 的 <code>fs</code> asar 补丁把它当目录解析，读依赖抛 <code>ENOENT</code>，异常又被吞进没有控制台的外壳进程。</li>
-          <li>现在启动时用 <code>original-fs</code> 把 asar 里的依赖摊到 <code>&lt;数据目录&gt;/node_modules</code> 一次，成功与失败都写 <code>logs/shell.log</code>。全新安装实测 7.5 秒完成摊平 + 播种，内核正常监听 7788。</li>
-          <li>清单把 <code>minShell</code> 提到 1.3.19，满足条件的旧外壳会强制走全量升级。</li>
-          <li>PC / 安卓手机 / 安卓 TV 三个客户端同步重打，版本号统一到 1.3.19。</li>
+          <li>服务端出离线转码产物并支持 Range 下载；客户端做断点续传、完整性校验、覆盖替换、崩溃恢复与息屏保活，断网也能本地续播。</li>
+          <li>下载管理页：限速、仅 WiFi（默认开）、暂停继续、多连接分片与实时速度；影视详情页可直接「下载到本机」，本地视频页统一管理与播放。</li>
+          <li>内挂 / 外挂字幕随片下载；服务端转码产物可见可清，任务完成即归还引用。</li>
           </ul>
-          <h4>v1.3.18 · 启动自愈与更新链路</h4>
+
+          <h4>播放器与电视端</h4>
           <ul>
-          <li>内核 stdout/stderr 落盘到 <code>logs/kernel-console.log</code>（2 MB 滚动），不再让启动失败变成黑盒。</li>
-          <li>连续启动失败放弃重启前，先尝试回滚上一版继续跑；真的无可回滚时才停，错误框直接给出诊断日志路径。</li>
-          <li>更新清单源改用 GitCode 公开仓库 contents API；修掉路径拼接少一个斜杠导致的 404。</li>
+          <li>TV 端 HDR / 杜比视界改走原生 Media3（ExoPlayer）并开启隧道模式，音视频同步与合成交给 SoC；选中 TrueHD / DTS-HD MA 这类无平台解码器的音轨时改为服务端转码（视频直通 + 音频 AAC），不再「有画面没声音」。</li>
+          <li>手机 / 平板 HDR 片交给 Media3 原片直推；修杜比视界偏色；原生视频层改由底层 SurfaceView 承载并接入系统媒体会话。</li>
+          <li>原画档只换容器不重编码（<code>-c:v copy</code>），DV / HDR 动态元数据原样保留；HLS 良性重试保留播放位置。</li>
+          <li>遥控器键位：↑↓ 一次一行、到顶才回 tab、返回键逐层退、双击才退出；播放器 ↓ 唤操作栏、← → 跳时间、OK 暂停；底部按钮改正方形，文字完整显示。</li>
           </ul>
-          <h4>v1.3.17 · 清单源归一化</h4>
+
+          <h4>自动更新</h4>
           <ul>
-          <li>内置更新清单源切到公开仓库 contents API，路径拼接归一化；服务端全量包 + 增量包，客户端沿用已发布版本。</li>
+          <li>服务端默认走<strong>增量更新</strong>：只下变化的文件，校验失败自动降级全量；更新页给出「增量 / 全量」两个按钮，下完自动装、装完自动起。</li>
+          <li>全量包改走提权安装并回报结果，装完没回来有兜底判断；本地调试包不再把过期版本当成更新。</li>
+          <li>新增<strong>预发布通道</strong>：正式版只进 stable 清单，预览版只进 pre，互不打扰；TV 端有遥控器可用的更新弹窗，且绝不会被推手机安装包。</li>
           </ul>
-          <h4>v1.3.16 · 播放器与更新签名</h4>
+
+          <h4>搜索 / 音乐 / 相册</h4>
           <ul>
-          <li>选原片走真直连、音频处理改在本机；HLS 良性重试重开时带上播放位置。</li>
-          <li>自动更新清单可正常拉取，签名走 <code>.sig.json</code>，增量清单不再自引用；服务端提供增量升级。</li>
+          <li>拼音检索（首字母 / 全拼）、剧集按剧聚合；统一搜索页（分类栏目），TV 端「左键盘 + 右栏目」布局。</li>
+          <li>音乐库按目录浏览（来源 → 子目录 → 曲目），文件夹页壳内下钻 + 列表 / 网格切换；播放器与播客共用媒体前台服务。</li>
+          <li>人物列表支持多选：批量隐藏 / 并入其它组 / 解散；图片库与混合库补齐多选与批量操作。</li>
           </ul>
-          <h4>v1.3.15 – v1.3.14 · 全端发版</h4>
+
+          <h4>影视与字幕</h4>
           <ul>
-          <li>v1.3.15 重发服务端与 PC 客户端，补齐安卓手机包与 TV 包；服务端默认走增量升级，只下载约 1.3 MB 的小文件，失败自动降级到全量包。</li>
-          <li>v1.3.14 全端发版：服务端 / PC 客户端 / 安卓手机 / 安卓 TV，含增量自动更新。</li>
+          <li>日本库演员可屏蔽、无筛选也能删全部作品、详情文字可选中复制；番号刮削链路修复，抓取前先取会话 cookie 绕 403。</li>
+          <li>同名但括号序号不同的片子不再误判重复；同名封面排除加表达式索引，混合库首屏 650 ms → 5 ms；媒体扫描支持库根 <code>.colanasignore</code> 排除规则。</li>
+          <li>自动下载字幕链路修好（301 跳转 / 会话 cookie / 倒计时），登录后放开批量上限；手动补字幕不再受失败冷却限制。</li>
           </ul>
+
+          <h4>桌面外壳与账号权限</h4>
+          <ul>
+          <li>重装安装包后内核跟随安装包版本，并清理多余内核目录；内核 stdout / stderr 落盘到 <code>logs/</code>，启动失败不再是黑盒。</li>
+          <li>开机不再重复拉起服务端；装客户端 / 服务端时自动关掉正在跑的实例；修掉原生端对 <code>file:</code> 取 origin 导致的整页灰块空白页。</li>
+          <li>设置对所有账号开放，新增「账号」分组并接管退出登录；受限账号不再被锁死在第一个应用，权限改动热生效。</li>
+          </ul>
+
           <h4>升级说明</h4>
           <ul>
-          <li>从 1.3.17 / 1.3.18 升级必须用上面的<strong>全量包</strong>覆盖安装，安装程序会自动关闭正在运行的实例，装完勾选「运行」即可。</li>
+          <li>服务端：装上面的全量包覆盖即可，安装程序会自动关闭正在运行的实例，装完勾选「运行」；内核与 Web 一起到 1.4.0。</li>
           <li>安卓：同一 <code>applicationId</code>，正常覆盖安装；若提示「应用未安装」，先卸载旧版。</li>
           <li>Android TV 包与手机包是<strong>两个不同 APK</strong>，TV 上请装 <code>android-arm64-tv</code> 那个。</li>
-          <li>安装包未签名（自签证书），首次运行 SmartScreen 会提示，核对 SHA256 后选「仍要运行」。</li>
+          <li>安装包未签名（自签证书），首次运行 SmartScreen 会提示，核对上面的 SHA256 后选「仍要运行」。</li>
           </ul>
         </div>
       </details>
@@ -651,47 +669,47 @@
         </div>
         <div class="dl-row">
           <span>Windows 服务端 x64<br><small>托盘 + 内核 + Web，装在常开的电脑上</small></span>
-          <span>ColaNasOs-Server-1.3.19-Setup.exe</span>
+          <span>ColaNasOs-Server-1.4.0-Setup.exe</span>
           <span>550.8 MB</span>
           <div class="dl-links">
-            <a class="dl-cn" href="https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.19/ColaNasOs-Server-1.3.19-Setup.exe" target="_blank" rel="noopener noreferrer">GitCode 国内</a>
-            <a href="https://github.com/colaKot/ColaNasOs/releases/download/v1.3.19/ColaNasOs-Server-1.3.19-Setup.exe" target="_blank" rel="noopener noreferrer">GitHub</a>
+            <a class="dl-cn" href="https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.4.0/ColaNasOs-Server-1.4.0-Setup.exe" target="_blank" rel="noopener noreferrer">GitCode 国内</a>
+            <a href="https://github.com/colaKot/ColaNasOs/releases/download/v1.4.0/ColaNasOs-Server-1.4.0-Setup.exe" target="_blank" rel="noopener noreferrer">GitHub</a>
           </div>
         </div>
         <div class="dl-row">
           <span>Windows 客户端 x64<br><small>安装版，连服务端用</small></span>
-          <span>ColaNasOs-Client-1.3.19-Setup.exe</span>
+          <span>ColaNasOs-Client-1.4.0-Setup.exe</span>
           <span>29.2 MB</span>
           <div class="dl-links">
-            <a class="dl-cn" href="https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.19/ColaNasOs-Client-1.3.19-Setup.exe" target="_blank" rel="noopener noreferrer">GitCode 国内</a>
-            <a href="https://github.com/colaKot/ColaNasOs/releases/download/v1.3.19/ColaNasOs-Client-1.3.19-Setup.exe" target="_blank" rel="noopener noreferrer">GitHub</a>
+            <a class="dl-cn" href="https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.4.0/ColaNasOs-Client-1.4.0-Setup.exe" target="_blank" rel="noopener noreferrer">GitCode 国内</a>
+            <a href="https://github.com/colaKot/ColaNasOs/releases/download/v1.4.0/ColaNasOs-Client-1.4.0-Setup.exe" target="_blank" rel="noopener noreferrer">GitHub</a>
           </div>
         </div>
         <div class="dl-row">
           <span>Windows 客户端 x64<br><small>便携包（免安装），连服务端用</small></span>
-          <span>ColaNasOs-Client-1.3.19-windows-x64.zip</span>
+          <span>ColaNasOs-Client-1.4.0-windows-x64.zip</span>
           <span>38.7 MB</span>
           <div class="dl-links">
-            <a class="dl-cn" href="https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.19/ColaNasOs-Client-1.3.19-windows-x64.zip" target="_blank" rel="noopener noreferrer">GitCode 国内</a>
-            <a href="https://github.com/colaKot/ColaNasOs/releases/download/v1.3.19/ColaNasOs-Client-1.3.19-windows-x64.zip" target="_blank" rel="noopener noreferrer">GitHub</a>
+            <a class="dl-cn" href="https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.4.0/ColaNasOs-Client-1.4.0-windows-x64.zip" target="_blank" rel="noopener noreferrer">GitCode 国内</a>
+            <a href="https://github.com/colaKot/ColaNasOs/releases/download/v1.4.0/ColaNasOs-Client-1.4.0-windows-x64.zip" target="_blank" rel="noopener noreferrer">GitHub</a>
           </div>
         </div>
         <div class="dl-row">
           <span>Android 客户端 arm64<br><small>手机 / 平板，连服务端用</small></span>
-          <span>ColaNasOs-Client-1.3.19-android-arm64.apk</span>
-          <span>44.8 MB</span>
+          <span>ColaNasOs-Client-1.4.0-android-arm64.apk</span>
+          <span>44.9 MB</span>
           <div class="dl-links">
-            <a class="dl-cn" href="https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.19/ColaNasOs-Client-1.3.19-android-arm64.apk" target="_blank" rel="noopener noreferrer">GitCode 国内</a>
-            <a href="https://github.com/colaKot/ColaNasOs/releases/download/v1.3.19/ColaNasOs-Client-1.3.19-android-arm64.apk" target="_blank" rel="noopener noreferrer">GitHub</a>
+            <a class="dl-cn" href="https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.4.0/ColaNasOs-Client-1.4.0-android-arm64.apk" target="_blank" rel="noopener noreferrer">GitCode 国内</a>
+            <a href="https://github.com/colaKot/ColaNasOs/releases/download/v1.4.0/ColaNasOs-Client-1.4.0-android-arm64.apk" target="_blank" rel="noopener noreferrer">GitHub</a>
           </div>
         </div>
         <div class="dl-row">
           <span>Android TV 客户端 arm64<br><small>电视 / 盒子，遥控器操作</small></span>
-          <span>ColaNasOs-Client-1.3.19-android-arm64-tv.apk</span>
-          <span>44.8 MB</span>
+          <span>ColaNasOs-Client-1.4.0-android-arm64-tv.apk</span>
+          <span>44.9 MB</span>
           <div class="dl-links">
-            <a class="dl-cn" href="https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.3.19/ColaNasOs-Client-1.3.19-android-arm64-tv.apk" target="_blank" rel="noopener noreferrer">GitCode 国内</a>
-            <a href="https://github.com/colaKot/ColaNasOs/releases/download/v1.3.19/ColaNasOs-Client-1.3.19-android-arm64-tv.apk" target="_blank" rel="noopener noreferrer">GitHub</a>
+            <a class="dl-cn" href="https://gitcode.com/cocacola23/ColaNasOs/releases/download/v1.4.0/ColaNasOs-Client-1.4.0-android-arm64-tv.apk" target="_blank" rel="noopener noreferrer">GitCode 国内</a>
+            <a href="https://github.com/colaKot/ColaNasOs/releases/download/v1.4.0/ColaNasOs-Client-1.4.0-android-arm64-tv.apk" target="_blank" rel="noopener noreferrer">GitHub</a>
           </div>
         </div>
       </div>
@@ -699,11 +717,11 @@
       <details class="sha">
         <summary>查看 SHA256 校验值</summary>
         <ul>
-          <li><span>ColaNasOs-Server-1.3.19-Setup.exe</span><code>14d2acacc940677d9488e29858a043d8dbdc3be6e72c948d5217df9e46715e3d</code></li>
-          <li><span>ColaNasOs-Client-1.3.19-Setup.exe</span><code>6f818b84535bbaa32e98ecff45a524fa89c23e917dae71df93b2332f8f7a0674</code></li>
-          <li><span>ColaNasOs-Client-1.3.19-windows-x64.zip</span><code>e6f7ae3bb46e9a157310bc9b20ce39dbc22cbd66a437614c8a273d3b1564f348</code></li>
-          <li><span>ColaNasOs-Client-1.3.19-android-arm64.apk</span><code>c85c07f23c425da350e5f669c182acc7fb9f3cdde8af4a3a673a3d419eb95d5f</code></li>
-          <li><span>ColaNasOs-Client-1.3.19-android-arm64-tv.apk</span><code>862611b9813e95cf3b2ca983d4900904908c775266d5203cd2ca260588bf69c8</code></li>
+          <li><span>ColaNasOs-Server-1.4.0-Setup.exe</span><code>7e690c0cfb78901637cf40f658685170a55fdfbfb9131cc7591461a59248525f</code></li>
+          <li><span>ColaNasOs-Client-1.4.0-Setup.exe</span><code>be9e3f38390be5bed4c66c4c792314ceee195dbca80d5c1f5e827f8046a7fe08</code></li>
+          <li><span>ColaNasOs-Client-1.4.0-windows-x64.zip</span><code>e76b69518497a4c4ff0827194d68354789585d3affc465534948098393b57350</code></li>
+          <li><span>ColaNasOs-Client-1.4.0-android-arm64.apk</span><code>e7efeeebbbbdde37c1a1c94fc13f4a6315670de43dae8cdb391cf9db28d6d884</code></li>
+          <li><span>ColaNasOs-Client-1.4.0-android-arm64-tv.apk</span><code>b8de1103c0f9903d4482db7812289c1a979f61d0e64442a45b8d62cfb712f7e6</code></li>
         </ul>
       </details>
 
@@ -757,7 +775,7 @@
         </details>
         <details class="faq__item">
           <summary>为什么 Windows 提示「未知发布者」？</summary>
-          <p>v1.3.19 安装包未做代码签名，SmartScreen 会拦截未知发布者。确认文件来自本页或 GitHub Releases、并核对 SHA256 后，选择「更多信息 → 仍要运行」即可。</p>
+          <p>v1.4.0 安装包未做代码签名，SmartScreen 会拦截未知发布者。确认文件来自本页或 GitHub Releases、并核对 SHA256 后，选择「更多信息 → 仍要运行」即可。</p>
         </details>
         <details class="faq__item">
           <summary>可以给家人开账号吗？权限能分开吗？</summary>
