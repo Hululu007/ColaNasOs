@@ -4,6 +4,8 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import android.util.Log
 import android.view.Display
@@ -60,6 +62,7 @@ class MainActivity : AudioServiceFragmentActivity() {
         private const val DOWNLOAD_CHANNEL = "com.colanas.os/offline_download"
         private const val UPDATE_CHANNEL = "com.colanas.os/update"
         private const val DV_PROBE_CHANNEL = "com.colanas.os/dv_probe"
+        private const val AUDIO_PANEL_CHANNEL = "com.colanas.os/audio_panel"
         private const val REQ_NOTIFICATIONS = 1001
     }
 
@@ -153,6 +156,38 @@ class MainActivity : AudioServiceFragmentActivity() {
                     else -> result.notImplemented()
                 }
             }
+
+        // 音乐 / AI 播客的媒体面板（通知栏 / 锁屏）。播放仍在 Dart 侧，
+        // 这里只把快照交给前台服务，并把面板上的按键转回 Dart。
+        val audioPanelChannel = MethodChannel(messenger, AUDIO_PANEL_CHANNEL)
+        audioPanelChannel.setMethodCallHandler { call, result ->
+            when (call.method) {
+                "update" -> {
+                    AudioPanel.update(
+                        this,
+                        call.argument<String>("title") ?: "",
+                        call.argument<String>("artist") ?: "",
+                        call.argument<Boolean>("playing") ?: false,
+                        call.argument<Number>("positionMs")?.toLong() ?: 0L,
+                        call.argument<Number>("durationMs")?.toLong() ?: 0L,
+                    )
+                    result.success(true)
+                }
+                "clear" -> {
+                    AudioPanel.clear(this)
+                    result.success(true)
+                }
+                else -> result.notImplemented()
+            }
+        }
+        AudioPanel.onCommand = { action, positionMs ->
+            Handler(Looper.getMainLooper()).post {
+                audioPanelChannel.invokeMethod(
+                    "command",
+                    mapOf("action" to action, "positionMs" to positionMs),
+                )
+            }
+        }
 
         // 电视 HDR 能力：播放器按它决定「直连原画」还是「服务端色调映射转码」。
         // 只读能力，不改任何播放状态；老系统 / 通道异常时返回空数组，

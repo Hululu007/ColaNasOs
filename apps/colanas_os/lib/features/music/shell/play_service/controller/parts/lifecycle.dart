@@ -34,9 +34,8 @@ extension MusicPlayServiceLifecycle on MusicPlayServiceController {
   Future<void> _bootstrap() async {
     registerFvp();
     if (_supportBackground) {
-      // 系统媒体面板（通知栏 / 锁屏）全局只有一份：Android 只有一个 MediaSession，
-      // 谁后 `AudioService.init` 谁就把命令通道抢走，先初始化那路的按键就全失效。
-      // 所以音乐和播客共用 `core/audio_background` 这一份前台服务，
+      // 系统媒体面板（通知栏 / 锁屏）全局只有一份：音乐和播客共用
+      // `core/audio_background`（原生 AudioPanelService 自持 MediaSession），
       // 各自往里推快照、按音频焦点决定谁能写 —— 播放中的那一路自动顶掉面板。
       //
       // Android 13+ 没有 POST_NOTIFICATIONS 时前台服务挂不住：既没有通知栏面板

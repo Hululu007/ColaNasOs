@@ -124,6 +124,13 @@
             android:name=".VideoMediaSessionService"
             android:foregroundServiceType="mediaPlayback"
             android:exported="false" />
+        <!-- 音乐 / AI 播客的媒体面板：自己持 MediaSession + MediaStyle 通知。
+             audio_service 自动生成的通知在部分国产 ROM 上不显示（与视频同一个坑），
+             这里改用与视频相同的自建前台服务。 -->
+        <service
+            android:name=".AudioPanelService"
+            android:foregroundServiceType="mediaPlayback"
+            android:exported="false" />
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data
