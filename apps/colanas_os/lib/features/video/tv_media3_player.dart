@@ -141,6 +141,15 @@ class TvMedia3PlayerController {
     }
   }
 
+  /// 播放链路诊断文本（轨道 MIME / 设备 DV、HEVC 解码器能力），只用于排障日志。
+  static Future<String> codecDiagnostics() async {
+    try {
+      return await _methodChannel.invokeMethod<String>('codecDiagnostics') ?? '';
+    } on PlatformException {
+      return '';
+    }
+  }
+
   /// 让原生层把视频 Surface 挂到 Flutter 下面。
   Future<void> attach() async {
     if (_disposed || _attached) return;

@@ -3,11 +3,14 @@ package com.colanas.os
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.hardware.display.DisplayManager
+import android.media.MediaCodecInfo
 import android.media.MediaCodecList
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
+import android.view.Display
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -18,6 +21,7 @@ import androidx.media3.common.MediaMetadata
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
 import androidx.media3.common.VideoSize
 import androidx.core.content.ContextCompat
@@ -94,6 +98,11 @@ internal object NativeVideoHost {
                 // 能力查询：不需要播放器实例
                 "supportsDolbyVision" -> {
                     result.success(hasDolbyVisionDecoder())
+                    return
+                }
+                // 排障诊断：当前轨道 MIME、色彩信息与设备 DV / HEVC 解码器能力
+                "codecDiagnostics" -> {
+                    result.success(buildCodecDiagnostics())
                     return
                 }
                 // 把原生视频层挂到 Flutter 下面 / 从窗口里摘掉
@@ -217,6 +226,105 @@ internal object NativeVideoHost {
         }.onFailure { Log.w("ColaNasMedia3", "媒体服务停止失败", it) }
     }
 
+    /**
+     * 播放链路诊断：Media3 实际看到的视频轨道 MIME / codecs / 色彩信息，
+     * 以及设备上所有 DV / HEVC 解码器的 secure、tunnel 与 profile 能力。
+     *
+     * 只写进客户端日志，不参与播放决策。
+     */
+    private fun buildCodecDiagnostics(): String =
+        runCatching {
+            val current = session?.player
+            val sb = StringBuilder()
+            val tracks = current?.currentTracks
+            if (tracks != null) {
+                for (group in tracks.groups) {
+                    if (group.type != C.TRACK_TYPE_VIDEO) continue
+                    for (i in 0 until group.length) {
+                        val f = group.getTrackFormat(i)
+                        sb.append("track=")
+                            .append(f.sampleMimeType ?: "-")
+                            .append(' ')
+                            .append(f.codecs ?: "-")
+                            .append(' ')
+                            .append(f.width)
+                            .append('x')
+                            .append(f.height)
+                            .append(" supported=")
+                            .append(group.isTrackSupported(i))
+                            .append(" transfer=")
+                            .append(f.colorInfo?.colorTransfer)
+                            .append('\n')
+                    }
+                }
+                current.videoFormat?.let { f ->
+                    sb.append("selected=")
+                        .append(f.sampleMimeType ?: "-")
+                        .append(' ')
+                        .append(f.codecs ?: "-")
+                        .append(" transfer=")
+                        .append(f.colorInfo?.colorTransfer)
+                        .append('\n')
+                }
+            }
+            sb.append("displayHdr=").append(readHdrTypes()).append('\n')
+            for (codec in MediaCodecList(MediaCodecList.ALL_CODECS).codecInfos) {
+                if (codec.isEncoder) continue
+                val dv = codec.supportedTypes.firstOrNull { it.equals("video/dolby-vision", true) }
+                val hevc = codec.supportedTypes.firstOrNull { it.equals("video/hevc", true) }
+                if (dv == null && hevc == null) continue
+                sb.append(codec.name)
+                if (dv != null) {
+                    sb.append(" DV")
+                    runCatching { codec.getCapabilitiesForType(dv) }.getOrNull()?.let { caps ->
+                        sb.append(" secure=")
+                            .append(
+                                caps.isFeatureSupported(
+                                    MediaCodecInfo.CodecCapabilities.FEATURE_SecurePlayback,
+                                ),
+                            )
+                            .append(" tunnel=")
+                            .append(
+                                caps.isFeatureSupported(
+                                    MediaCodecInfo.CodecCapabilities.FEATURE_TunneledPlayback,
+                                ),
+                            )
+                            .append(" profiles=")
+                            .append(caps.profileLevels.joinToString(",") { "${it.profile}/${it.level}" })
+                    }
+                }
+                if (hevc != null) {
+                    sb.append(" HEVC")
+                    runCatching { codec.getCapabilitiesForType(hevc) }.getOrNull()?.let { caps ->
+                        sb.append(" secure=")
+                            .append(
+                                caps.isFeatureSupported(
+                                    MediaCodecInfo.CodecCapabilities.FEATURE_SecurePlayback,
+                                ),
+                            )
+                            .append(" tunnel=")
+                            .append(
+                                caps.isFeatureSupported(
+                                    MediaCodecInfo.CodecCapabilities.FEATURE_TunneledPlayback,
+                                ),
+                            )
+                    }
+                }
+                sb.append('\n')
+            }
+            sb.toString()
+        }.getOrElse { "diagnostics failed: ${it.javaClass.simpleName}: ${it.message}" }
+
+    private fun readHdrTypes(): String =
+        runCatching {
+            val dm =
+                appContext?.getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager
+                    ?: return@runCatching "-"
+            val display = dm.getDisplay(Display.DEFAULT_DISPLAY) ?: return@runCatching "-"
+            @Suppress("DEPRECATION")
+            display.hdrCapabilities?.supportedHdrTypes?.joinToString(",") ?: "-"
+        }.getOrDefault("-")
+
     private fun hasDolbyVisionDecoder(): Boolean {
         return runCatching {
             MediaCodecList(MediaCodecList.ALL_CODECS).codecInfos.any { codec ->
@@ -257,6 +365,12 @@ private class TvMedia3Session(
     private var view: PlayerView? = null
     private var eventSink: EventChannel.EventSink? = null
     private var videoDecoder = ""
+
+    /** 本次打开是「原片视频 + 服务端音频流」合并播放。 */
+    private var mergedAudioActive = false
+
+    /** 合并播放时已把视频/音频轨道钉到目标组，避免重复设置覆盖用户选择。 */
+    private var mergedTrackOverrideApplied = false
 
     /** 当前轨道里没有任何可用的音频解码器（手机常见：E-AC3 / DTS-HD）。 */
     private var audioUnsupported = false
@@ -322,6 +436,7 @@ private class TvMedia3Session(
                 }
 
                 override fun onTracksChanged(tracks: Tracks) {
+                    if (mergedAudioActive) preferMergedTracks(tracks)
                     // TrueHD / DTS-HD MA 这类音轨没有平台解码器。只记日志不中断：
                     // 画面能出来，Dart 侧会另外接一条 AAC 音频流合并进来。
                     val audioGroups = tracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
@@ -356,7 +471,15 @@ private class TvMedia3Session(
                                 append(cause.message ?: "")
                             }
                         }
-                    emitState(detail)
+                    // release 包类名被 R8 重命名（如 zc0），只带类名定位不到真实调用点
+                    val stack =
+                        runCatching {
+                            (cause ?: error).stackTraceToString()
+                                .lineSequence()
+                                .take(10)
+                                .joinToString(" | ")
+                        }.getOrDefault("")
+                    emitState(if (stack.isEmpty()) detail else "$detail || $stack")
                 }
             },
         )
@@ -403,6 +526,42 @@ private class TvMedia3Session(
         view = null
     }
 
+    /**
+     * 合并播放（原片视频 + 服务端音频）时会有两条视频轨：原片的杜比视界轨，
+     * 以及服务端那条「音频转码」会话里带出来的 HEVC copy 轨。
+     *
+     * Media3 默认会选中 HEVC copy（码率更高），杜比视界就被顶掉了 ——
+     * 电视端表现为「信息面板显示已激活、电视却不切杜比」。这里显式把
+     * 视频钉到 DV 轨、音频钉到 AAC 轨（原片音轨本来就解不了才合并）。
+     */
+    private fun preferMergedTracks(tracks: Tracks) {
+        if (mergedTrackOverrideApplied) return
+        val videos = tracks.groups.filter { it.type == C.TRACK_TYPE_VIDEO }
+        if (videos.size < 2) return
+        val dv =
+            videos.firstOrNull { g ->
+                (0 until g.length).any {
+                    g.getTrackFormat(it).sampleMimeType == MimeTypes.VIDEO_DOLBY_VISION
+                }
+            } ?: return
+        val aac =
+            tracks.groups.firstOrNull { g ->
+                g.type == C.TRACK_TYPE_AUDIO &&
+                    (0 until g.length).any {
+                        g.getTrackFormat(it).sampleMimeType == MimeTypes.AUDIO_AAC
+                    }
+            }
+        if (dv.isSelected && (aac == null || aac.isSelected)) return
+        mergedTrackOverrideApplied = true
+        val builder = trackSelector.parameters.buildUpon()
+        builder.setOverrideForType(TrackSelectionOverride(dv.mediaTrackGroup, 0))
+        if (aac != null) {
+            builder.setOverrideForType(TrackSelectionOverride(aac.mediaTrackGroup, 0))
+        }
+        trackSelector.setParameters(builder.build())
+        Log.i("ColaNasMedia3", "merged playback: pin Dolby Vision video + AAC audio")
+    }
+
     fun open(
         url: String,
         positionMs: Long,
@@ -418,6 +577,8 @@ private class TvMedia3Session(
             trackSelector.parameters.buildUpon().setTunnelingEnabled(tunneled).build(),
         )
         videoDecoder = ""
+        mergedAudioActive = !audioUrl.isNullOrBlank()
+        mergedTrackOverrideApplied = false
         openedAtMs = SystemClock.elapsedRealtime()
         firstFrameMs = null
         player.stop()

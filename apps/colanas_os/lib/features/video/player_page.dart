@@ -58,7 +58,9 @@ bool _isExplicitDecoderOpenFailure(String message) {
       m.contains('unsupported codec') ||
       m.contains('unknown codec') ||
       m.contains('failed to initialize video decoder') ||
-      m.contains('error while decoding');
+      m.contains('error while decoding') ||
+      // MKV 里 DV 配置只有 dvcC、没有 hvcC 时，Media3 解析器会抛这类异常
+      m.contains('illegalargumentexception');
 }
 
 /// 内置播放器：media_kit 作为跨平台内核，**控制层全部自绘**。
@@ -1060,6 +1062,8 @@ class _PlayerPageState extends State<PlayerPage> {
         'surface=${state.surfaceWidth}x${state.surfaceHeight}',
         route: 'player.decode/${_sessionId ?? 'direct'}',
       );
+      // 只有电视需要：核对 Media3 真正看到的轨道 MIME 与设备 DV 解码器能力
+      if (_tvMode) unawaited(_logNativeCodecDiagnostics());
     }
     if (_nativeTvActive &&
         state.firstFrameMs != null &&
@@ -1113,6 +1117,17 @@ class _PlayerPageState extends State<PlayerPage> {
             state.firstFrameMs != previous.firstFrameMs)) {
       setState(() {});
     }
+  }
+
+  /// 把原生侧解析到的轨道 MIME 与解码器能力写进客户端日志（仅排障用）。
+  Future<void> _logNativeCodecDiagnostics() async {
+    final diag = await TvMedia3PlayerController.codecDiagnostics();
+    if (diag.isEmpty) return;
+    ClientLogger.instance.info(
+      'Media3 解码器诊断',
+      route: 'player.decode/${_sessionId ?? 'direct'}',
+      detail: diag,
+    );
   }
 
   Future<void> _handleTvMedia3Error(String message) async {
@@ -1178,6 +1193,7 @@ class _PlayerPageState extends State<PlayerPage> {
     if (_nativeTvActive &&
         _tvMode &&
         !_tunnelOffRetried &&
+        !message.toLowerCase().contains('illegalargumentexception') &&
         !_isTranscode &&
         widget.itemId != null &&
         _isExplicitDecoderOpenFailure(message)) {
@@ -1313,7 +1329,7 @@ class _PlayerPageState extends State<PlayerPage> {
     ClientLogger.instance.info(
       '策略 media3=$useNativeTv tv=$_tvMode preset=$_preset codec=$_codec '
       'hdr=${_srcHdr.reason} srcH=$_srcHeight directBlocked=$_directBlocked '
-      'tunneled=${_tvMode && !_tunnelOffRetried} '
+      'tunneled=$_tvTunneled '
       'toneMapPref=${PlayPreferences.toneMap} displayHdr=${_display.maxHdr.reason}',
       route: 'player.strategy',
     );
@@ -1379,8 +1395,8 @@ class _PlayerPageState extends State<PlayerPage> {
           formatHint: formatHint,
           // 隧道模式只在电视上开：手机 / 平板打开会黑屏（见 TvMedia3Playback.kt）。
           // 这台电视的隧道模式被判定不受支持后（[_tunnelOffRetried]），
-          // 后续重开一律走非隧道，别再撞同一堵墙。
-          tunneled: _tvMode && !_tunnelOffRetried,
+          // 后续重开一律走非隧道，别再撞同一堵墙。杜比视界见 [_tvTunneled]。
+          tunneled: _tvTunneled,
           // 音频轨手机解不了时，视频仍走原片、音频单独取服务端 AAC
           audioUrl: _mergedAudioUrl,
           // 通知栏 / 状态栏媒体卡的标题
@@ -2342,6 +2358,14 @@ class _PlayerPageState extends State<PlayerPage> {
 
   /// 片源最高 HDR 等级（dolbyVision > hdr10plus > hdr10 > hlg > none）。
   HdrLevel get _srcHdr => HdrLevel.fromReasons(_reasons);
+
+  /// 电视端是否启用隧道模式。
+  ///
+  /// 杜比视界必须关隧道：MTK 电视开隧道时 Media3 只会选中
+  /// `c2.mtk.hevc.decoder`，拿不到 DV 解码器，输出的是 HDR10 基础层，
+  /// 电视端不会切杜比。HDR10 / HDR10+ / HLG 仍走隧道以降低 4K 掉帧。
+  bool get _tvTunneled =>
+      _tvMode && !_tunnelOffRetried && _srcHdr != HdrLevel.dolbyVision;
 
   /// 直连能不能保证**颜色是对的**。
   ///
