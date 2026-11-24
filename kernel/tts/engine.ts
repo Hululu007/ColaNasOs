@@ -375,7 +375,46 @@ export class TtsEngine {
         };
       }
     }
+    await this.fadeEdges(out);
     return { files: [out], bytes, split: false };
+  }
+
+  /**
+   * 块首尾各 12ms 淡入淡出。
+   *
+   * 模型每块的第一个 / 最后一个采样都不落在零点，直接硬拼（中间只垫 0.18s 静音）
+   * 会在每个块的交界处留下一声「咔」—— 用户反馈「播客段与段之间有个小噪音」。
+   * 这里只改块的首尾包络，不改内容与时长；失败就保持原样，不能因此让整期合成挂掉。
+   */
+  private async fadeEdges(file: string): Promise<void> {
+    const tmp = `${file}.fade.wav`;
+    const r = await exec(this.opts.ffmpeg, [
+      '-y',
+      '-loglevel',
+      'error',
+      '-i',
+      file,
+      // areverse 之后再淡入 = 在原音频末尾做淡出，不用先算时长
+      '-af',
+      'afade=t=in:st=0:d=0.012,areverse,afade=t=in:st=0:d=0.012,areverse',
+      '-ar',
+      String(SAMPLE_RATE),
+      '-ac',
+      '1',
+      '-c:a',
+      'pcm_s16le',
+      tmp,
+    ]);
+    if (r.code !== 0 || !fs.existsSync(tmp)) {
+      fs.rmSync(tmp, { force: true });
+      this.opts.log?.(
+        'warn',
+        `[tts] 块首尾淡入淡出失败，保持原样：${(r.stderr || '').slice(-200)}`,
+      );
+      return;
+    }
+    fs.rmSync(file, { force: true });
+    fs.renameSync(tmp, file);
   }
 
   /**
