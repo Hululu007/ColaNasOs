@@ -478,17 +478,9 @@ class _TvShellState extends State<TvShell> {
     }
   }
 
-  bool _moveFocus(TraversalDirection direction) {
-    final focus = FocusManager.instance.primaryFocus;
-    if (focus == null || focus.context == null) return false;
-    return focus.focusInDirection(direction);
-  }
-
   void _onHorizontal(int delta) {
     if (!_tabsFocused) {
-      _moveFocus(
-        delta < 0 ? TraversalDirection.left : TraversalDirection.right,
-      );
+      _moveContentColumn(delta);
       return;
     }
     if (_tabs.isEmpty) return;
@@ -555,6 +547,55 @@ class _TvShellState extends State<TvShell> {
         best = node;
         bestDy = dy;
         bestDx = dx;
+      }
+    }
+    if (best == null) return false;
+    best.requestFocus();
+    return true;
+  }
+
+  /// 按**同一行内**横向移动焦点。
+  ///
+  /// 不用 `focusInDirection`：方向遍历会沿用内部的方向历史做反向回弹
+  /// （`_popPolicyDataIfNeeded`），而上下行 / 进网格都是 `requestFocus()`
+  /// 直接跳的、不写这份历史。于是网格第二行第一次按左键时，历史里更早的
+  /// 泳道卡片会被弹出来 —— 表现就是「左键变成向上」（用户 2026-11-24 实测）。
+  /// 这里只认与当前卡片垂直重叠的同一行候选，没有左边的卡片就停住。
+  bool _moveContentColumn(int delta) {
+    final current = FocusManager.instance.primaryFocus;
+    if (current == null || current.context == null || delta == 0) return false;
+    final scope = current.nearestScope;
+    final cur = current.rect;
+    if (scope == null || cur.isEmpty || cur.width <= 0) return false;
+    final barBottom = _tabBarFocusNode.rect.bottom;
+    final cx = cur.center.dx;
+    final cy = cur.center.dy;
+    FocusNode? best;
+    double bestDx = double.infinity;
+    double bestDy = double.infinity;
+    for (final node in scope.traversalDescendants) {
+      if (node == current || !node.canRequestFocus || node.context == null) {
+        continue;
+      }
+      final r = node.rect;
+      if (r.isEmpty || r.width <= 0 || r.height <= 0) continue;
+      // tab 栏 / 品牌行不在内容区。
+      if (r.top < barBottom - 1) continue;
+      // 同一行：垂直重叠至少达到较矮那张卡的一半。相邻行之间只有间距，
+      // 重叠为 0，天然被排除 —— 这正是「左键不许往上跳」的保证。
+      final overlap =
+          (r.bottom < cur.bottom ? r.bottom : cur.bottom) -
+          (r.top > cur.top ? r.top : cur.top);
+      final minHeight = r.height < cur.height ? r.height : cur.height;
+      if (overlap < minHeight * 0.5) continue;
+      final dx = delta < 0 ? cx - r.center.dx : r.center.dx - cx;
+      // 必须真的在左 / 右侧，且不能是同一张卡（留 40% 卡宽容差）。
+      if (dx < cur.width * 0.4) continue;
+      final dy = (r.center.dy - cy).abs();
+      if (dx < bestDx - 1 || (dx <= bestDx + 1 && dy < bestDy)) {
+        best = node;
+        bestDx = dx;
+        bestDy = dy;
       }
     }
     if (best == null) return false;
