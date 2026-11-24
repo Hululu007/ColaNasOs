@@ -6,6 +6,7 @@ import 'package:nas_core/nas_core.dart';
 
 import '../../core/android_notification_permission.dart';
 import '../../core/audio_background.dart';
+import '../../core/audio_fade.dart';
 import '../../core/audio_focus.dart';
 import '../../core/client_log.dart';
 import '../../core/session.dart';
@@ -26,6 +27,10 @@ class BlogPlayer extends ChangeNotifier {
   static final BlogPlayer instance = BlogPlayer._();
 
   Player? _player;
+
+  /// 起停淡入淡出：切换音源（播客 ↔ 音乐）时硬切会有一声爆音。
+  AudioFader? _fader;
+
   final List<StreamSubscription<Object?>> _subs = [];
 
   /// 停播看门狗：mpv 对「长连接被对方关掉、又不再续传」不会报错，也不会自己
@@ -136,6 +141,7 @@ class BlogPlayer extends ChangeNotifier {
     }));
     _subs.add(p.stream.error.listen(_handleStreamError));
     _player = p;
+    _fader = AudioFader(p);
     _startWatchdog();
     return p;
   }
@@ -233,8 +239,15 @@ class BlogPlayer extends ChangeNotifier {
   }
 
   /// 只暂停，不释放资源：交给 AudioFocus 在别的音源开播时调用。
+  ///
+  /// 先淡出再暂停：直接硬切会在切换音源时留下一声爆音（用户听感像打碟）。
   Future<void> pause() async {
-    await _player?.pause();
+    final fader = _fader;
+    if (fader != null) {
+      await fader.fadeOutAndPause();
+    } else {
+      await _player?.pause();
+    }
     playing = false;
     notifyListeners();
   }
@@ -365,11 +378,15 @@ class BlogPlayer extends ChangeNotifier {
       final res = await ApiSession.instance.client.blogAudioUrl(id: current.id);
       final url = '${ApiSession.instance.baseUrl}${res.url}';
       final p = _ensure();
+      // 先把音量压到 0，起播后再淡回来：与「音乐刚停」的输出重配叠在一起时
+      // 满音量起播会有一声爆音。
+      await _fader?.silence();
       await p.open(Media(url), play: true);
       if (resumeAt != null && resumeAt > Duration.zero) {
         await p.seek(resumeAt);
       }
       await p.setRate(rate);
+      _fader?.fadeInFromSilence();
       // open(play:true) 的 playing 流可能晚一拍；先把面板推成「正在播」，
       // 前台服务要看到 playing=true 才会真正常驻。
       playing = true;
@@ -398,8 +415,10 @@ class BlogPlayer extends ChangeNotifier {
       _stopped = false;
       _lastProgressAt = DateTime.now();
       await AudioFocus.instance.request(this, pause);
+      await _fader?.fadeInAndPlay();
+      return;
     }
-    await p.playOrPause();
+    await pause();
   }
 
   Future<void> seek(Duration to) async {
@@ -515,6 +534,7 @@ class BlogPlayer extends ChangeNotifier {
     _subs.clear();
     final p = _player;
     _player = null;
+    _fader = null;
     unawaited(_disposePlayer(p));
     super.dispose();
   }

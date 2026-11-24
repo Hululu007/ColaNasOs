@@ -14,6 +14,7 @@ import 'dart:async';
 
 import 'package:media_kit/media_kit.dart';
 
+import '../../../core/audio_fade.dart';
 import 'track.dart';
 
 /// 引擎对外暴露的全部能力。刻意保持很小：**不认识的都别加**。
@@ -92,9 +93,14 @@ class PlaybackError {
 /// 于是上层不得不写一堆平台判断。同一套 media_kit 在 Android / iOS / Windows /
 /// Linux / macOS / Web 都跑得起来（web 走 wasm），分叉的理由已经不存在。
 class MediaKitPlaybackEngine implements PlaybackEngine {
-  MediaKitPlaybackEngine({Player? player}) : _player = player ?? Player();
+  MediaKitPlaybackEngine({Player? player}) : _player = player ?? Player() {
+    _fader = AudioFader(_player);
+  }
 
   final Player _player;
+
+  /// 起停淡入淡出（消除切换音源时的爆音）。只动音量，不介入状态机。
+  late final AudioFader _fader;
 
   @override
   Stream<Duration> get positionStream => _player.stream.position;
@@ -125,26 +131,39 @@ class MediaKitPlaybackEngine implements PlaybackEngine {
     Duration startAt = Duration.zero,
     bool autoPlay = true,
   }) async {
-    await _player.open(Media(uri.toString()), play: autoPlay);
+    if (!autoPlay) {
+      await _player.open(Media(uri.toString()), play: false);
+      if (startAt > Duration.zero) {
+        await _player.seek(startAt);
+      }
+      return;
+    }
+    // 先把音量压到 0，起播后再淡回目标音量：直接满音量起播在 Android 上
+    // 会和「上一路刚停」的输出重配叠在一起，听感像一声爆音。
+    await _fader.silence();
+    await _player.open(Media(uri.toString()), play: true);
     // `open` 的 play 参数在部分平台上只保证「开始加载后播」，
     // 起播位置必须单独 seek，否则会从 0 开始（这正是「切码率回到开头」的成因）。
     if (startAt > Duration.zero) {
       await _player.seek(startAt);
     }
+    _fader.fadeInFromSilence();
   }
 
   @override
-  Future<void> play() => _player.play();
+  Future<void> play() => _fader.fadeInAndPlay();
 
   @override
-  Future<void> pause() => _player.pause();
+  Future<void> pause() => _fader.fadeOutAndPause();
 
   @override
   Future<void> seek(Duration position) => _player.seek(position);
 
   @override
-  Future<void> setVolume(double volume) =>
-      _player.setVolume((volume.clamp(0.0, 1.0)) * 100);
+  Future<void> setVolume(double volume) {
+    _fader.target = (volume.clamp(0.0, 1.0)) * 100;
+    return _player.setVolume(_fader.target);
+  }
 
   @override
   Future<void> setRate(double rate) => _player.setRate(rate);
