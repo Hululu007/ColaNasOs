@@ -8,7 +8,8 @@ import '../../shell/shell_back.dart';
 
 import '../../core/session.dart';
 import 'video_card.dart';
-import 'video_media_viewer_page.dart' show openVideoPlayer;
+import 'video_media_viewer_page.dart'
+    show openMediaViewer, openVideoPlayer;
 import 'video_page.dart';
 import 'video_series_widgets.dart' show episodeStillFallbackUrl;
 
@@ -277,7 +278,25 @@ class _VideoMediaBrowserPageState extends State<VideoMediaBrowserPage> {
     );
   }
 
+  /// 点图片：进全屏浏览，**上下滑动**在同目录的图片 / 视频之间翻页
+  /// （与图片库列表同一个查看器，`video_media_viewer_page`）。
   void _openImage(VideoBrowseItem item) {
+    final viewerItems = <VideoItem>[];
+    var initialIndex = -1;
+    for (final entry in _entries()) {
+      final raw = entry.item;
+      if (raw == null || raw.dir) continue;
+      final v = _videoItemOf(raw);
+      if (v == null) continue;
+      if (v.mediaType != 'image' && v.mediaType != 'video') continue;
+      if (identical(raw, item)) initialIndex = viewerItems.length;
+      viewerItems.add(v);
+    }
+    if (initialIndex >= 0 && viewerItems.isNotEmpty) {
+      openMediaViewer(context, items: viewerItems, initialIndex: initialIndex);
+      return;
+    }
+    // 没索引的图片仍可单看（没有 id 就没法进查看器）
     final fullPath = _joinPath(_rootPath, item.path);
     final token = ApiSession.instance.token;
     Navigator.of(context).push(
@@ -314,7 +333,14 @@ class _VideoMediaBrowserPageState extends State<VideoMediaBrowserPage> {
         onSelected: item.dir
             ? () => _enter(item)
             : item.mediaType == 'video'
-                ? () => _openVideo(item)
+                ? () {
+                    final v = _videoItemOf(item);
+                    if (v != null) {
+                      _play(v);
+                    } else {
+                      _openVideo(item);
+                    }
+                  }
                 : item.mediaType == 'image'
                     ? () => _openImage(item)
                     : null,
@@ -822,7 +848,26 @@ class _VideoMediaBrowserPageState extends State<VideoMediaBrowserPage> {
       if (it.mediaType == 'video') return true;
       if (it.mediaType == 'image') return _showsImages;
       return false;
-    });
+    }).toList();
+
+    // 混合库：`foo.mp4` + `foo.jpg` 这种同名组合只出一条。
+    // 视频留下、图片当它的封面 —— 用户要的是「一个视频，封面用同名图」，
+    // 而不是同一条内容在网格里出现两次。
+    final videoStems = <String>{};
+    final imageByStem = <String, VideoBrowseItem>{};
+    if (_showsImages) {
+      for (final it in visible) {
+        if (it.dir) continue;
+        final stem = _stemOf(it.name);
+        if (it.mediaType == 'video') {
+          videoStems.add(stem);
+        } else if (it.mediaType == 'image') {
+          imageByStem.putIfAbsent(stem, () => it);
+        }
+      }
+    }
+    VideoBrowseItem? coverOf(VideoBrowseItem video) =>
+        _showsImages ? imageByStem[_stemOf(video.name)] : null;
 
     // 已点进某部剧：只留这一部剧的集（文件夹层已经被服务端聚合掉了）
     final key = _seriesKey;
@@ -849,6 +894,10 @@ class _VideoMediaBrowserPageState extends State<VideoMediaBrowserPage> {
         videos.add(it);
         continue;
       }
+      // 有同名视频的图片不再单独出现（已经变成那条视频的封面）
+      if (it.mediaType == 'image' && videoStems.contains(_stemOf(it.name))) {
+        continue;
+      }
       if (key == null) out.add(_BrowseEntry.item(it));
     }
 
@@ -861,7 +910,10 @@ class _VideoMediaBrowserPageState extends State<VideoMediaBrowserPage> {
     }
 
     if (!_isSeriesLib) {
-      return [...out, for (final it in videos) _BrowseEntry.item(it)];
+      return [
+        ...out,
+        for (final it in videos) _BrowseEntry.item(it, cover: coverOf(it)),
+      ];
     }
 
     // 剧集库：视频按剧名聚合（一部剧一张卡），单集仍按影片卡显示
@@ -904,6 +956,12 @@ class _VideoMediaBrowserPageState extends State<VideoMediaBrowserPage> {
     return media.contains(ext) ? name.substring(0, dot) : name;
   }
 
+  /// 去掉扩展名的小写名字，用于「同名图片 + 视频」配对（`foo.mp4` ↔ `foo.jpg`）
+  static String _stemOf(String name) {
+    final dot = name.lastIndexOf('.');
+    return (dot <= 0 ? name : name.substring(0, dot)).trim().toLowerCase();
+  }
+
   // ------------------------------------------------------------ 单张卡
 
   Widget _tile(_BrowseEntry entry, double width, double imageH) {
@@ -925,7 +983,7 @@ class _VideoMediaBrowserPageState extends State<VideoMediaBrowserPage> {
     }
     final it = entry.item!;
     if (it.dir) return _folderCard(it, width, imageH);
-    if (_showsImages) return _imageCell(it, width, imageH);
+    if (_showsImages) return _imageCell(entry, width, imageH);
     final item = _videoItemOf(it);
     if (item == null) return _missingCard(it, width, imageH);
     return NasContextMenuRegion(
@@ -974,21 +1032,38 @@ class _VideoMediaBrowserPageState extends State<VideoMediaBrowserPage> {
     ];
   }
 
-  /// 图片库 / 混合库的格子：固定 4:3 图区 + 一行名字（与图片库列表一致）
-  Widget _imageCell(VideoBrowseItem it, double width, double imageH) {
+  /// 图片库 / 混合库的格子：固定 4:3 图区 + 一行名字（与图片库列表一致）。
+  ///
+  /// 混合库里视频点一下就播；封面优先用**同名图片**（`foo.jpg` 配 `foo.mp4`），
+  /// 没有同名图才退回刮削海报。图片照旧进全屏浏览（上下滑动翻页）。
+  Widget _imageCell(_BrowseEntry entry, double width, double imageH) {
+    final it = entry.item!;
     final base = ApiSession.instance.baseUrl;
     final token = ApiSession.instance.token;
     final headers =
         token == null ? const <String, String>{} : {'Authorization': 'Bearer $token'};
     final item = _videoItemOf(it);
-    final url = item != null && item.mediaType == 'video'
-        ? videoPosterUrl(item, size: (width * 2).round())
-        : '$base/api/v1/files/thumb?path=${Uri.encodeComponent(_joinPath(_rootPath, it.path))}&size=${(width * 2).round()}';
+    final size = (width * 2).round();
+    final cover = entry.cover;
+    final String url;
+    if (it.mediaType == 'video') {
+      url = cover != null
+          ? '$base/api/v1/files/thumb?path=${Uri.encodeComponent(_joinPath(_rootPath, cover.path))}&size=$size'
+          : item != null
+              ? videoPosterUrl(item, size: size)
+              : '$base/api/v1/files/thumb?path=${Uri.encodeComponent(_joinPath(_rootPath, it.path))}&size=$size';
+    } else {
+      url =
+          '$base/api/v1/files/thumb?path=${Uri.encodeComponent(_joinPath(_rootPath, it.path))}&size=$size';
+    }
     return NasContextMenuRegion(
       entries: _browseMenuEntries(it),
       child: InkWell(
         borderRadius: BorderRadius.circular(10),
-        onTap: () => it.mediaType == 'video' ? _openVideo(it) : _openImage(it),
+        // 视频直接起播（播放器里上下拖动切换同目录的其它视频）
+        onTap: () => it.mediaType == 'video'
+            ? (item != null ? _play(item) : _openVideo(it))
+            : _openImage(it),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -1004,7 +1079,7 @@ class _VideoMediaBrowserPageState extends State<VideoMediaBrowserPage> {
                   icon: it.mediaType == 'video'
                       ? Icons.movie_outlined
                       : Icons.image_outlined,
-                  cacheWidth: (width * 2).round(),
+                  cacheWidth: size,
                 ),
               ),
             ),
@@ -1296,7 +1371,7 @@ enum _BrowseEntryKind { item, series, video }
 /// 目录里的一个展示条目：文件夹 / 影片 / 图片，剧集库聚合出来的一部剧，
 /// 或「只有一个影片的文件夹」折叠出来的那条影片
 class _BrowseEntry {
-  const _BrowseEntry.item(VideoBrowseItem this.item)
+  const _BrowseEntry.item(VideoBrowseItem this.item, {this.cover})
       : kind = _BrowseEntryKind.item,
         seriesKey = null,
         items = null,
@@ -1307,19 +1382,24 @@ class _BrowseEntry {
       : kind = _BrowseEntryKind.series,
         item = null,
         video = null,
+        cover = null,
         folder = null;
 
   const _BrowseEntry.video(VideoItem this.video, VideoBrowseItem this.folder)
       : kind = _BrowseEntryKind.video,
         item = null,
         seriesKey = null,
-        items = null;
+        items = null,
+        cover = null;
 
   final _BrowseEntryKind kind;
   final VideoBrowseItem? item;
   final String? seriesKey;
   final List<VideoBrowseItem>? items;
   final VideoItem? video;
+
+  /// 混合库里和视频**同名的那张图片**：只显示视频，图片当它的封面用
+  final VideoBrowseItem? cover;
 
   /// 折叠前的那个文件夹条目（右键「打开所在文件夹」用）
   final VideoBrowseItem? folder;
