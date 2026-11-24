@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart'
     show kIsWeb, kReleaseMode, defaultTargetPlatform, TargetPlatform;
@@ -497,6 +498,19 @@ class _PlayerPageState extends State<PlayerPage> {
   Timer? _seekByTimer;
   Duration _seekByFrom = Duration.zero;
   Duration _seekByTarget = Duration.zero;
+
+  /// 遥控器「长按左右键 → 拖动进度」的状态（用户 2026-11-24 要求：
+  /// 按住越久拖得越快，松开才提交 seek）。
+  int _tvHoldDir = 0; // -1 左 / 1 右 / 0 无
+  Timer? _tvHoldDelay; // 按下 420ms 还没松手 → 升级成拖动
+  Timer? _tvHoldTick; // 拖动中的增量节拍（100ms）
+  DateTime? _tvHoldStartedAt;
+  Duration _tvHoldFrom = Duration.zero; // 拖动起点（片源绝对）
+  Duration _tvHoldTarget = Duration.zero; // 当前预览目标
+  bool _tvHoldActive = false;
+
+  static const int _tvHoldDelayMs = 420;
+  static const int _tvHoldTickMs = 100;
 
   /// 新建跳转会话后、新流真正 open 之前，`_startMs` 已经是新值，而播放器
   /// 还停在**上一条流**上（首片要等好几秒）。这段时间不能拿 position 去算
@@ -1285,6 +1299,8 @@ class _PlayerPageState extends State<PlayerPage> {
     _noticeTimer?.cancel();
     _stallTicker?.cancel();
     _seekByTimer?.cancel();
+    _tvHoldDelay?.cancel();
+    _tvHoldTick?.cancel();
     _tryOriginalTimer?.cancel();
     // 离开播放页：根背景层恢复，原生视频层在下面同步摘掉
     nativeVideoLayerActive.value = false;
@@ -3205,6 +3221,69 @@ class _PlayerPageState extends State<PlayerPage> {
     });
   }
 
+  // -------------------------------------------------------- 遥控器长按拖动
+  //
+  // 短按一次左右键 = 立即 ±30s / ±10s（[_seekBy]）；按住超过 420ms 就升级成
+  // 「拖动进度条」：每 100ms 累加一次，增量随按住时长指数增长（4x 起步，
+  // 约 2.4 秒到 180x），松开时才真正 seek。这样「连按」和「长按拖」互不打扰。
+
+  void _beginTvHold(int dir) {
+    _tvHoldDir = dir;
+    _tvHoldDelay?.cancel();
+    _tvHoldDelay = Timer(const Duration(milliseconds: _tvHoldDelayMs), () {
+      if (!mounted || _tvHoldDir != dir) return;
+      _tvHoldFrom = _seekBaseAbs;
+      _tvHoldTarget = _tvHoldFrom;
+      _tvHoldStartedAt = DateTime.now();
+      _tvHoldTick?.cancel();
+      _tvHoldTick = Timer.periodic(
+        const Duration(milliseconds: _tvHoldTickMs),
+        (_) => _tickTvHold(),
+      );
+      setState(() => _tvHoldActive = true);
+    });
+  }
+
+  void _tickTvHold() {
+    final started = _tvHoldStartedAt;
+    if (started == null || _tvHoldDir == 0) return;
+    final elapsed = DateTime.now().difference(started).inMilliseconds;
+    // 非线性加速度：按住越久每秒走过的片长越多。
+    final speed = (4 * math.pow(1.9, elapsed / 400)).clamp(4.0, 180.0);
+    final stepMs = (speed * _tvHoldTickMs).round() * _tvHoldDir;
+    final total = _timelineDuration(_playbackDuration);
+    var next = _tvHoldTarget + Duration(milliseconds: stepMs);
+    if (next < Duration.zero) next = Duration.zero;
+    if (total > Duration.zero && next > total) next = total;
+    _tvHoldTarget = next;
+    setState(() {
+      _dragSeeking = true;
+      _dragStartMs = _tvHoldFrom.inMilliseconds.toDouble();
+      _dragDeltaMs = (next - _tvHoldFrom).inMilliseconds.toDouble();
+    });
+  }
+
+  void _commitTvHold() {
+    _tvHoldDelay?.cancel();
+    _tvHoldDelay = null;
+    _tvHoldTick?.cancel();
+    _tvHoldTick = null;
+    _tvHoldStartedAt = null;
+    _tvHoldDir = 0;
+    if (!_tvHoldActive) return;
+    final target = _tvHoldTarget;
+    final from = _tvHoldFrom;
+    setState(() {
+      _tvHoldActive = false;
+      _dragSeeking = false;
+      _dragStartMs = null;
+      _dragDeltaMs = 0;
+    });
+    // 几乎没动就别跳，免得「轻碰一下长按」也打断播放。
+    if ((target - from).abs() < const Duration(milliseconds: 500)) return;
+    unawaited(_seekTo(target));
+  }
+
   /// 快进 / 快退的基准位置（片源绝对）。
   ///
   /// 只有「播放器时间轴确实还属于当前会话」时才能用 position：
@@ -3390,7 +3469,9 @@ class _PlayerPageState extends State<PlayerPage> {
         return;
       }
       if (!mounted || gen != _seekGen) return;
-      _poke();
+      // TV：遥控器快进 / 长按拖动不能把整条操作栏叫出来（用户 2026-11-24：
+      // 一按右键控件就出现，连按和长按拖动都被打断）。桌面 / 手机保持原行为。
+      if (!_tvMode || _controls) _poke();
       _armStallWatch(target: t);
       // Web 上 seek 会把当前 play() 打断（"interrupted by a new load request"），
       // 浏览器不会自己续上；想让位置动起来只能显式再 play。仅当用户意图是播。
@@ -3449,7 +3530,9 @@ class _PlayerPageState extends State<PlayerPage> {
         return;
       }
       if (!mounted || gen != _seekGen) return;
-      _poke();
+      // TV：遥控器快进 / 长按拖动不能把整条操作栏叫出来（用户 2026-11-24：
+      // 一按右键控件就出现，连按和长按拖动都被打断）。桌面 / 手机保持原行为。
+      if (!_tvMode || _controls) _poke();
       if (_wantPlay) unawaited(_ensurePlayingAfterOpen());
       // 拖动过程中每帧都会走这里，看门狗只在松手那次（allowJump）挂
       if (allowJump) _armStallWatch(target: t);
@@ -3879,7 +3962,8 @@ class _PlayerPageState extends State<PlayerPage> {
       // 要在这里补回来，不能让人手动点第二次。
       await _openUrl(u, retries: 3, autoPlay: true);
       if (mounted && seekGen == _seekGen && jumpRunGen == _jumpRunGen) {
-        _poke();
+        // 同 `_seekTo`：TV 上跳转会话落成也不能顺手把操作栏叫出来。
+        if (!_tvMode || _controls) _poke();
       }
     } catch (e) {
       if (!mounted || seekGen != _seekGen || jumpRunGen != _jumpRunGen) {
@@ -5700,7 +5784,16 @@ class _PlayerPageState extends State<PlayerPage> {
   ///   上从按钮行回到进度行、进度行再往上收起操作栏；
   /// - 返回：分层——先关选项小窗，再收操作栏，都没有才退出播放页（见 [_tvBack]）。
   KeyEventResult _onTvKey(KeyEvent event) {
-    if (event is KeyUpEvent) return KeyEventResult.ignored;
+    if (event is KeyUpEvent) {
+      // 长按拖动：松开左右键才提交 seek。
+      if (_tvHoldDir != 0 &&
+          (event.logicalKey == LogicalKeyboardKey.arrowLeft ||
+              event.logicalKey == LogicalKeyboardKey.arrowRight)) {
+        _commitTvHold();
+        return KeyEventResult.handled;
+      }
+      return KeyEventResult.ignored;
+    }
     final k = event.logicalKey;
 
     final isOk =
@@ -5743,7 +5836,12 @@ class _PlayerPageState extends State<PlayerPage> {
     if (!_controls) {
       if (left || right) {
         // 左右就是跳时间：不唤出操作栏，用画面中央的快进/快退提示给反馈。
-        _seekBy(left ? -10 : 30);
+        // 短按立即 ±30s / ±10s；按住超过 420ms 升级为加速拖动（松开才落地），
+        // 长按产生的 repeat 一律忽略，交给定时器驱动。
+        if (event is KeyDownEvent) {
+          _beginTvHold(left ? -1 : 1);
+          _seekBy(left ? -10 : 30);
+        }
         return KeyEventResult.handled;
       }
       if (up || down) {
@@ -5765,8 +5863,12 @@ class _PlayerPageState extends State<PlayerPage> {
 
     if (left || right) {
       if (_tvRow == 0) {
-        _seekBy(left ? -10 : 30);
-      } else {
+        // 进度行：短按跳时间，长按加速拖动（与控件隐藏时同一套语义）。
+        if (event is KeyDownEvent) {
+          _beginTvHold(left ? -1 : 1);
+          _seekBy(left ? -10 : 30);
+        }
+      } else if (event is KeyDownEvent || event is KeyRepeatEvent) {
         _tvMove(left ? -1 : 1);
       }
       return KeyEventResult.handled;
@@ -5925,11 +6027,56 @@ class _PlayerPageState extends State<PlayerPage> {
         return TvPlayerProgress(
           progress: played,
           loaded: _isTranscode ? frac(_loadedEnd) : null,
+          // 长按左右键拖动时，进度条上直接标出目标位置。
+          seekTarget: _tvHoldActive ? frac(_tvHoldTarget) : null,
           highlighted: _tvRow == 0,
-          leftLabel: _fmt(abs),
+          leftLabel: _fmt(_tvHoldActive ? _tvHoldTarget : abs),
           rightLabel: _fmt(total),
         );
       },
+    );
+  }
+
+  /// 长按遥控器左右键拖动时的最小反馈：底部只出一条进度条，
+  /// 不出现顶栏和按钮行（那会打断拖动本身）。
+  Widget _tvSeekOverlay() {
+    final m = TvLayout.of(context);
+    final total = _timelineDuration(_playbackDuration);
+    final totalMs = total.inMilliseconds;
+    double frac(Duration d) =>
+        totalMs <= 0 ? 0 : (d.inMilliseconds / totalMs).clamp(0.0, 1.0);
+    return Positioned(
+      left: 0,
+      right: 0,
+      bottom: 0,
+      child: IgnorePointer(
+        child: Container(
+          padding: EdgeInsets.fromLTRB(
+            m.px(24),
+            m.px(26),
+            m.px(24),
+            m.px(16),
+          ),
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.bottomCenter,
+              end: Alignment.topCenter,
+              colors: [Color(0xD9000000), Color(0x00000000)],
+            ),
+          ),
+          child: SafeArea(
+            top: false,
+            child: TvPlayerProgress(
+              progress: frac(_absPosition(_playbackPosition)),
+              loaded: _isTranscode ? frac(_loadedEnd) : null,
+              seekTarget: frac(_tvHoldTarget),
+              highlighted: true,
+              leftLabel: _fmt(_tvHoldTarget),
+              rightLabel: _fmt(total),
+            ),
+          ),
+        ),
+      ),
     );
   }
 
@@ -6322,6 +6469,8 @@ class _PlayerPageState extends State<PlayerPage> {
                   if (!tv) _centerControls(wide),
                   if (tv) _tvBottomBar() else _bottomBar(wide),
                 ],
+                // 长按遥控器左右键拖动进度：只出底部一条进度条，不弹操作区。
+                if (_tvHoldActive && !_controls) _tvSeekOverlay(),
                 if (_locked)
                   Positioned(
                     left: 12,
