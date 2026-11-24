@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:nas_ui/nas_ui.dart';
 
+import '../../core/session.dart';
 import 'blog_player.dart';
 import 'blog_queue_sheet.dart';
 
@@ -8,6 +11,9 @@ import 'blog_queue_sheet.dart';
 ///
 /// 与音乐播放页同一套心智模型：封面区 + 可拖进度条 + 上/下一期 + 倍速 + 播放列表。
 /// 播放器本身是全局单例，这里只是它的一个视图；返回 / 切模块 / 熄屏都不会停。
+///
+/// 新闻类期次（AI 新闻）不摆品牌图案：那块方形区域直接显示播报稿，并按播放进度
+/// 高亮「正在读的那一条」——不做逐行高亮，一条新闻一段。
 class BlogPlayerPage extends StatefulWidget {
   const BlogPlayerPage({super.key, this.player});
 
@@ -25,6 +31,124 @@ class _BlogPlayerPageState extends State<BlogPlayerPage> {
 
   static const List<double> _rates = [1.0, 1.25, 1.5, 2.0];
 
+  // ------------------------------------------------------------ 播报稿
+
+  final ScrollController _scriptScroll = ScrollController();
+  final Map<int, GlobalKey> _blockKeys = <int, GlobalKey>{};
+
+  /// 已经为哪一期取过稿：播放器 10Hz 通知，靠它去重
+  String? _scriptForId;
+  List<_ScriptBlock> _blocks = const <_ScriptBlock>[];
+  bool _scriptLoading = false;
+
+  /// 当前高亮的段（按进度估算出来，只用于绘制 / 滚动）
+  int _activeBlock = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _player.addListener(_onPlayerChanged);
+    _onPlayerChanged();
+  }
+
+  @override
+  void dispose() {
+    _player.removeListener(_onPlayerChanged);
+    _scriptScroll.dispose();
+    super.dispose();
+  }
+
+  void _onPlayerChanged() {
+    if (!mounted) return;
+    final id = _player.episode?.id;
+    if (id == null || id == _scriptForId || _scriptLoading) return;
+    unawaited(_fetchScript(id));
+  }
+
+  Future<void> _fetchScript(String id) async {
+    // 先占位再请求：播放进度每秒通知十次，不去重会连发十个请求
+    _scriptForId = id;
+    _scriptLoading = true;
+    _blocks = const <_ScriptBlock>[];
+    _blockKeys.clear();
+    setState(() {});
+    try {
+      final res = await ApiSession.instance.client.blogScript(id: id);
+      if (!mounted || _scriptForId != id) return;
+      final blocks = _parseBlocks(res.script);
+      setState(() {
+        _blocks = blocks;
+        _scriptLoading = false;
+        _activeBlock = 0;
+      });
+    } catch (_) {
+      // 取不到稿就退化成原来的品牌图案，播放不受影响
+      if (!mounted || _scriptForId != id) return;
+      setState(() => _scriptLoading = false);
+    }
+  }
+
+  /// 把播报稿切成「一条新闻一段」。
+  ///
+  /// 稿件由服务端用空行分隔拼成：分类头（`下面是国内科技。`）、每条新闻的播报头
+  /// （`第一，<一句总结>。`）、新闻正文、结尾。播报头 / 分类头 / 开头结尾各起一段，
+  /// 正文并进上一段 —— 所以一段 = 一条新闻，正好是用户要的粒度。
+  static final RegExp _leadRe = RegExp(r'^第[零一二三四五六七八九十百千0-9]+[，,、]');
+  static final RegExp _headerRe = RegExp(r'^(下面是|最后是|以上就是)');
+
+  static List<_ScriptBlock> _parseBlocks(String script) {
+    final paragraphs = script
+        .split(RegExp(r'\n{2,}'))
+        .map((p) => p.trim())
+        .where((p) => p.isNotEmpty);
+    final blocks = <_ScriptBlock>[];
+    for (final p in paragraphs) {
+      final starts =
+          blocks.isEmpty || _leadRe.hasMatch(p) || _headerRe.hasMatch(p);
+      if (starts) {
+        blocks.add(_ScriptBlock(title: p, body: ''));
+      } else {
+        final last = blocks.removeLast();
+        blocks.add(_ScriptBlock(title: last.title, body: '${last.body}$p'));
+      }
+    }
+    return blocks;
+  }
+
+  /// 按「字数占比」把进度映射到段：TTS 语速稳定，按字数的线性估算足够对得上。
+  int _activeIndexOf(Duration pos, Duration total) {
+    if (_blocks.length <= 1 || total <= Duration.zero) return 0;
+    var totalWeight = 0;
+    for (final b in _blocks) {
+      totalWeight += b.weight;
+    }
+    if (totalWeight <= 0) return 0;
+    final ratio =
+        (pos.inMilliseconds / total.inMilliseconds).clamp(0.0, 1.0).toDouble();
+    var acc = 0;
+    for (var i = 0; i < _blocks.length; i += 1) {
+      acc += _blocks[i].weight;
+      if (ratio <= acc / totalWeight) return i;
+    }
+    return _blocks.length - 1;
+  }
+
+  void _scheduleScrollToActive(int index) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final ctx = _blockKeys[index]?.currentContext;
+      if (ctx == null) return;
+      Scrollable.ensureVisible(
+        ctx,
+        alignment: 0.3,
+        duration: const Duration(milliseconds: 280),
+        curve: Curves.easeOutCubic,
+      );
+    });
+  }
+
+  // ------------------------------------------------------------ 构建
+
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
@@ -41,6 +165,17 @@ class _BlogPlayerPageState extends State<BlogPlayerPage> {
         : (ep == null ? 0 : (ep.durationSec * 1000).round());
     final pos = p.position.inMilliseconds.clamp(0, total == 0 ? 0 : total);
     final scheme = Theme.of(context).colorScheme;
+
+    if (_blocks.isNotEmpty) {
+      final active = _activeIndexOf(
+        Duration(milliseconds: pos),
+        Duration(milliseconds: total),
+      );
+      if (active != _activeBlock) {
+        _activeBlock = active;
+        _scheduleScrollToActive(active);
+      }
+    }
 
     return Scaffold(
       appBar: AppBar(
@@ -64,27 +199,11 @@ class _BlogPlayerPageState extends State<BlogPlayerPage> {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        // 播客没有封面图，用一个稳定的品牌色块，不引额外资源
                         AspectRatio(
                           aspectRatio: 1,
-                          child: Container(
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(NasTokens.radiusLg),
-                              gradient: LinearGradient(
-                                colors: [
-                                  scheme.primaryContainer,
-                                  scheme.tertiaryContainer,
-                                ],
-                                begin: Alignment.topLeft,
-                                end: Alignment.bottomRight,
-                              ),
-                            ),
-                            child: Icon(
-                              Icons.podcasts,
-                              size: 96,
-                              color: scheme.onPrimaryContainer,
-                            ),
-                          ),
+                          child: _blocks.isNotEmpty || _scriptLoading
+                              ? _scriptPanel(scheme)
+                              : _artwork(scheme),
                         ),
                         const SizedBox(height: NasTokens.spaceLg),
                         Text(
@@ -149,19 +268,35 @@ class _BlogPlayerPageState extends State<BlogPlayerPage> {
                               icon: const Icon(Icons.skip_previous),
                             ),
                             const SizedBox(width: NasTokens.spaceSm),
+                            // 颜色写死：`IconButton.filled` 默认取 onPrimary，
+                            // 主题一旦把它覆盖成主色，图标就和底色糊在一起看不见了；
+                            // loading 时的转圈同理，必须用白色才看得见「正在加载」。
                             IconButton.filled(
                               tooltip: p.playing
                                   ? tr('blog.player.pause')
                                   : tr('blog.player.play'),
                               onPressed: p.toggle,
                               iconSize: 40,
+                              style: IconButton.styleFrom(
+                                backgroundColor: scheme.primary,
+                                foregroundColor: Colors.white,
+                                disabledBackgroundColor:
+                                    scheme.primary.withValues(alpha: 0.6),
+                                disabledForegroundColor: Colors.white,
+                              ),
                               icon: p.loading
                                   ? const SizedBox(
                                       width: 24,
                                       height: 24,
-                                      child: CircularProgressIndicator(strokeWidth: 2),
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: Colors.white,
+                                      ),
                                     )
-                                  : Icon(p.playing ? Icons.pause : Icons.play_arrow),
+                                  : Icon(
+                                      p.playing ? Icons.pause : Icons.play_arrow,
+                                      color: Colors.white,
+                                    ),
                             ),
                             const SizedBox(width: NasTokens.spaceSm),
                             IconButton(
@@ -195,4 +330,114 @@ class _BlogPlayerPageState extends State<BlogPlayerPage> {
             ),
     );
   }
+
+  /// 非新闻 / 稿子还没到：原来的品牌色块
+  Widget _artwork(ColorScheme scheme) {
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(NasTokens.radiusLg),
+        gradient: LinearGradient(
+          colors: [scheme.primaryContainer, scheme.tertiaryContainer],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+      ),
+      child: Icon(
+        Icons.podcasts,
+        size: 96,
+        color: scheme.onPrimaryContainer,
+      ),
+    );
+  }
+
+  /// 新闻稿面板：整块方形区域变成可滚动的播报稿，跟着进度高亮当前这一条
+  Widget _scriptPanel(ColorScheme scheme) {
+    return Container(
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(NasTokens.radiusLg),
+        gradient: LinearGradient(
+          colors: [scheme.primaryContainer, scheme.tertiaryContainer],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+      ),
+      child: _scriptLoading
+          ? const Center(
+              child: SizedBox(
+                width: 26,
+                height: 26,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Colors.white,
+                ),
+              ),
+            )
+          : SingleChildScrollView(
+              controller: _scriptScroll,
+              padding: const EdgeInsets.all(NasTokens.spaceMd),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (var i = 0; i < _blocks.length; i += 1)
+                    _scriptBlock(i, active: i == _activeBlock),
+                ],
+              ),
+            ),
+    );
+  }
+
+  Widget _scriptBlock(int index, {required bool active}) {
+    final block = _blocks[index];
+    final key = _blockKeys.putIfAbsent(index, () => GlobalKey());
+    return AnimatedContainer(
+      key: key,
+      duration: const Duration(milliseconds: 200),
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: active ? Colors.white.withValues(alpha: 0.22) : Colors.transparent,
+        borderRadius: BorderRadius.circular(NasTokens.radiusSm),
+        border: Border.all(
+          color: active ? Colors.white.withValues(alpha: 0.55) : Colors.transparent,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            block.title,
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 13,
+              height: 1.45,
+              fontWeight: active ? FontWeight.w700 : FontWeight.w600,
+            ),
+          ),
+          if (block.body.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              block.body,
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: active ? 0.92 : 0.7),
+                fontSize: 12,
+                height: 1.5,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// 播报稿里的一段：`title` 是这一条的首段（播报头 / 分类头），`body` 是正文
+class _ScriptBlock {
+  const _ScriptBlock({required this.title, required this.body});
+
+  final String title;
+  final String body;
+
+  /// 估算时长用的字数权重：空白不算，标点影响很小可以忽略
+  int get weight => '$title$body'.replaceAll(RegExp(r'\s'), '').length;
 }
